@@ -6,7 +6,11 @@ import {
 	FixedBottomEditorCompositor,
 	beginSynchronizedOutput,
 	clearLine,
+	disableAlternateScrollMode,
+	enableAlternateScrollMode,
 	endSynchronizedOutput,
+	enterAlternateScreen,
+	exitAlternateScreen,
 	moveCursor,
 	resetScrollRegion,
 	setScrollRegion,
@@ -83,7 +87,7 @@ test("terminal.write 在 setScrollRegion 后、普通 data 前对齐 cursor", ()
 	harness.compositor.install();
 	harness.terminal.write("payload");
 
-	const output = harness.writes[0]!;
+	const output = harness.writes[1]!;
 	const scrollRegionIndex = output.indexOf(setScrollRegion(1, 8));
 	const cursorIndex = output.indexOf(moveCursor(5, 1));
 	const payloadIndex = output.indexOf("payload");
@@ -92,16 +96,17 @@ test("terminal.write 在 setScrollRegion 后、普通 data 前对齐 cursor", ()
 	assert.ok(payloadIndex > cursorIndex);
 });
 
-test("install 后替换 terminal.write，并在 dispose 后恢复", () => {
+test("install 后进入 alternate screen、替换 terminal.write，并在 dispose 后恢复", () => {
 	const harness = createHarness();
 	const originalWrite = harness.terminal.write;
 
 	harness.compositor.install();
 	assert.notEqual(harness.terminal.write, originalWrite);
+	assert.equal(harness.writes[0], beginSynchronizedOutput() + enterAlternateScreen() + disableAlternateScrollMode() + endSynchronizedOutput());
 
 	harness.terminal.write("hello");
-	assert.equal(harness.writes.length, 1);
-	assert.equal(harness.writes[0], beginSynchronizedOutput()
+	assert.equal(harness.writes.length, 2);
+	assert.equal(harness.writes[1], beginSynchronizedOutput()
 		+ setScrollRegion(1, 8)
 		+ moveCursor(4, 1)
 		+ "hello"
@@ -118,6 +123,7 @@ test("install 后替换 terminal.write，并在 dispose 后恢复", () => {
 
 	harness.compositor.dispose();
 	assert.equal(harness.terminal.write, originalWrite);
+	assert.ok(harness.writes.at(-1)?.includes(enableAlternateScrollMode() + exitAlternateScreen()));
 	harness.terminal.write("after");
 	assert.equal(harness.writes.at(-1), "after");
 });
@@ -135,7 +141,7 @@ test("已有 compositor owner 时 install fail closed", () => {
 	});
 	first.install();
 	assert.throws(() => harness.compositor.install(), /already owned/);
-	assert.equal(harness.writes.length, 0);
+	assert.equal(harness.writes.length, 1);
 	first.dispose();
 });
 
@@ -155,12 +161,15 @@ test("install 中途失败时回滚已写入的 terminal/TUI patch", () => {
 	assert.equal(harness.tui.doRender, originalDoRender);
 	assert.equal(harness.terminal.rows, 10);
 	assert.doesNotThrow(() => harness.terminal.write("after-failed-install"));
-	assert.deepEqual(harness.writes, ["after-failed-install"]);
+	assert.ok(harness.writes[0]?.includes(enterAlternateScreen()));
+	assert.ok(harness.writes.some((write) => write.includes(exitAlternateScreen())));
+	assert.equal(harness.writes.at(-1), "after-failed-install");
 });
 
 test("dispose 不覆盖后装 terminal.write", () => {
 	const harness = createHarness();
 	harness.compositor.install();
+	const installWrites = [...harness.writes];
 	const laterWrite = function laterWrite(data: string) {
 		harness.writes.push(`later:${data}`);
 	};
@@ -170,7 +179,11 @@ test("dispose 不覆盖后装 terminal.write", () => {
 
 	assert.equal(harness.terminal.write, laterWrite);
 	harness.terminal.write("after");
-	assert.deepEqual(harness.writes, ["later:after"]);
+	assert.deepEqual(harness.writes, [
+		...installWrites,
+		beginSynchronizedOutput() + resetScrollRegion() + enableAlternateScrollMode() + exitAlternateScreen() + showCursor() + endSynchronizedOutput(),
+		"later:after",
+	]);
 });
 
 test("install 后重定义 terminal.rows，返回扣除 cluster 高度后的行数且最低保留 1", () => {
@@ -236,6 +249,14 @@ test("render 超过可滚动区域时裁剪为最后的普通内容行", () => {
 	assert.deepEqual(harness.tui.render(20), ["root-5", "root-6", "root-7", "root-8", "root-9", "root-10", "root-11", "root-12"]);
 });
 
+test("render 内容不足可滚动区域时补空行撑满 viewport", () => {
+	const harness = createHarness({ rootLines: ["root-1", "root-2"] });
+
+	harness.compositor.install();
+
+	assert.deepEqual(harness.tui.render(20), ["root-1", "root-2", "", "", "", "", "", ""]);
+});
+
 test("install 后替换 tui.render 和 tui.doRender，并在 dispose 后恢复", () => {
 	const harness = createHarness();
 	const originalRender = harness.tui.render;
@@ -246,7 +267,7 @@ test("install 后替换 tui.render 和 tui.doRender，并在 dispose 后恢复",
 	assert.notEqual(harness.tui.doRender, originalDoRender);
 
 	const lines = harness.tui.render(20);
-	assert.deepEqual(lines, ["root-1", "root-2", "root-3", "root-4"]);
+	assert.deepEqual(lines, ["root-1", "root-2", "root-3", "root-4", "", "", "", ""]);
 	harness.tui.doRender();
 	assert.deepEqual(harness.doRenderCalls, ["doRender"]);
 	assert.ok(harness.writes.some((write) => write.includes("editor")));
@@ -302,7 +323,7 @@ test("tui.hasOverlay() 为 true 时，render/write/doRender 均让路给原始�
 	harness.terminal.write("overlay-write");
 	harness.tui.doRender();
 
-	assert.deepEqual(harness.writes, ["overlay-write"]);
+	assert.deepEqual(harness.writes, [beginSynchronizedOutput() + enterAlternateScreen() + disableAlternateScrollMode() + endSynchronizedOutput(), "overlay-write"]);
 	assert.deepEqual(harness.doRenderCalls, ["doRender"]);
 	assert.equal(harness.getRenderClusterCalls(), 0);
 
@@ -320,7 +341,7 @@ test("tui.overlayStack 有可见元素时，render/doRender/write/rows 均让路
 	harness.terminal.write("stack-write");
 	harness.tui.doRender();
 
-	assert.deepEqual(harness.writes, ["stack-write"]);
+	assert.deepEqual(harness.writes, [beginSynchronizedOutput() + enterAlternateScreen() + disableAlternateScrollMode() + endSynchronizedOutput(), "stack-write"]);
 	assert.deepEqual(harness.doRenderCalls, ["doRender"]);
 	assert.equal(harness.getRenderClusterCalls(), 0);
 });
@@ -332,9 +353,9 @@ test("tui.overlayStack hidden 或 visible=false 时不让路", () => {
 	assert.equal(harness.terminal.rows, 8);
 	harness.terminal.write("normal-write");
 
-	assert.equal(harness.writes.length, 1);
-	assert.ok(harness.writes[0]?.includes("normal-write"));
-	assert.ok(harness.writes[0]?.includes("editor"));
+	assert.equal(harness.writes.length, 2);
+	assert.ok(harness.writes[1]?.includes("normal-write"));
+	assert.ok(harness.writes[1]?.includes("editor"));
 	assert.ok(harness.getRenderClusterCalls() > 0);
 });
 
@@ -344,7 +365,7 @@ test("存在 tui.hasOverlay 时直接信任其 boolean，不 fallback 到 overla
 
 	harness.terminal.write("normal-write");
 
-	assert.equal(harness.writes.length, 1);
-	assert.ok(harness.writes[0]?.includes("normal-write"));
-	assert.ok(harness.writes[0]?.includes("editor"));
+	assert.equal(harness.writes.length, 2);
+	assert.ok(harness.writes[1]?.includes("normal-write"));
+	assert.ok(harness.writes[1]?.includes("editor"));
 });

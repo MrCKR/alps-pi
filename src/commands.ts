@@ -9,7 +9,7 @@ export type CommandOps = {
 	enable?: () => PatchState;
 	disable?: () => PatchState;
 	status?: () => PatchState;
-	setFixedBottomEditorEnabled?: (enabled: boolean) => FixedBottomEditorStatus | void;
+	setFixedBottomEditorEnabled?: (enabled: boolean, ctx: any) => FixedBottomEditorStatus | void;
 	getFixedBottomEditorStatus?: () => FixedBottomEditorStatus;
 };
 
@@ -94,7 +94,8 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 									disableChromeFrame: disableFn,
 									setFixedBottomEditorEnabled: (enabled) => {
 										try {
-											return setFixedEnabled(enabled);
+											// 固定输入框依赖当前 interactive session；从命令 ctx 懒绑定可覆盖 /reload 后未触发 session_start 的场景。
+											return setFixedEnabled(enabled, ctx);
 										} finally {
 											refocusSettingsOverlay();
 										}

@@ -19,9 +19,11 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 	// 默认启用运行时外框；固定输入框仍默认关闭，只由设置面板开关控制。
 	enablePatch();
 	registerAlpsPiCommand(pi, {
-		setFixedBottomEditorEnabled: (enabled) => {
+		setFixedBottomEditorEnabled: (enabled, ctx) => {
 			const state = getGlobalPatchState();
 			state.config.settings.fixedBottomEditor.enabled = enabled;
+			// 某些 /reload 路径不会重新触发 session_start；命令 ctx 是当前可交互 session 的最新来源。
+			fixedBottomEditorRuntime.bindSession(ctx);
 			const status = fixedBottomEditorRuntime.setEnabled(enabled);
 			state.config.settings.fixedBottomEditor.enabled = status.enabled;
 			return status;

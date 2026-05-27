@@ -123,12 +123,13 @@ test("session_start 安装失败时回写 fixedBottomEditor=false", () => {
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, false);
 });
 
-test("命令层 fixed ops 使用入口创建的 runtime", async () => {
+test("命令层 fixed ops 使用入口创建的 runtime 并用命令 ctx 懒绑定 session", async () => {
 	const harness = createHarness();
 	await harness.commands.get("alps-pi").handler("status", { ui: { notify() {} } });
 	assert.deepEqual(harness.runtimeCalls, []);
 
 	const ctx = {
+		id: "command-ctx",
 		hasUI: true,
 		ui: {
 			custom(factory: any) {
@@ -144,5 +145,5 @@ test("命令层 fixed ops 使用入口创建的 runtime", async () => {
 	};
 
 	await harness.commands.get("alps-pi").handler("", ctx);
-	assert.deepEqual(harness.runtimeCalls, ["set:true"]);
+	assert.deepEqual(harness.runtimeCalls, ["bind:command-ctx", "set:true"]);
 });

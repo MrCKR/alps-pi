@@ -3,6 +3,8 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { FixedEditorCluster } from "./cluster.ts";
 
+type ProcessWithExit = Pick<typeof process, "once" | "removeListener">;
+
 export type FixedEditorTerminal = {
 	columns?: number;
 	rows: number;
@@ -22,6 +24,8 @@ export type FixedBottomEditorCompositorOptions = {
 	renderCluster: (width: number, terminalRows: number) => FixedEditorCluster;
 	/** 控制是否把硬件光标移动到 cluster cursor 位置。 */
 	getShowHardwareCursor?: () => boolean;
+	/** 测试注入点：生产环境使用 process 注册 exit 兜底恢复。 */
+	processLike?: ProcessWithExit;
 };
 
 type TerminalWrite = (data: string) => void;
@@ -37,6 +41,26 @@ type RenderPatch = {
 const COMPOSITOR_OWNER = Symbol("alps.pi.fixedBottomEditor.compositorOwner.v1");
 const DEFAULT_COLUMNS = 80;
 const DEFAULT_ROWS = 24;
+
+/** 进入 alternate screen，让固定输入框拥有可控视口并避免污染主屏滚动历史。 */
+export function enterAlternateScreen(): string {
+	return "\x1b[?1049h";
+}
+
+/** 退出 alternate screen，dispose/reload 后回到主屏。 */
+export function exitAlternateScreen(): string {
+	return "\x1b[?1049l";
+}
+
+/** 禁用 alternate scroll，避免滚轮直接冲刷 fixed editor 所在的终端视口。 */
+export function disableAlternateScrollMode(): string {
+	return "\x1b[?1007l";
+}
+
+/** 恢复 alternate scroll，交回 Pi 默认终端行为。 */
+export function enableAlternateScrollMode(): string {
+	return "\x1b[?1007h";
+}
 
 /** 开启 synchronized output，降低分段绘制闪烁。 */
 export function beginSynchronizedOutput(): string {
@@ -80,7 +104,7 @@ export function showCursor(): string {
 
 /** dispose 时使用的最小终端恢复序列。 */
 export function resetFixedBottomEditorTerminalState(): string {
-	return beginSynchronizedOutput() + resetScrollRegion() + showCursor() + endSynchronizedOutput();
+	return beginSynchronizedOutput() + resetScrollRegion() + enableAlternateScrollMode() + exitAlternateScreen() + showCursor() + endSynchronizedOutput();
 }
 
 /** 生成底部 fixed cluster 的绘制序列：重置滚动区、定位、清行、写行并处理光标。 */
@@ -121,6 +145,7 @@ export class FixedBottomEditorCompositor {
 	private readonly terminal: FixedEditorTerminal;
 	private readonly renderCluster: (width: number, terminalRows: number) => FixedEditorCluster;
 	private readonly getShowHardwareCursor: () => boolean;
+	private readonly processLike: ProcessWithExit;
 	private readonly patchedRenders: RenderPatch[] = [];
 	private originalWrite: TerminalWrite | null = null;
 	private originalRender: TuiRender | null = null;
@@ -137,12 +162,14 @@ export class FixedBottomEditorCompositor {
 	private writing = false;
 	private renderingCluster = false;
 	private checkingOverlay = false;
+	private emergencyCleanup: (() => void) | null = null;
 
 	constructor(options: FixedBottomEditorCompositorOptions) {
 		this.tui = options.tui;
 		this.terminal = options.terminal;
 		this.renderCluster = options.renderCluster;
 		this.getShowHardwareCursor = options.getShowHardwareCursor ?? (() => true);
+		this.processLike = options.processLike ?? process;
 	}
 
 	/** 安装 compositor，接管 terminal.write/rows 与 TUI render 入口。 */
@@ -163,6 +190,19 @@ export class FixedBottomEditorCompositor {
 		this.originalRowsDescriptor = findRowsDescriptor(this.terminal);
 
 		try {
+			this.writeOriginal(
+				beginSynchronizedOutput()
+				+ enterAlternateScreen()
+				+ disableAlternateScrollMode()
+				+ endSynchronizedOutput(),
+			);
+			this.emergencyCleanup = () => {
+				if (!this.disposed) {
+					this.writeResetSequenceBestEffort();
+				}
+			};
+			this.processLike.once("exit", this.emergencyCleanup);
+
 			this.rowsGetter = () => this.getScrollableRows();
 			Object.defineProperty(this.terminal, "rows", {
 				configurable: true,
@@ -183,8 +223,8 @@ export class FixedBottomEditorCompositor {
 			this.markOwner();
 			this.installed = true;
 		} catch (error) {
-			// 安装中途失败也必须回滚已写入的 terminal/TUI patch，保证 fail closed。
-			this.restorePatches(false);
+			// 安装中途失败也必须回滚已写入的 terminal/TUI patch 和 terminal mode，保证 fail closed。
+			this.restorePatches(true);
 			throw error;
 		}
 	}
@@ -246,6 +286,10 @@ export class FixedBottomEditorCompositor {
 		if (this.originalWrite && shouldRestoreWrite) {
 			this.terminal.write = this.originalWrite;
 		}
+		if (this.emergencyCleanup) {
+			this.processLike.removeListener("exit", this.emergencyCleanup);
+			this.emergencyCleanup = null;
+		}
 		if (this.originalRender && this.tui.render === this.renderWrapper) {
 			this.tui.render = this.originalRender;
 		}
@@ -257,7 +301,7 @@ export class FixedBottomEditorCompositor {
 		}
 		this.clearOwner();
 		this.installed = false;
-		if (writeResetSequence && shouldRestoreWrite) {
+		if (writeResetSequence && this.originalWrite) {
 			this.writeResetSequenceBestEffort();
 		}
 	}
@@ -286,8 +330,12 @@ export class FixedBottomEditorCompositor {
 		const cluster = this.getCluster(renderWidth, rawRows);
 		const scrollableRows = Math.max(1, rawRows - cluster.lines.length);
 		const lines = this.originalRender.call(this.tui, renderWidth, ...args);
-		if (!Array.isArray(lines) || lines.length <= scrollableRows) return Array.isArray(lines) ? lines : [];
-		return lines.slice(lines.length - scrollableRows);
+		if (!Array.isArray(lines)) return [];
+		const visibleLines = lines.length <= scrollableRows ? [...lines] : lines.slice(lines.length - scrollableRows);
+		while (visibleLines.length < scrollableRows) {
+			visibleLines.push("");
+		}
+		return visibleLines;
 	}
 
 	/** 包装 terminal.write：把普通输出限制在上方滚动区，并在底部补绘 fixed cluster。 */
