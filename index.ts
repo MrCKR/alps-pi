@@ -2,7 +2,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerAlpsPiCommand } from "./src/commands.ts";
-import { disablePatch, enablePatch } from "./src/patch.ts";
+import { disablePatch, enablePatch } from "./src/features/chrome-frame/index.ts";
 
 export default function alpsPi(pi: ExtensionAPI) {
 	// 默认启用运行时外框；命令仍可通过 /alps-pi disable 临时回滚。

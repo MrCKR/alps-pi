@@ -2,8 +2,8 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { renderNeonBox } from "../src/chrome.ts";
-import { createRuntimeTargets } from "../src/patch.ts";
+import { renderNeonBox } from "../src/features/chrome-frame/chrome.ts";
+import { createRuntimeTargets } from "../src/features/chrome-frame/patch.ts";
 import { createFakeTheme, assertLinesWithin, stripAnsi } from "./helpers.test.ts";
 
 test("working chrome 可通过纯渲染展示 WORKING box", () => {

@@ -1,6 +1,6 @@
 /** 功能：定义 alps pi 美化扩展的类型、样式 token 与 label 映射 实现者：alps 实现日期：2026-05-26 */
 
-import { DEFAULT_SETTINGS, type AlpsPiSettings } from "./settings.ts";
+import { DEFAULT_SETTINGS, type AlpsPiSettings } from "../../settings.ts";
 
 export type ThemeLike = {
 	fg(token: string, text: string): string;

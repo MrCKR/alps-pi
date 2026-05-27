@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createPreviewComponent } from "../src/preview.ts";
+import { createPreviewComponent } from "../src/features/chrome-frame/preview.ts";
 import { createFakeTheme, assertLinesWithin, stripAnsi } from "./helpers.test.ts";
 
 function renderPreview(width = 72) {

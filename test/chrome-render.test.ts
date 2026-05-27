@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { renderNeonBox } from "../src/chrome.ts";
+import { renderNeonBox } from "../src/features/chrome-frame/chrome.ts";
 import { createFakeTheme, assertLinesWithin, stripAnsi } from "./helpers.test.ts";
 
 test("renderNeonBox 输出完整三段 box 且包含 label 与内容", () => {

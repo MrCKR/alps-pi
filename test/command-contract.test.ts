@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createInitialPatchState, PATCH_KEY } from "../src/patch.ts";
+import { createInitialPatchState, PATCH_KEY } from "../src/features/chrome-frame/patch.ts";
 import { registerAlpsPiCommand } from "../src/commands.ts";
 
 function createHarness() {
@@ -53,6 +53,7 @@ function createHarness() {
 			patchCalls.push("enable");
 			const state = (globalThis as any)[PATCH_KEY];
 			state.enabled = true;
+			state.config.settings.chromeFrame.enabled = true;
 			state.patched.add("UserMessageComponent");
 			return state;
 		},
@@ -60,6 +61,7 @@ function createHarness() {
 			patchCalls.push("disable");
 			const state = (globalThis as any)[PATCH_KEY];
 			state.enabled = false;
+			state.config.settings.chromeFrame.enabled = false;
 			state.patched.clear();
 			return state;
 		},
@@ -102,19 +104,19 @@ test("status 在 enabled 时显示 patched components", async () => {
 	assert.ok(harness.notifications.some((n) => /enabled/.test(n.message) && /AssistantMessageComponent/.test(n.message)));
 });
 
-test("无参数打开设置界面，可切换总开关与正文线框", async () => {
+test("无参数打开设置界面，可切换线框美化与正文线框", async () => {
 	const harness = createHarness();
 	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
 	await Promise.resolve();
 	assert.equal(harness.customCalls.length, 1);
 	assert.equal(harness.customCalls[0].options.overlay, true);
 	const component = harness.customCalls[0].component;
-	assert.match(component.render(80).join("\n"), /总开关/);
+	assert.match(component.render(80).join("\n"), /线框美化/);
 	component.handleInput(" ");
 	assert.deepEqual(harness.patchCalls, ["enable"]);
 	component.handleInput("\x1b[B");
 	component.handleInput(" ");
-	assert.equal((globalThis as any)[PATCH_KEY].config.settings.assistantFrame, false);
+	assert.equal((globalThis as any)[PATCH_KEY].config.settings.chromeFrame.assistantFrame, false);
 	component.handleInput("q");
 	await pending;
 });

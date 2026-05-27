@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createInitialPatchState, createWrappedRender, PATCH_KEY } from "../src/patch.ts";
+import { createInitialPatchState, createWrappedRender, PATCH_KEY } from "../src/features/chrome-frame/patch.ts";
 import { createFakeTheme, assertLinesWithin, stripAnsi } from "./helpers.test.ts";
 
 test.beforeEach(() => {
@@ -100,6 +100,30 @@ test("wrapper 缓存会随 width 变化失效", () => {
 	assert.ok(theme.calls.length > callsAfterFirst);
 });
 
+test("wrapper 缓存会随 configVersion 变化失效且不依赖 JSON.stringify", () => {
+	const originalStringify = JSON.stringify;
+	const original = FakeComponent.prototype.render;
+	const theme = createFakeTheme();
+	const wrapped = createWrappedRender("Fake", "custom", original, () => theme);
+	const instance = new FakeComponent();
+	const state = (globalThis as any)[PATCH_KEY];
+
+	JSON.stringify = (() => {
+		throw new Error("JSON.stringify should not be used in render cache key");
+	}) as typeof JSON.stringify;
+	try {
+		const first = wrapped.call(instance, 32);
+		const callsAfterFirst = theme.calls.length;
+		state.config.settings.chromeFrame.assistantFrame = !state.config.settings.chromeFrame.assistantFrame;
+		const second = wrapped.call(instance, 32);
+
+		assert.equal(stripAnsi(second.join("\n")), stripAnsi(first.join("\n")));
+		assert.ok(theme.calls.length > callsAfterFirst);
+	} finally {
+		JSON.stringify = originalStringify;
+	}
+});
+
 test("普通消息 inner 返回空数组时不渲染 box", () => {
 	class EmptyComponent {
 		render(_width: number) {
@@ -133,9 +157,9 @@ test("assistantFrame 关闭时 assistant 返回原始 render，开启时继续 b
 	}
 	const wrapped = createWrappedRender("Assistant", "assistant", AssistantComponent.prototype.render, () => createFakeTheme());
 	const state = (globalThis as any)[PATCH_KEY];
-	state.config.settings.assistantFrame = false;
+	state.config.settings.chromeFrame.assistantFrame = false;
 	assert.deepEqual(wrapped.call(new AssistantComponent(), 30), ["hello"]);
-	state.config.settings.assistantFrame = true;
+	state.config.settings.chromeFrame.assistantFrame = true;
 	assert.match(stripAnsi(wrapped.call(new AssistantComponent(), 30)[0]!), /ASSISTANT/);
 });
 

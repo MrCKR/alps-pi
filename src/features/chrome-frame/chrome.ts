@@ -1,7 +1,7 @@
 /** 功能：渲染统一消息 chrome box，保证 ANSI/CJK/OSC/image 场景的宽度安全 实现者：alps 实现日期：2026-05-26 */
 
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { containsImageLine } from "./image.ts";
+import { isImageEscapeLine } from "./image.ts";
 import { extractBoundaryOscMarkers, restoreBoundaryOscMarkers } from "./osc.ts";
 import { DEFAULT_CONFIG, getChromeLabel, getChromeStyle, type ChromeConfig, type ChromeKind, type ChromeStatus, type ThemeLike } from "./styles.ts";
 
@@ -71,7 +71,14 @@ function renderContentLine(line: string, width: number, theme: ThemeLike, border
 }
 
 function stripControlMarkers(line: string): string {
+	if (!line.includes("\x1b")) return line;
 	return line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "");
+}
+
+function isBlankAfterControlMarkers(line: string): boolean {
+	const text = String(line);
+	if (!text.includes("\x1b")) return text.trim().length === 0;
+	return stripControlMarkers(text).trim().length === 0;
 }
 
 /** 判断普通消息是否没有可见内容；工具类块即使正文为空也保留标题状态。 */
@@ -80,7 +87,7 @@ export function isEmptyMessageChrome(kind: ChromeKind, contentLines: readonly st
 		return false;
 	}
 	if (contentLines.length === 0) return true;
-	return contentLines.every((line) => stripControlMarkers(String(line)).trim().length === 0);
+	return contentLines.every(isBlankAfterControlMarkers);
 }
 
 export function renderNeonBox(kind: ChromeKind, contentLines: readonly string[], width: number, theme: ThemeLike, options: RenderBoxOptions = {}): string[] {
@@ -97,29 +104,30 @@ export function renderNeonBox(kind: ChromeKind, contentLines: readonly string[],
 	const style = getChromeStyle(kind, { toolName: options.toolName, status }, options.config ?? DEFAULT_CONFIG);
 	const label = getChromeLabel(kind, { toolName: options.toolName, status });
 	const innerWidth = Math.max(1, boxWidth - 4);
-	const hasImage = containsImageLine(rawLines);
 
 	const lines: string[] = [];
-	lines.push(buildTopBorder(label, boxWidth, theme, style.border, style.label));
+	const pushTextLine = (line: string) => {
+		lines.push(applyLineBackground(theme, style.bg, line, boxWidth));
+	};
+	pushTextLine(buildTopBorder(label, boxWidth, theme, style.border, style.label));
 	for (const raw of rawLines) {
 		const split = String(raw).split("\n");
 		for (const part of split) {
-			const partHasImage = hasImage && containsImageLine([part]);
+			const partHasImage = isImageEscapeLine(part);
 			const wrapped = wrapContentLine(part, innerWidth, partHasImage);
 			for (const wrappedLine of wrapped) {
 				if (partHasImage) {
 					lines.push(wrappedLine);
 				} else {
-					lines.push(renderContentLine(wrappedLine, boxWidth, theme, style.border, style.text));
+					pushTextLine(renderContentLine(wrappedLine, boxWidth, theme, style.border, style.text));
 				}
 			}
 		}
 	}
 	if (lines.length === 1) {
-		lines.push(renderContentLine("", boxWidth, theme, style.border, style.text));
+		pushTextLine(renderContentLine("", boxWidth, theme, style.border, style.text));
 	}
-	lines.push(buildBottomBorder(boxWidth, theme, style.border));
+	pushTextLine(buildBottomBorder(boxWidth, theme, style.border));
 
-	const withBg = lines.map((line) => (containsImageLine([line]) ? line : applyLineBackground(theme, style.bg, line, boxWidth)));
-	return restoreBoundaryOscMarkers(withBg, markers);
+	return restoreBoundaryOscMarkers(lines, markers);
 }

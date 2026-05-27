@@ -1,9 +1,8 @@
 /** 功能：注册 /alps-pi 命令并实现 settings/status/preview 契约 实现者：alps 实现日期：2026-05-26 */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createPreviewComponent } from "./preview.ts";
+import { createPreviewComponent, disablePatch, enablePatch, formatPatchStatus, getGlobalPatchState, getRuntimeTheme, type PatchState } from "./features/chrome-frame/index.ts";
 import { createSettingsComponent } from "./settings-ui.ts";
-import { disablePatch, enablePatch, formatPatchStatus, getGlobalPatchState, getRuntimeTheme, type PatchState } from "./patch.ts";
 
 export type CommandOps = {
 	enable?: () => PatchState;
@@ -40,8 +39,8 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 						await ctx.ui.custom(
 							(_tui: any, theme: any, _keybindings: any, done: () => void) => createSettingsComponent(theme ?? fallbackTheme, done, {
 								getState: statusFn,
-								enable: enableFn,
-								disable: disableFn,
+								enableChromeFrame: enableFn,
+								disableChromeFrame: disableFn,
 							}),
 							{
 								overlay: true,

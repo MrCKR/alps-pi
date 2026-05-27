@@ -7,6 +7,9 @@ export type OscExtraction = {
 };
 
 const OSC133_PATTERN = /^\x1b\]133;([ABC])\x07/;
+const OSC133_ALL_CODES = new Set(["A", "B", "C"]);
+const OSC133_START_CODES = new Set(["A"]);
+const OSC133_END_CODES = new Set(["B", "C"]);
 
 function extractLeadingOsc133Codes(input: string, allowedCodes: ReadonlySet<string>): { markers: string[]; rest: string } {
 	const markers: string[] = [];
@@ -21,7 +24,7 @@ function extractLeadingOsc133Codes(input: string, allowedCodes: ReadonlySet<stri
 }
 
 export function extractLeadingOsc133(input: string): { markers: string[]; rest: string } {
-	return extractLeadingOsc133Codes(input, new Set(["A", "B", "C"]));
+	return extractLeadingOsc133Codes(input, OSC133_ALL_CODES);
 }
 
 export function extractBoundaryOscMarkers(lines: readonly string[]): OscExtraction {
@@ -31,10 +34,10 @@ export function extractBoundaryOscMarkers(lines: readonly string[]): OscExtracti
 		const endMarkers: string[] = [];
 		if (clean.length > 0) {
 			const tailIndex = clean.length - 1;
-			const ending = extractLeadingOsc133Codes(clean[tailIndex] ?? "", new Set(["B", "C"]));
+			const ending = extractLeadingOsc133Codes(clean[tailIndex] ?? "", OSC133_END_CODES);
 			endMarkers.push(...ending.markers);
 			clean[tailIndex] = ending.rest;
-			const leading = extractLeadingOsc133Codes(clean[0] ?? "", new Set(["A"]));
+			const leading = extractLeadingOsc133Codes(clean[0] ?? "", OSC133_START_CODES);
 			startMarkers.push(...leading.markers);
 			clean[0] = leading.rest;
 		}

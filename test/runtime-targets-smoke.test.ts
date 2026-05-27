@@ -8,7 +8,7 @@ import {
 	createRuntimeTargets,
 	disablePatch,
 	enablePatch,
-} from "../src/patch.ts";
+} from "../src/features/chrome-frame/patch.ts";
 import { createFakeTheme } from "./helpers.test.ts";
 
 test.beforeEach(() => {

@@ -2,9 +2,9 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { renderNeonBox } from "../src/chrome.ts";
-import { containsImageLine, isImageEscapeLine } from "../src/image.ts";
-import { createSafeBoxRender } from "../src/patch.ts";
+import { renderNeonBox } from "../src/features/chrome-frame/chrome.ts";
+import { containsImageLine, isImageEscapeLine } from "../src/features/chrome-frame/image.ts";
+import { createSafeBoxRender } from "../src/features/chrome-frame/patch.ts";
 import { createFakeTheme, stripAnsi, assertLinesWithin } from "./helpers.test.ts";
 
 const kitty = "\x1b_Gf=100,a=T;AAAA\x1b\\";
@@ -51,6 +51,15 @@ test("image line 前后仍可添加标题和边框时不破坏 escape", () => {
 	assert.ok(lines[0] && stripAnsi(lines[0]).includes("TOOL image"));
 	assert.equal(lines.find((line) => line.includes(kitty)), kitty);
 	assert.ok(lines.at(-1) && stripAnsi(lines.at(-1)!).includes("╰"));
+});
+
+test("同一 raw line 中的 image 分段不被截断或包框", () => {
+	const theme = createFakeTheme();
+	const lines = renderNeonBox("toolPending", [`before\n${kitty}\nafter`], 36, theme, { toolName: "image" });
+	assert.equal(lines.find((line) => line.includes(kitty)), kitty);
+	assertLinesWithin(lines.filter((line) => !line.includes(kitty)), 36);
+	assert.ok(stripAnsi(lines.join("\n")).includes("before"));
+	assert.ok(stripAnsi(lines.join("\n")).includes("after"));
 });
 
 

@@ -12,8 +12,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { isEmptyMessageChrome, renderNeonBox } from "./chrome.ts";
 import { containsImageLine } from "./image.ts";
-import { cloneDefaultSettings } from "./settings.ts";
-import { DEFAULT_CONFIG, type ChromeConfig, type ChromeKind, type ChromeStatus, type ThemeLike } from "./styles.ts";
+import { cloneDefaultSettings, type AlpsPiSettings } from "../../settings.ts";
+import { DEFAULT_CONFIG, getChromeStyle, type ChromeConfig, type ChromeKind, type ChromeStatus, type ThemeLike } from "./styles.ts";
 
 export const PATCH_KEY = Symbol.for("alps.pi.patch.v1");
 
@@ -23,6 +23,7 @@ export type PatchState = {
 	patched: Set<string>;
 	failures: Map<string, string>;
 	config: ChromeConfig;
+	configVersion: number;
 };
 
 export type ComponentTarget = {
@@ -51,24 +52,113 @@ type RenderCacheEntry = {
 };
 
 const RENDER_CACHE_KEY = Symbol.for("alps.pi.renderCache.v1");
+const TRACKED_SETTINGS_KEY = Symbol.for("alps.pi.trackedSettings.v1");
+const WRAPPED_RENDER_KEY = Symbol.for("alps.pi.wrappedRender.v2");
+const WRAPPED_RENDER_VERSION = 2;
+const CACHE_KEY_SEPARATOR = "\x1f";
 
-export function createInitialPatchState(): PatchState {
+type WrappedRenderMetadata = {
+	id: string;
+	version: number;
+	originalRender: Function;
+};
+
+function getWrappedRenderMetadata(render: unknown): WrappedRenderMetadata | undefined {
+	return typeof render === "function" ? (render as any)[WRAPPED_RENDER_KEY] as WrappedRenderMetadata | undefined : undefined;
+}
+
+function markWrappedRender(render: Function, metadata: WrappedRenderMetadata): void {
+	Object.defineProperty(render, WRAPPED_RENDER_KEY, {
+		value: metadata,
+		configurable: false,
+	});
+}
+
+function isCurrentWrappedRender(id: string, render: unknown): boolean {
+	const metadata = getWrappedRenderMetadata(render);
+	return metadata?.id === id && metadata.version === WRAPPED_RENDER_VERSION;
+}
+
+function createTrackedObject<T extends object>(value: T, onChange: () => void): T {
+	const existing = value as T & { [TRACKED_SETTINGS_KEY]?: true };
+	if (existing[TRACKED_SETTINGS_KEY]) return value;
+	return new Proxy(value, {
+		// 设置变更会影响 render 缓存签名；只在值真正变化时递增版本。
+		set(target, property, nextValue) {
+			if ((target as any)[property] === nextValue) return true;
+			(target as any)[property] = nextValue;
+			onChange();
+			return true;
+		},
+		get(target, property, receiver) {
+			if (property === TRACKED_SETTINGS_KEY) return true;
+			return Reflect.get(target, property, receiver);
+		},
+	}) as T;
+}
+
+function normalizeSettings(settings: AlpsPiSettings | any, enabled: boolean): AlpsPiSettings {
+	if (settings?.chromeFrame) {
+		return {
+			...settings,
+			chromeFrame: {
+				...settings.chromeFrame,
+				enabled,
+			},
+		} as AlpsPiSettings;
+	}
 	return {
-		enabled: false,
-		originals: new Map(),
-		patched: new Set(),
-		failures: new Map(),
-		config: {
-			...DEFAULT_CONFIG,
-			settings: cloneDefaultSettings(),
-			styles: DEFAULT_CONFIG.styles,
+		chromeFrame: {
+			enabled,
+			assistantFrame: Boolean(settings?.assistantFrame ?? DEFAULT_CONFIG.settings.chromeFrame.assistantFrame),
 		},
 	};
 }
 
+function syncChromeFrameEnabled(state: PatchState): void {
+	state.config.settings.chromeFrame.enabled = state.enabled;
+}
+
+function createTrackedSettings(settings: AlpsPiSettings, enabled: boolean, onChange: () => void): AlpsPiSettings {
+	const normalized = normalizeSettings(settings, enabled);
+	normalized.chromeFrame = createTrackedObject(normalized.chromeFrame, onChange);
+	return createTrackedObject(normalized, onChange);
+}
+
+function ensurePatchStateConfigTracking(state: PatchState): PatchState {
+	if (typeof state.configVersion !== "number") state.configVersion = 0;
+	state.config.settings = createTrackedSettings(state.config.settings, state.enabled, () => {
+		state.configVersion += 1;
+	});
+	return state;
+}
+
+function createPatchConfig(state: Pick<PatchState, "configVersion" | "enabled">): ChromeConfig {
+	return {
+		...DEFAULT_CONFIG,
+		settings: createTrackedSettings(cloneDefaultSettings(), state.enabled, () => {
+			state.configVersion += 1;
+		}),
+		styles: DEFAULT_CONFIG.styles,
+	};
+}
+
+export function createInitialPatchState(): PatchState {
+	const state: PatchState = {
+		enabled: false,
+		originals: new Map(),
+		patched: new Set(),
+		failures: new Map(),
+		config: undefined as unknown as ChromeConfig,
+		configVersion: 0,
+	};
+	state.config = createPatchConfig(state);
+	return state;
+}
+
 export function getGlobalPatchState(): PatchState {
 	const existing = (globalThis as any)[PATCH_KEY] as PatchState | undefined;
-	if (existing) return existing;
+	if (existing) return ensurePatchStateConfigTracking(existing);
 	const state = createInitialPatchState();
 	(globalThis as any)[PATCH_KEY] = state;
 	return state;
@@ -110,6 +200,11 @@ function deriveToolName(kind: ChromeKind, instance: any, fallback?: string): str
 	return fallback;
 }
 
+function createStyleSignature(id: string, kind: ChromeKind, status: ChromeStatus | undefined, toolName: string | undefined, config: ChromeConfig, configVersion: number): string {
+	const style = getChromeStyle(kind, { toolName, status }, config);
+	return [id, kind, status ?? "", toolName ?? "", configVersion, style.bg, style.border, style.label, style.text].join(CACHE_KEY_SEPARATOR);
+}
+
 export function createSafeBoxRender(kind: ChromeKind, inner: (innerWidth: number) => string[], options: SafeBoxRenderOptions): (width: number) => string[] {
 	return (width: number) => {
 		const innerWidth = Math.max(1, Math.floor(width) - 4);
@@ -133,7 +228,7 @@ export function createWrappedRender(
 	getTheme: (instance?: any) => ThemeLike,
 	extra: Record<string, unknown> = {},
 ): (this: any, width: number) => string[] {
-	return function alpsChromeWrappedRender(this: any, width: number): string[] {
+	const wrapped = function alpsChromeWrappedRender(this: any, width: number): string[] {
 		const instance = this;
 		const status = deriveStatus(kind, instance);
 		const toolName = deriveToolName(kind, instance, extra.toolName as string | undefined);
@@ -143,8 +238,9 @@ export function createWrappedRender(
 			if (numericWidth < 8) return fallback();
 			const innerWidth = Math.max(1, numericWidth - 4);
 			const innerLines = asLines(originalRender.call(instance, innerWidth));
-			const config = getGlobalPatchState().config;
-			if (kind === "assistant" && !config.settings.assistantFrame) {
+			const state = getGlobalPatchState();
+			const config = state.config;
+			if (kind === "assistant" && !config.settings.chromeFrame.assistantFrame) {
 				return fallback();
 			}
 			if (isEmptyMessageChrome(kind, innerLines)) return [];
@@ -152,7 +248,7 @@ export function createWrappedRender(
 				return fallback();
 			}
 			const innerKey = innerLines.join("\n");
-			const styleKey = `${id}|${kind}|${status ?? ""}|${toolName ?? ""}|${config === DEFAULT_CONFIG ? "default" : JSON.stringify(config)}`;
+			const styleKey = createStyleSignature(id, kind, status, toolName, config, state.configVersion);
 			const cache = (instance as any)[RENDER_CACHE_KEY] as RenderCacheEntry | undefined;
 			if (cache && cache.width === numericWidth && cache.innerKey === innerKey && cache.styleKey === styleKey) {
 				return cache.lines;
@@ -172,6 +268,8 @@ export function createWrappedRender(
 			}
 		}
 	};
+	markWrappedRender(wrapped, { id, version: WRAPPED_RENDER_VERSION, originalRender });
+	return wrapped;
 }
 
 function validateTarget(target: ComponentTarget): string | undefined {
@@ -184,7 +282,6 @@ function validateTarget(target: ComponentTarget): string | undefined {
 export function enablePatch(targets: readonly ComponentTarget[] = createRuntimeTargets()): PatchState {
 	const state = getGlobalPatchState();
 	state.failures.clear();
-	if (state.enabled) return state;
 
 	for (const target of targets) {
 		try {
@@ -194,15 +291,22 @@ export function enablePatch(targets: readonly ComponentTarget[] = createRuntimeT
 				if (target.core) {
 					disablePatch(targets);
 					state.enabled = false;
+					syncChromeFrameEnabled(state);
 					return state;
 				}
 				continue;
 			}
 
-			const original = target.ctor.prototype.render;
+			const current = target.ctor.prototype.render;
+			const currentMetadata = getWrappedRenderMetadata(current);
+			const original = state.originals.get(target.id) ?? currentMetadata?.originalRender ?? current;
 			if (!state.originals.has(target.id)) {
 				state.originals.set(target.id, original);
 			}
+			if (state.patched.has(target.id) && isCurrentWrappedRender(target.id, current)) {
+				continue;
+			}
+
 			target.ctor.prototype.render = createWrappedRender(
 				target.id,
 				target.kind,
@@ -216,12 +320,14 @@ export function enablePatch(targets: readonly ComponentTarget[] = createRuntimeT
 			if (target.core) {
 				disablePatch(targets);
 				state.enabled = false;
+				syncChromeFrameEnabled(state);
 				return state;
 			}
 		}
 	}
 
 	state.enabled = state.patched.size > 0;
+	syncChromeFrameEnabled(state);
 	return state;
 }
 
@@ -245,6 +351,7 @@ export function disablePatch(targets: readonly ComponentTarget[] = createRuntime
 		}
 	}
 	state.enabled = state.patched.size > 0;
+	syncChromeFrameEnabled(state);
 	return state;
 }
 
@@ -278,5 +385,5 @@ export function formatPatchStatus(state: PatchState = getGlobalPatchState()): st
 	const mode = state.enabled ? "enabled" : "disabled";
 	const patched = state.patched.size > 0 ? Array.from(state.patched).join(", ") : "(none)";
 	const failures = state.failures.size > 0 ? Array.from(state.failures).map(([id, reason]) => `${id}: ${reason}`).join("; ") : "(none)";
-	return `Alps Pi: ${mode}\nassistantFrame: ${state.config.settings.assistantFrame}\npatched: ${patched}\nfailures: ${failures}`;
+	return `Alps Pi: ${mode}\nchromeFrame: ${state.config.settings.chromeFrame.enabled}\nassistantFrame: ${state.config.settings.chromeFrame.assistantFrame}\npatched: ${patched}\nfailures: ${failures}`;
 }

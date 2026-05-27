@@ -89,7 +89,7 @@ Esc/q 关闭
 默认映射位于：
 
 ```text
-src/styles.ts
+src/features/chrome-frame/styles.ts
 ```
 
 常见映射：
@@ -101,7 +101,7 @@ toolSuccess.border   success
 toolError.border     error
 ```
 
-如果只想改本扩展的线框分配，改 `src/styles.ts`。  
+如果只想改本扩展的线框分配，改 `src/features/chrome-frame/styles.ts`。
 如果想改所有使用同一 token 的地方，改当前 theme 中对应 token 的颜色。
 
 ## 安全策略

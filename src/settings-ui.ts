@@ -1,16 +1,16 @@
-/** 功能：提供 /alps-pi 设置面板，只保留总开关与正文线框两个选项 实现者：alps 实现日期：2026-05-26 */
+/** 功能：提供 /alps-pi 统一设置面板，集中管理各美化功能开关 实现者：alps 实现日期：2026-05-27 */
 
 import { Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { type PatchState, disablePatch, enablePatch, getGlobalPatchState } from "./patch.ts";
-import type { ThemeLike } from "./styles.ts";
+import { type PatchState, disablePatch, enablePatch, getGlobalPatchState } from "./features/chrome-frame/index.ts";
+import type { ThemeLike } from "./features/chrome-frame/styles.ts";
 
 export type SettingsPanelOps = {
 	getState?: () => PatchState;
-	enable?: () => PatchState;
-	disable?: () => PatchState;
+	enableChromeFrame?: () => PatchState;
+	disableChromeFrame?: () => PatchState;
 };
 
-const OPTIONS = ["patchEnabled", "assistantFrame"] as const;
+const OPTIONS = ["chromeFrame.enabled", "chromeFrame.assistantFrame"] as const;
 type OptionId = (typeof OPTIONS)[number];
 
 function padToWidth(line: string, width: number): string {
@@ -22,7 +22,7 @@ function booleanLabel(value: boolean): string {
 	return value ? "ON" : "OFF";
 }
 
-/** 设置面板：方向键选择，Enter/Space 切换，Esc/q 关闭。 */
+/** 统一设置面板：方向键选择，Enter/Space 切换，Esc/q 关闭。 */
 export class AlpsPiSettingsComponent {
 	private readonly theme: ThemeLike;
 	private readonly done?: () => void;
@@ -35,8 +35,8 @@ export class AlpsPiSettingsComponent {
 		this.done = done;
 		this.ops = {
 			getState: ops.getState ?? getGlobalPatchState,
-			enable: ops.enable ?? (() => enablePatch()),
-			disable: ops.disable ?? (() => disablePatch()),
+			enableChromeFrame: ops.enableChromeFrame ?? (() => enablePatch()),
+			disableChromeFrame: ops.disableChromeFrame ?? (() => disablePatch()),
 		};
 	}
 
@@ -44,13 +44,14 @@ export class AlpsPiSettingsComponent {
 		const safeWidth = Math.max(32, Math.floor(width));
 		const innerWidth = Math.max(1, safeWidth - 4);
 		const state = this.ops.getState();
+		const settings = state.config.settings;
 		const title = this.theme.fg("accent", "Alps Pi 美化设置");
 		const hint = this.theme.fg("muted", "↑/↓ 选择 · Enter/Space 切换 · Esc/q 关闭");
 		const body = [
 			title,
 			"",
-			this.renderRow("总开关", booleanLabel(state.enabled), "控制所有美化线框 patch", this.selectedIndex === 0, innerWidth),
-			this.renderRow("正文线框", booleanLabel(state.config.settings.assistantFrame), "控制 assistant 正文回复是否包线框", this.selectedIndex === 1, innerWidth),
+			this.renderRow("线框美化", booleanLabel(settings.chromeFrame.enabled), "控制消息、工具与 bash 外框", this.selectedIndex === 0, innerWidth),
+			this.renderRow("Assistant 正文线框", booleanLabel(settings.chromeFrame.assistantFrame), "控制 assistant 正文回复是否包线框", this.selectedIndex === 1, innerWidth),
 			"",
 			hint,
 		];
@@ -101,11 +102,11 @@ export class AlpsPiSettingsComponent {
 
 	private toggle(option: OptionId): void {
 		const state = this.ops.getState();
-		if (option === "patchEnabled") {
-			state.enabled ? this.ops.disable() : this.ops.enable();
+		if (option === "chromeFrame.enabled") {
+			state.config.settings.chromeFrame.enabled ? this.ops.disableChromeFrame() : this.ops.enableChromeFrame();
 			return;
 		}
-		state.config.settings.assistantFrame = !state.config.settings.assistantFrame;
+		state.config.settings.chromeFrame.assistantFrame = !state.config.settings.chromeFrame.assistantFrame;
 	}
 
 	private close(): void {

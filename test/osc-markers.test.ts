@@ -4,8 +4,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { AssistantMessageComponent, UserMessageComponent, initTheme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { renderNeonBox } from "../src/chrome.ts";
-import { extractBoundaryOscMarkers, restoreBoundaryOscMarkers, stripBoundaryOscMarkers } from "../src/osc.ts";
+import { renderNeonBox } from "../src/features/chrome-frame/chrome.ts";
+import { extractBoundaryOscMarkers, restoreBoundaryOscMarkers, stripBoundaryOscMarkers } from "../src/features/chrome-frame/osc.ts";
 import { createFakeTheme, stripAnsi } from "./helpers.test.ts";
 
 const START = "\x1b]133;A\x07";

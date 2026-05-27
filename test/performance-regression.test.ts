@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createWrappedRender } from "../src/patch.ts";
+import { createWrappedRender } from "../src/features/chrome-frame/patch.ts";
 import { createFakeTheme } from "./helpers.test.ts";
 
 class HeavyComponent {

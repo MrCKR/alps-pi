@@ -5,11 +5,12 @@ import test from "node:test";
 import {
 	PATCH_KEY,
 	createInitialPatchState,
+	createWrappedRender,
 	disablePatch,
 	enablePatch,
 	getGlobalPatchState,
 	type ComponentTarget,
-} from "../src/patch.ts";
+} from "../src/features/chrome-frame/patch.ts";
 import { createFakeTheme, stripAnsi } from "./helpers.test.ts";
 
 class UserFake {
@@ -138,6 +139,27 @@ test("模拟 reload 后再次加载模块不重复 patch", () => {
 	const secondState = enablePatch(list);
 	assert.equal(secondState, state);
 	assert.equal(UserFake.prototype.render, first);
+});
+
+test("模拟旧 wrapper 热重载后会迁移到当前 wrapper 且保留原始 render", () => {
+	const list = targets();
+	const original = UserFake.prototype.render;
+	// 模拟旧版本已 patch 但没有当前 wrapper 元数据的 render。
+	const oldWrapped = function oldAlpsChromeWrappedRender(this: UserFake, width: number) {
+		return original.call(this, width);
+	};
+	UserFake.prototype.render = oldWrapped as typeof UserFake.prototype.render;
+	const state = getGlobalPatchState();
+	state.enabled = true;
+	state.patched.add("UserMessageComponent");
+	state.originals.set("UserMessageComponent", original);
+
+	enablePatch(list);
+
+	assert.notEqual(UserFake.prototype.render, oldWrapped);
+	assert.notEqual(UserFake.prototype.render, original);
+	disablePatch(list);
+	assert.equal(UserFake.prototype.render, original);
 });
 
 test("patched render 产生单层 box", () => {

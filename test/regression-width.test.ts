@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { renderNeonBox } from "../src/chrome.ts";
+import { renderNeonBox } from "../src/features/chrome-frame/chrome.ts";
 import { createFakeTheme, assertLinesWithin, stripAnsi } from "./helpers.test.ts";
 
 const cases: Array<[number, string, string]> = [

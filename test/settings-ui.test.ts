@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createInitialPatchState } from "../src/patch.ts";
+import { createInitialPatchState } from "../src/features/chrome-frame/patch.ts";
 import { AlpsPiSettingsComponent } from "../src/settings-ui.ts";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { createFakeTheme, stripAnsi } from "./helpers.test.ts";
@@ -15,25 +15,27 @@ function createPanel() {
 		closed = true;
 	}, {
 		getState: () => state,
-		enable: () => {
+		enableChromeFrame: () => {
 			calls.push("enable");
 			state.enabled = true;
+			state.config.settings.chromeFrame.enabled = true;
 			return state;
 		},
-		disable: () => {
+		disableChromeFrame: () => {
 			calls.push("disable");
 			state.enabled = false;
+			state.config.settings.chromeFrame.enabled = false;
 			return state;
 		},
 	});
 	return { state, calls, component, isClosed: () => closed };
 }
 
-test("设置界面只展示总开关和正文线框，并渲染完整边框", () => {
+test("设置界面只展示线框美化和正文线框，并渲染完整边框", () => {
 	const { component } = createPanel();
 	const lines = component.render(80);
 	const plain = stripAnsi(lines.join("\n"));
-	assert.match(plain, /总开关/);
+	assert.match(plain, /线框美化/);
 	assert.match(plain, /正文线框/);
 	assert.doesNotMatch(plain, /preview/i);
 	assert.ok(stripAnsi(lines[0]!).startsWith("╭"));
@@ -46,23 +48,23 @@ test("设置界面只展示总开关和正文线框，并渲染完整边框", ()
 	}
 });
 
-test("设置界面可切换总开关", () => {
+test("设置界面可切换线框美化", () => {
 	const { state, calls, component } = createPanel();
-	assert.equal(state.enabled, false);
+	assert.equal(state.config.settings.chromeFrame.enabled, false);
 	component.handleInput(" ");
-	assert.equal(state.enabled, true);
+	assert.equal(state.config.settings.chromeFrame.enabled, true);
 	assert.deepEqual(calls, ["enable"]);
 	component.handleInput(" ");
-	assert.equal(state.enabled, false);
+	assert.equal(state.config.settings.chromeFrame.enabled, false);
 	assert.deepEqual(calls, ["enable", "disable"]);
 });
 
 test("设置界面可切换正文线框并关闭", () => {
 	const { state, component, isClosed } = createPanel();
-	assert.equal(state.config.settings.assistantFrame, true);
+	assert.equal(state.config.settings.chromeFrame.assistantFrame, true);
 	component.handleInput("\x1b[B");
 	component.handleInput(" ");
-	assert.equal(state.config.settings.assistantFrame, false);
+	assert.equal(state.config.settings.chromeFrame.assistantFrame, false);
 	component.handleInput("q");
 	assert.equal(isClosed(), true);
 });
