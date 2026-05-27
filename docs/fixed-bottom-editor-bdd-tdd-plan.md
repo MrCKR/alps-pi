@@ -9,7 +9,7 @@
 - 默认关闭。
 - 只能通过 `/alps-pi` 设置面板开关控制。
 - 实现真正的“聊天区在上方滚动，输入框固定在终端底部”，不是普通 `belowEditor` widget。
-- 第一版只做固定输入框最小可用闭环，不加入 powerline-footer 的 stash、bash mode、chat jump、鼠标选择、powerline 状态条等附加功能。
+- 第一版只做固定输入框最小可用闭环，不加入 stash、bash mode、chat jump、鼠标选择、状态条等附加功能。
 
 ## 2. 成功标准
 
@@ -41,20 +41,21 @@
 新增模块建议：
 
 ```text
-src/fixed-bottom-editor/
+src/features/fixed-bottom-editor/
   runtime.ts       运行时启停、session 绑定、资源恢复
   cluster.ts       底部固定区域组装、裁剪、光标提取
   compositor.ts    terminal split compositor，负责真正固定底部绘制
+  index.ts         fixed editor feature 统一导出
 ```
 
 现有文件职责：
 
 ```text
-src/settings.ts      新增 fixedBottomEditor 默认 false
-src/settings-ui.ts   新增设置面板第三项
-src/commands.ts      把 fixed runtime ops 注入设置面板，status 展示状态
-index.ts             session_start 绑定 runtime，session_shutdown 释放 runtime
-src/patch.ts         保持消息 chrome patch 职责，不塞 compositor 状态
+src/settings.ts                         新增 fixedBottomEditor.enabled 默认 false
+src/settings-ui.ts                      新增设置面板第三项
+src/commands.ts                         把 fixed runtime ops 注入设置面板，status 展示状态
+index.ts                                session_start 绑定 runtime，session_shutdown 释放 runtime
+src/features/chrome-frame/patch.ts      保持消息 chrome patch 职责，不塞 compositor 状态
 ```
 
 ### 4.2 状态设计
@@ -63,15 +64,23 @@ src/patch.ts         保持消息 chrome patch 职责，不塞 compositor 状态
 
 ```ts
 export type AlpsPiSettings = {
-  patchEnabled: boolean;
-  assistantFrame: boolean;
-  fixedBottomEditor: boolean;
+  chromeFrame: {
+    enabled: boolean;
+    assistantFrame: boolean;
+  };
+  fixedBottomEditor: {
+    enabled: boolean;
+  };
 };
 
 export const DEFAULT_SETTINGS: AlpsPiSettings = {
-  patchEnabled: true,
-  assistantFrame: true,
-  fixedBottomEditor: false,
+  chromeFrame: {
+    enabled: false,
+    assistantFrame: true,
+  },
+  fixedBottomEditor: {
+    enabled: false,
+  },
 };
 ```
 
@@ -111,7 +120,7 @@ Scenario: 新会话默认不启用固定输入框
 
 验收测试：
 
-- `DEFAULT_SETTINGS.fixedBottomEditor === false`
+- `DEFAULT_SETTINGS.fixedBottomEditor.enabled === false`
 - fake `session_start` 下 runtime 不安装。
 
 ---
@@ -238,7 +247,7 @@ Scenario: editor render 行包含 CURSOR_MARKER
 先写测试：
 
 - `test/settings.test.ts`
-  - `DEFAULT_SETTINGS.fixedBottomEditor` 为 `false`。
+  - `DEFAULT_SETTINGS.fixedBottomEditor.enabled` 为 `false`。
   - `cloneDefaultSettings()` 返回包含 `fixedBottomEditor` 的新对象。
 
 - `test/settings-ui.test.ts`
@@ -291,7 +300,7 @@ C:/Users/Administrator/AppData/Local/nvm/v22.22.3/npm.cmd test
 
 再实现：
 
-- 新增 `src/fixed-bottom-editor/cluster.ts`。
+- 新增 `src/features/fixed-bottom-editor/cluster.ts`。
 - 从 `@earendil-works/pi-tui` 使用 `CURSOR_MARKER`、`visibleWidth`、`truncateToWidth`。
 
 ---
@@ -312,7 +321,7 @@ C:/Users/Administrator/AppData/Local/nvm/v22.22.3/npm.cmd test
 
 再实现：
 
-- 新增 `src/fixed-bottom-editor/compositor.ts`。
+- 新增 `src/features/fixed-bottom-editor/compositor.ts`。
 - 只保留固定输入框必要逻辑：
   - synchronized output
   - scroll region reset
@@ -341,7 +350,7 @@ C:/Users/Administrator/AppData/Local/nvm/v22.22.3/npm.cmd test
 
 再实现：
 
-- 新增 `src/fixed-bottom-editor/runtime.ts`。
+- 新增 `src/features/fixed-bottom-editor/runtime.ts`。
 - runtime 不依赖 `patch.ts` 内部 monkey patch 结构。
 
 ---
@@ -377,7 +386,7 @@ C:/Users/Administrator/AppData/Local/nvm/v22.22.3/npm.cmd test
 - 更新 `README.md`：
   - 命令仍然只有 `/alps-pi`、`status`、`preview`。
   - 设置面板包含三项。
-  - 风险说明：固定输入框会接管终端绘制，若已启用 powerline-footer fixed editor，不建议同时开启。
+  - 风险说明：固定输入框会接管 editor/footer 和 terminal 绘制，属于实验性开关。
 
 ## 7. 风险与对应防护
 
@@ -386,7 +395,7 @@ C:/Users/Administrator/AppData/Local/nvm/v22.22.3/npm.cmd test
 | 终端 scroll region 污染 | dispose 和 emergency reset 必须 reset scroll region |
 | `terminal.write` 未恢复 | compositor 保存原引用，dispose 幂等恢复 |
 | overlay 被覆盖 | overlay 可见时 compositor 走原始 render/write |
-| 和 powerline-footer 冲突 | 默认关闭，启用前做能力探测；失败时 fail closed |
+| 其他 terminal/TUI patch 冲突 | 默认关闭，启用前做能力探测；失败时 fail closed |
 | 光标/IME 错位 | cluster 提取 `CURSOR_MARKER`，compositor 移动硬件光标 |
 | 行宽超限导致 TUI 崩溃 | cluster/compositor 所有输出行做 visibleWidth 校验与截断 |
 | reload 后残留状态 | `session_shutdown` 必须调用 runtime.dispose() |
@@ -407,7 +416,7 @@ C:/Users/Administrator/AppData/Local/nvm/v22.22.3/npm.cmd test
 9. Enter 提交、Alt+Enter 换行、Esc/Ctrl+C 行为不回归。
 10. `/alps-pi preview` overlay 不被底部输入框覆盖。
 11. `/reload`、退出 pi 后 shell 终端不残留鼠标/scroll region/alternate screen 异常。
-12. 如果 `pi-powerline-footer-alps` fixed editor 同时开启，`alps-pi` 应拒绝启用或至少明确告警。
+12. 若存在其他 terminal/TUI patch，固定输入框启用失败时应 fail closed，并能关闭恢复。
 
 ## 9. 实施顺序建议
 

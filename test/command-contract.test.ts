@@ -5,14 +5,18 @@ import test from "node:test";
 import { createInitialPatchState, PATCH_KEY } from "../src/features/chrome-frame/patch.ts";
 import { registerAlpsPiCommand } from "../src/commands.ts";
 
-function createHarness() {
+function createHarness(options: { fixedFailure?: string } = {}) {
 	const commands = new Map<string, any>();
 	const notifications: Array<{ message: string; level: string }> = [];
 	const customCalls: any[] = [];
 	const customErrors: Error[] = [];
+	const overlayHandles: any[] = [];
+	let focusedComponent: any;
 	let customResult: Promise<any> = Promise.resolve(undefined);
 	let confirmResult = false;
 	const patchCalls: string[] = [];
+	const fixedCalls: boolean[] = [];
+	let fixedInstalled = false;
 	const pi = {
 		registerCommand(name: string, options: any) {
 			commands.set(name, options);
@@ -38,8 +42,25 @@ function createHarness() {
 					done = resolve;
 				});
 				try {
-					const component = await factory({}, ctx.ui.theme, {}, done);
-					customCalls.push({ factory, options, component, done });
+					const fakeTui: any = {
+						overlayStack: [],
+						get focusedComponent() {
+							return focusedComponent;
+						},
+					};
+					const component = await factory(fakeTui, ctx.ui.theme, {}, done);
+					focusedComponent = component;
+					const handle = {
+						focusCalls: 0,
+						focus() {
+							this.focusCalls += 1;
+							focusedComponent = component;
+						},
+					};
+					fakeTui.overlayStack.push({ component, preFocus: undefined });
+					options?.onHandle?.(handle);
+					overlayHandles.push(handle);
+					customCalls.push({ factory, options, component, done, fakeTui });
 					return await customResult;
 				} catch (error) {
 					customErrors.push(error as Error);
@@ -66,6 +87,26 @@ function createHarness() {
 			return state;
 		},
 		status: () => (globalThis as any)[PATCH_KEY],
+		setFixedBottomEditorEnabled: (enabled: boolean) => {
+			fixedCalls.push(enabled);
+			const state = (globalThis as any)[PATCH_KEY];
+			if (options.fixedFailure && enabled) {
+				fixedInstalled = false;
+				state.config.settings.fixedBottomEditor.enabled = false;
+				return { enabled: false, installed: false, failure: options.fixedFailure };
+			}
+			fixedInstalled = enabled;
+			state.config.settings.fixedBottomEditor.enabled = enabled;
+			return { enabled, installed: fixedInstalled };
+		},
+		getFixedBottomEditorStatus: () => {
+			const status = {
+				enabled: (globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled,
+				installed: fixedInstalled,
+				failure: options.fixedFailure,
+			};
+			return status.failure ? status : { enabled: status.enabled, installed: status.installed };
+		},
 	});
 	return {
 		commands,
@@ -73,7 +114,13 @@ function createHarness() {
 		notifications,
 		customCalls,
 		customErrors,
+		overlayHandles,
 		patchCalls,
+		fixedCalls,
+		getFocusedComponent: () => focusedComponent,
+		setFocusedComponent(value: any) {
+			focusedComponent = value;
+		},
 		setConfirmResult(value: boolean) {
 			confirmResult = value;
 		},
@@ -90,10 +137,13 @@ test("注册 /alps-pi 命令且描述为中文", () => {
 	assert.match(harness.commands.get("alps-pi").description, /打开 Alps Pi 美化设置/);
 });
 
-test("status 在 disabled 时显示 disabled", async () => {
+test("status 在 disabled 时精确显示 patch 与 fixed editor 状态", async () => {
 	const harness = createHarness();
 	await harness.commands.get("alps-pi").handler("status", harness.ctx);
-	assert.ok(harness.notifications.some((n) => /disabled/.test(n.message)));
+	const message = harness.notifications.at(-1)?.message ?? "";
+	assert.match(message, /Alps Pi: disabled/);
+	assert.match(message, /fixedBottomEditor: disabled/);
+	assert.match(message, /fixedBottomEditorInstalled: false/);
 });
 
 test("status 在 enabled 时显示 patched components", async () => {
@@ -102,6 +152,20 @@ test("status 在 enabled 时显示 patched components", async () => {
 	(globalThis as any)[PATCH_KEY].patched.add("AssistantMessageComponent");
 	await harness.commands.get("alps-pi").handler("status", harness.ctx);
 	assert.ok(harness.notifications.some((n) => /enabled/.test(n.message) && /AssistantMessageComponent/.test(n.message)));
+});
+
+test("status 输出包含 fixed editor 状态", async () => {
+	const harness = createHarness();
+	(globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled = true;
+	await harness.commands.get("alps-pi").handler("status", harness.ctx);
+	assert.ok(harness.notifications.some((n) => /fixedBottomEditor: enabled/.test(n.message) && /fixedBottomEditorInstalled: false/.test(n.message)));
+});
+
+test("status 输出 fixed editor failure 行", async () => {
+	const harness = createHarness({ fixedFailure: "boom" });
+	await harness.commands.get("alps-pi").handler("status", harness.ctx);
+	const message = harness.notifications.at(-1)?.message ?? "";
+	assert.match(message, /fixedBottomEditorFailure: boom/);
 });
 
 test("无参数打开设置界面，可切换线框美化与正文线框", async () => {
@@ -117,6 +181,55 @@ test("无参数打开设置界面，可切换线框美化与正文线框", async
 	component.handleInput("\x1b[B");
 	component.handleInput(" ");
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.chromeFrame.assistantFrame, false);
+	component.handleInput("q");
+	await pending;
+});
+
+test("设置界面切换固定输入框调用 fixed op 且不调用 message patch", async () => {
+	const harness = createHarness();
+	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
+	await Promise.resolve();
+	const component = harness.customCalls[0].component;
+	component.handleInput("\x1b[B");
+	component.handleInput("\x1b[B");
+	component.handleInput(" ");
+	assert.deepEqual(harness.fixedCalls, [true]);
+	assert.deepEqual(harness.patchCalls, []);
+	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, true);
+	component.handleInput("q");
+	await pending;
+});
+
+test("设置界面切换固定输入框后恢复 overlay 焦点", async () => {
+	const harness = createHarness();
+	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
+	await Promise.resolve();
+	const component = harness.customCalls[0].component;
+	const fakeEditor = { render: () => [] };
+	harness.setFocusedComponent(fakeEditor);
+	component.handleInput("\x1b[B");
+	component.handleInput("\x1b[B");
+	component.handleInput(" ");
+
+	assert.equal(harness.getFocusedComponent(), component);
+	assert.equal(harness.overlayHandles[0]?.focusCalls, 1);
+	assert.equal(harness.customCalls[0].fakeTui.overlayStack[0].preFocus, fakeEditor);
+	component.handleInput("q");
+	await pending;
+});
+
+test("设置界面 fixed op 返回 failure 时回滚为 OFF", async () => {
+	const harness = createHarness({ fixedFailure: "boom" });
+	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
+	await Promise.resolve();
+	const component = harness.customCalls[0].component;
+	component.handleInput("\x1b[B");
+	component.handleInput("\x1b[B");
+	component.handleInput(" ");
+
+	assert.deepEqual(harness.fixedCalls, [true]);
+	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, false);
+	assert.match(component.render(80).join("\n"), /固定输入框\s+OFF/);
 	component.handleInput("q");
 	await pending;
 });
@@ -145,11 +258,12 @@ test("preview custom rejection 被 await/catch 并通知错误", async () => {
 	assert.ok(harness.notifications.some((n) => n.level === "error" && /Preview failed: custom failed/.test(n.message)));
 });
 
-test("enable/disable/config 已移除并返回帮助", async () => {
-	for (const action of ["enable", "disable", "config"]) {
+test("enable/disable/config/config-ui/settings 已移除并返回帮助", async () => {
+	for (const action of ["enable", "disable", "config", "config-ui", "settings"]) {
 		const harness = createHarness();
 		await harness.commands.get("alps-pi").handler(action, harness.ctx);
 		assert.deepEqual(harness.patchCalls, []);
+		assert.deepEqual(harness.fixedCalls, []);
 		assert.ok(harness.notifications.some((n) => /用法/.test(n.message) && /preview\/status/.test(n.message)), action);
 	}
 });

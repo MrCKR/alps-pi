@@ -3,14 +3,35 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createPreviewComponent, disablePatch, enablePatch, formatPatchStatus, getGlobalPatchState, getRuntimeTheme, type PatchState } from "./features/chrome-frame/index.ts";
 import { createSettingsComponent } from "./settings-ui.ts";
+import type { FixedBottomEditorStatus } from "./settings.ts";
 
 export type CommandOps = {
 	enable?: () => PatchState;
 	disable?: () => PatchState;
 	status?: () => PatchState;
+	setFixedBottomEditorEnabled?: (enabled: boolean) => FixedBottomEditorStatus | void;
+	getFixedBottomEditorStatus?: () => FixedBottomEditorStatus;
 };
 
 const HELP = "用法：/alps-pi 打开美化设置；可选参数 preview/status。";
+
+/** 返回未注入 runtime 时的保守状态；真实启停必须由入口传入 ops。 */
+function getDefaultFixedBottomEditorStatus(state: PatchState): FixedBottomEditorStatus {
+	const status: FixedBottomEditorStatus = {
+		enabled: state.config.settings.fixedBottomEditor.enabled,
+		installed: false,
+	};
+	if (state.config.settings.fixedBottomEditor.enabled) {
+		status.failure = "fixed bottom editor runtime ops not registered";
+	}
+	return status;
+}
+
+/** 汇总 fixed editor runtime 状态输出。 */
+function formatFixedBottomEditorStatus(status: FixedBottomEditorStatus): string {
+	const failure = status.failure ? `\nfixedBottomEditorFailure: ${status.failure}` : "";
+	return `fixedBottomEditor: ${status.enabled ? "enabled" : "disabled"}\nfixedBottomEditorInstalled: ${status.installed}${failure}`;
+}
 
 function notify(ctx: any, message: string, level: "info" | "warning" | "error" = "info") {
 	if (ctx?.ui?.notify) {
@@ -22,14 +43,42 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 	pi.registerCommand("alps-pi", {
 		description: "打开 Alps Pi 美化设置",
 		handler: async (args: string, ctx: any) => {
-			const action = (args ?? "").trim().split(/\s+/)[0] || "settings";
+			const trimmedArgs = (args ?? "").trim();
+			const action = trimmedArgs === "" ? "" : trimmedArgs.split(/\s+/)[0]!;
 			const statusFn = ops.status ?? getGlobalPatchState;
 			const enableFn = ops.enable ?? (() => enablePatch());
 			const disableFn = ops.disable ?? (() => disablePatch());
+			const getFixedStatus = ops.getFixedBottomEditorStatus ?? (() => getDefaultFixedBottomEditorStatus(statusFn()));
+			const setFixedEnabled = ops.setFixedBottomEditorEnabled ?? ((enabled: boolean) => {
+				const state = statusFn();
+				state.config.settings.fixedBottomEditor.enabled = false;
+				const status: FixedBottomEditorStatus = { enabled: false, installed: false };
+				if (enabled) {
+					status.failure = "fixed bottom editor runtime ops not registered";
+				}
+				return status;
+			});
 
 			switch (action) {
-				case "settings":
-				case "config-ui": {
+				case "": {
+					let settingsOverlayHandle: { focus?: () => void } | undefined;
+					let settingsOverlayComponent: any;
+					let settingsTui: any;
+					const refocusSettingsOverlay = () => {
+						try {
+							const focusedBeforeRefocus = settingsTui?.focusedComponent;
+							const overlayStack = Reflect.get(settingsTui ?? {}, "overlayStack");
+							const entry = Array.isArray(overlayStack)
+								? overlayStack.find((candidate) => candidate?.component === settingsOverlayComponent)
+								: undefined;
+							if (entry && focusedBeforeRefocus && focusedBeforeRefocus !== settingsOverlayComponent) {
+								entry.preFocus = focusedBeforeRefocus;
+							}
+							settingsOverlayHandle?.focus?.();
+						} catch {
+							// 焦点恢复是 best-effort，不能影响开关状态回写。
+						}
+					};
 					if (!ctx?.ui?.custom) {
 						notify(ctx, "Settings require interactive UI.", "warning");
 						return;
@@ -37,14 +86,28 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 					try {
 						const fallbackTheme = ctx?.ui?.theme ?? getRuntimeTheme();
 						await ctx.ui.custom(
-							(_tui: any, theme: any, _keybindings: any, done: () => void) => createSettingsComponent(theme ?? fallbackTheme, done, {
-								getState: statusFn,
-								enableChromeFrame: enableFn,
-								disableChromeFrame: disableFn,
-							}),
+							(_tui: any, theme: any, _keybindings: any, done: () => void) => {
+								settingsTui = _tui;
+								settingsOverlayComponent = createSettingsComponent(theme ?? fallbackTheme, done, {
+									getState: statusFn,
+									enableChromeFrame: enableFn,
+									disableChromeFrame: disableFn,
+									setFixedBottomEditorEnabled: (enabled) => {
+										try {
+											return setFixedEnabled(enabled);
+										} finally {
+											refocusSettingsOverlay();
+										}
+									},
+								});
+								return settingsOverlayComponent;
+							},
 							{
 								overlay: true,
 								overlayOptions: { anchor: "center", width: "72%", minWidth: 56, maxHeight: "60%", margin: 1 },
+								onHandle: (handle: any) => {
+									settingsOverlayHandle = handle;
+								},
 							},
 						);
 					} catch (error) {
@@ -54,7 +117,7 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 					return;
 				}
 				case "status": {
-					notify(ctx, formatPatchStatus(statusFn()), "info");
+					notify(ctx, `${formatPatchStatus(statusFn())}\n${formatFixedBottomEditorStatus(getFixedStatus())}`, "info");
 					return;
 				}
 				case "preview": {

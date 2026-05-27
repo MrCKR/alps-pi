@@ -2,15 +2,17 @@
 
 import { Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { type PatchState, disablePatch, enablePatch, getGlobalPatchState } from "./features/chrome-frame/index.ts";
+import type { FixedBottomEditorStatus } from "./settings.ts";
 import type { ThemeLike } from "./features/chrome-frame/styles.ts";
 
 export type SettingsPanelOps = {
 	getState?: () => PatchState;
 	enableChromeFrame?: () => PatchState;
 	disableChromeFrame?: () => PatchState;
+	setFixedBottomEditorEnabled?: (enabled: boolean) => FixedBottomEditorStatus | void;
 };
 
-const OPTIONS = ["chromeFrame.enabled", "chromeFrame.assistantFrame"] as const;
+const OPTIONS = ["chromeFrame.enabled", "chromeFrame.assistantFrame", "fixedBottomEditor.enabled"] as const;
 type OptionId = (typeof OPTIONS)[number];
 
 function padToWidth(line: string, width: number): string {
@@ -37,6 +39,7 @@ export class AlpsPiSettingsComponent {
 			getState: ops.getState ?? getGlobalPatchState,
 			enableChromeFrame: ops.enableChromeFrame ?? (() => enablePatch()),
 			disableChromeFrame: ops.disableChromeFrame ?? (() => disablePatch()),
+			setFixedBottomEditorEnabled: ops.setFixedBottomEditorEnabled ?? (() => undefined),
 		};
 	}
 
@@ -52,6 +55,7 @@ export class AlpsPiSettingsComponent {
 			"",
 			this.renderRow("线框美化", booleanLabel(settings.chromeFrame.enabled), "控制消息、工具与 bash 外框", this.selectedIndex === 0, innerWidth),
 			this.renderRow("Assistant 正文线框", booleanLabel(settings.chromeFrame.assistantFrame), "控制 assistant 正文回复是否包线框", this.selectedIndex === 1, innerWidth),
+			this.renderRow("固定输入框", booleanLabel(settings.fixedBottomEditor.enabled), "控制底部固定编辑器运行时", this.selectedIndex === 2, innerWidth),
 			"",
 			hint,
 		];
@@ -104,6 +108,15 @@ export class AlpsPiSettingsComponent {
 		const state = this.ops.getState();
 		if (option === "chromeFrame.enabled") {
 			state.config.settings.chromeFrame.enabled ? this.ops.disableChromeFrame() : this.ops.enableChromeFrame();
+			return;
+		}
+		if (option === "fixedBottomEditor.enabled") {
+			const nextEnabled = !state.config.settings.fixedBottomEditor.enabled;
+			state.config.settings.fixedBottomEditor.enabled = nextEnabled;
+			const status = this.ops.setFixedBottomEditorEnabled(nextEnabled);
+			if (status) {
+				state.config.settings.fixedBottomEditor.enabled = status.enabled;
+			}
 			return;
 		}
 		state.config.settings.chromeFrame.assistantFrame = !state.config.settings.chromeFrame.assistantFrame;

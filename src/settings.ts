@@ -7,9 +7,25 @@ export type ChromeFrameSettings = {
 	assistantFrame: boolean;
 };
 
+export type FixedBottomEditorSettings = {
+	/** 固定输入框：控制是否启用底部固定编辑器运行时。 */
+	enabled: boolean;
+};
+
+export type FixedBottomEditorStatus = {
+	/** 用户期望的运行时开关状态。 */
+	enabled: boolean;
+	/** runtime 是否已完成 editor/footer/compositor 安装。 */
+	installed: boolean;
+	/** runtime 启停失败原因；失败时必须 fail closed。 */
+	failure?: string;
+};
+
 export type AlpsPiSettings = {
 	/** 线框美化功能配置。 */
 	chromeFrame: ChromeFrameSettings;
+	/** 固定底部输入框功能配置。 */
+	fixedBottomEditor: FixedBottomEditorSettings;
 };
 
 export const DEFAULT_SETTINGS: AlpsPiSettings = {
@@ -17,10 +33,14 @@ export const DEFAULT_SETTINGS: AlpsPiSettings = {
 		enabled: false,
 		assistantFrame: true,
 	},
+	fixedBottomEditor: {
+		enabled: false,
+	},
 };
 
 export function cloneDefaultSettings(): AlpsPiSettings {
 	return {
 		chromeFrame: { ...DEFAULT_SETTINGS.chromeFrame },
+		fixedBottomEditor: { ...DEFAULT_SETTINGS.fixedBottomEditor },
 	};
 }

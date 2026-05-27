@@ -105,12 +105,19 @@ function normalizeSettings(settings: AlpsPiSettings | any, enabled: boolean): Al
 				...settings.chromeFrame,
 				enabled,
 			},
+			fixedBottomEditor: {
+				...DEFAULT_CONFIG.settings.fixedBottomEditor,
+				...(settings.fixedBottomEditor ?? {}),
+			},
 		} as AlpsPiSettings;
 	}
 	return {
 		chromeFrame: {
 			enabled,
 			assistantFrame: Boolean(settings?.assistantFrame ?? DEFAULT_CONFIG.settings.chromeFrame.assistantFrame),
+		},
+		fixedBottomEditor: {
+			enabled: Boolean(settings?.fixedBottomEditor?.enabled ?? DEFAULT_CONFIG.settings.fixedBottomEditor.enabled),
 		},
 	};
 }
@@ -122,6 +129,7 @@ function syncChromeFrameEnabled(state: PatchState): void {
 function createTrackedSettings(settings: AlpsPiSettings, enabled: boolean, onChange: () => void): AlpsPiSettings {
 	const normalized = normalizeSettings(settings, enabled);
 	normalized.chromeFrame = createTrackedObject(normalized.chromeFrame, onChange);
+	normalized.fixedBottomEditor = createTrackedObject(normalized.fixedBottomEditor, onChange);
 	return createTrackedObject(normalized, onChange);
 }
 
