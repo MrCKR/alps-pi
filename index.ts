@@ -3,21 +3,38 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerAlpsPiCommand } from "./src/commands.ts";
 import { disablePatch, enablePatch, getGlobalPatchState } from "./src/features/chrome-frame/index.ts";
+import { cloneSettings, readPersistedSettings, writePersistedSettings } from "./src/settings-store.ts";
+import { createBottomStatusRuntime, registerBottomStatusShortcuts, type BottomStatusRuntime } from "./src/features/bottom-status/index.ts";
 import { createFixedBottomEditorRuntime, type FixedBottomEditorRuntime } from "./src/features/fixed-bottom-editor/index.ts";
 
 export type AlpsPiRuntimeDeps = {
 	/** 测试注入点：生产环境使用模块级 fixed bottom editor runtime。 */
 	fixedBottomEditorRuntime?: FixedBottomEditorRuntime;
+	/** 测试注入点：生产环境使用模块级 bottom status runtime。 */
+	bottomStatusRuntime?: BottomStatusRuntime;
 };
 
 const defaultFixedBottomEditorRuntime = createFixedBottomEditorRuntime();
+const defaultBottomStatusRuntime = createBottomStatusRuntime();
 
 /** 注册扩展入口；deps 仅供生命周期测试注入，生产环境不传。 */
 export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDeps = {}) {
 	const fixedBottomEditorRuntime = deps.fixedBottomEditorRuntime ?? defaultFixedBottomEditorRuntime;
+	const bottomStatusRuntime = deps.bottomStatusRuntime ?? defaultBottomStatusRuntime;
 
-	// 默认启用运行时外框；固定输入框仍默认关闭，只由设置面板开关控制。
-	enablePatch();
+	const state = getGlobalPatchState();
+	const persistedSettings = readPersistedSettings();
+	state.config.settings.chromeFrame.enabled = persistedSettings.chromeFrame.enabled;
+	state.config.settings.chromeFrame.assistantFrame = persistedSettings.chromeFrame.assistantFrame;
+	state.config.settings.fixedBottomEditor.enabled = persistedSettings.fixedBottomEditor.enabled;
+	state.config.settings.bottomStatus.enabled = persistedSettings.bottomStatus.enabled;
+
+	// 消息线框按持久化设置启停；固定输入框和底部状态栏由 session_start 在 UI 可用后安装。
+	if (state.config.settings.chromeFrame.enabled) {
+		enablePatch();
+	} else {
+		disablePatch();
+	}
 	registerAlpsPiCommand(pi, {
 		setFixedBottomEditorEnabled: (enabled, ctx) => {
 			const state = getGlobalPatchState();
@@ -26,27 +43,71 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 			fixedBottomEditorRuntime.bindSession(ctx);
 			const status = fixedBottomEditorRuntime.setEnabled(enabled);
 			state.config.settings.fixedBottomEditor.enabled = status.enabled;
+			writePersistedSettings(state.config.settings);
 			return status;
 		},
 		getFixedBottomEditorStatus: () => fixedBottomEditorRuntime.getStatus(),
+		setBottomStatusEnabled: (enabled, ctx) => {
+			const state = getGlobalPatchState();
+			state.config.settings.bottomStatus.enabled = enabled;
+			bottomStatusRuntime.bindSession(ctx);
+			bottomStatusRuntime.setEnabled(enabled);
+			writePersistedSettings(state.config.settings);
+		},
+		onSettingsChanged: (settings) => {
+			writePersistedSettings(settings);
+		},
 	});
+	registerBottomStatusShortcuts(pi, bottomStatusRuntime);
 
 	// session_start 保存当前 ctx；若设置已打开，则立即尝试安装 fixed editor。
 	pi.on("session_start", (_event: any, ctx: any) => {
 		fixedBottomEditorRuntime.bindSession(ctx);
+		bottomStatusRuntime.bindSession(ctx);
 		const state = getGlobalPatchState();
 		if (state.config.settings.fixedBottomEditor.enabled) {
 			const status = fixedBottomEditorRuntime.setEnabled(true);
 			state.config.settings.fixedBottomEditor.enabled = status.enabled;
 		}
+		bottomStatusRuntime.setEnabled(state.config.settings.bottomStatus.enabled);
 	});
 
-	// runtime shutdown/reload 时先恢复 editor/footer/compositor，并保证固定输入框回到默认关闭。
+	pi.on("model_select", (_event: any, ctx: any) => {
+		bottomStatusRuntime.bindSession(ctx);
+		bottomStatusRuntime.requestRender();
+	});
+
+	pi.on("thinking_level_select", (event: any, ctx: any) => {
+		bottomStatusRuntime.bindSession(ctx);
+		bottomStatusRuntime.setThinkingLevel(event?.level);
+	});
+
+	pi.on("message_update", (event: any, ctx: any) => {
+		bottomStatusRuntime.bindSession(ctx);
+		bottomStatusRuntime.setLiveUsage(event?.message?.usage);
+	});
+
+	pi.on("message_end", (_event: any, ctx: any) => {
+		bottomStatusRuntime.bindSession(ctx);
+		bottomStatusRuntime.clearLiveUsage();
+	});
+
+	pi.on("turn_end", (_event: any, ctx: any) => {
+		bottomStatusRuntime.bindSession(ctx);
+		bottomStatusRuntime.clearLiveUsage();
+	});
+
+	// runtime shutdown/reload 时只释放 UI/terminal 资源；开关状态保留并持久化，供下一次 session_start 恢复。
 	pi.on("session_shutdown", () => {
+		const persisted = cloneSettings(getGlobalPatchState().config.settings);
 		try {
 			fixedBottomEditorRuntime.dispose();
+			bottomStatusRuntime.dispose();
 		} finally {
-			getGlobalPatchState().config.settings.fixedBottomEditor.enabled = false;
+			const state = getGlobalPatchState();
+			state.config.settings.fixedBottomEditor.enabled = persisted.fixedBottomEditor.enabled;
+			state.config.settings.bottomStatus.enabled = persisted.bottomStatus.enabled;
+			writePersistedSettings(state.config.settings);
 			disablePatch();
 		}
 	});

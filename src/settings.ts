@@ -12,6 +12,11 @@ export type FixedBottomEditorSettings = {
 	enabled: boolean;
 };
 
+export type BottomStatusSettings = {
+	/** 底部状态栏：显示模型、thinking、总 token 和当前时间。 */
+	enabled: boolean;
+};
+
 export type FixedBottomEditorStatus = {
 	/** 用户期望的运行时开关状态。 */
 	enabled: boolean;
@@ -26,6 +31,8 @@ export type AlpsPiSettings = {
 	chromeFrame: ChromeFrameSettings;
 	/** 固定底部输入框功能配置。 */
 	fixedBottomEditor: FixedBottomEditorSettings;
+	/** 底部状态栏功能配置。 */
+	bottomStatus: BottomStatusSettings;
 };
 
 export const DEFAULT_SETTINGS: AlpsPiSettings = {
@@ -34,6 +41,9 @@ export const DEFAULT_SETTINGS: AlpsPiSettings = {
 		assistantFrame: true,
 	},
 	fixedBottomEditor: {
+		enabled: true,
+	},
+	bottomStatus: {
 		enabled: false,
 	},
 };
@@ -42,5 +52,6 @@ export function cloneDefaultSettings(): AlpsPiSettings {
 	return {
 		chromeFrame: { ...DEFAULT_SETTINGS.chromeFrame },
 		fixedBottomEditor: { ...DEFAULT_SETTINGS.fixedBottomEditor },
+		bottomStatus: { ...DEFAULT_SETTINGS.bottomStatus },
 	};
 }

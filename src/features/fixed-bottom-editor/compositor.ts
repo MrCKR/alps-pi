@@ -1,6 +1,6 @@
 /** 功能：fixed bottom editor 最小 terminal split compositor 实现者：alps 实现日期：2026-05-27 */
 
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { isKeyRelease, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { FixedEditorCluster } from "./cluster.ts";
 
 type ProcessWithExit = Pick<typeof process, "once" | "removeListener">;
@@ -38,6 +38,13 @@ type RenderPatch = {
 	hiddenRender: (width: number) => string[];
 };
 
+type SgrMousePacket = {
+	code: number;
+	col: number;
+	row: number;
+	final: "M" | "m";
+};
+
 const COMPOSITOR_OWNER = Symbol("alps.pi.fixedBottomEditor.compositorOwner.v1");
 const DEFAULT_COLUMNS = 80;
 const DEFAULT_ROWS = 24;
@@ -55,6 +62,16 @@ export function exitAlternateScreen(): string {
 /** 禁用 alternate scroll，避免滚轮直接冲刷 fixed editor 所在的终端视口。 */
 export function disableAlternateScrollMode(): string {
 	return "\x1b[?1007l";
+}
+
+/** 启用 SGR mouse reporting，滚轮事件由 compositor 自己解释，避免滚走固定输入框。 */
+export function enableMouseReporting(): string {
+	return "\x1b[?1002h\x1b[?1006h";
+}
+
+/** 关闭 mouse reporting，释放终端鼠标输入。 */
+export function disableMouseReporting(): string {
+	return "\x1b[?1006l\x1b[?1002l\x1b[?1000l";
 }
 
 /** 恢复 alternate scroll，交回 Pi 默认终端行为。 */
@@ -104,7 +121,7 @@ export function showCursor(): string {
 
 /** dispose 时使用的最小终端恢复序列。 */
 export function resetFixedBottomEditorTerminalState(): string {
-	return beginSynchronizedOutput() + resetScrollRegion() + enableAlternateScrollMode() + exitAlternateScreen() + showCursor() + endSynchronizedOutput();
+	return beginSynchronizedOutput() + resetScrollRegion() + disableMouseReporting() + enableAlternateScrollMode() + exitAlternateScreen() + showCursor() + endSynchronizedOutput();
 }
 
 /** 生成底部 fixed cluster 的绘制序列：重置滚动区、定位、清行、写行并处理光标。 */
@@ -156,13 +173,21 @@ export class FixedBottomEditorCompositor {
 	private renderWrapper: TuiRender | null = null;
 	private doRenderWrapper: TuiDoRender | null = null;
 	private rowsGetter: (() => number) | null = null;
+	private removeInputListener: (() => void) | null = null;
 	private readonly ownerToken = Symbol("alps.pi.fixedBottomEditor.compositor.instance");
 	private installed = false;
 	private disposed = false;
 	private writing = false;
 	private renderingCluster = false;
+	private renderingScrollableRoot = false;
 	private checkingOverlay = false;
 	private emergencyCleanup: (() => void) | null = null;
+	private scrollOffset = 0;
+	private maxScrollOffset = 0;
+	private lastRootLineCount = 0;
+	private rootLines: string[] = [];
+	private visibleRootLines: string[] = [];
+	private visibleScrollableRows = 0;
 
 	constructor(options: FixedBottomEditorCompositorOptions) {
 		this.tui = options.tui;
@@ -194,6 +219,7 @@ export class FixedBottomEditorCompositor {
 				beginSynchronizedOutput()
 				+ enterAlternateScreen()
 				+ disableAlternateScrollMode()
+				+ enableMouseReporting()
 				+ endSynchronizedOutput(),
 			);
 			this.emergencyCleanup = () => {
@@ -218,6 +244,9 @@ export class FixedBottomEditorCompositor {
 			}
 			if (this.originalDoRender) {
 				this.tui.doRender = this.doRenderWrapper;
+			}
+			if (typeof this.tui.addInputListener === "function") {
+				this.removeInputListener = this.tui.addInputListener((data: string) => this.handleInput(data));
 			}
 			this.terminal.write = this.writeWrapper;
 			this.markOwner();
@@ -257,6 +286,7 @@ export class FixedBottomEditorCompositor {
 		const width = this.getTerminalWidth();
 		const cluster = this.getCluster(width, rawRows);
 		if (cluster.lines.length === 0) return;
+		this.refreshRootWindow(width);
 
 		this.writeOriginal(
 			beginSynchronizedOutput()
@@ -290,6 +320,8 @@ export class FixedBottomEditorCompositor {
 			this.processLike.removeListener("exit", this.emergencyCleanup);
 			this.emergencyCleanup = null;
 		}
+		this.removeInputListener?.();
+		this.removeInputListener = null;
 		if (this.originalRender && this.tui.render === this.renderWrapper) {
 			this.tui.render = this.originalRender;
 		}
@@ -314,6 +346,7 @@ export class FixedBottomEditorCompositor {
 		}
 
 		const result = this.originalDoRender.apply(this.tui, args);
+		this.refreshRootWindow(this.getTerminalWidth());
 		this.requestRepaint();
 		return result;
 	}
@@ -321,21 +354,17 @@ export class FixedBottomEditorCompositor {
 	/** 包装 TUI render：普通内容只保留可滚动区域，避免覆盖底部 fixed cluster。 */
 	private renderScrollableRoot(width: number, ...args: unknown[]): string[] {
 		if (!this.originalRender) return [];
-		if (this.disposed || this.hasVisibleOverlay()) {
+		if (this.disposed || this.renderingScrollableRoot || this.hasVisibleOverlay()) {
 			return this.originalRender.call(this.tui, width, ...args);
 		}
 
-		const renderWidth = coercePositiveInteger(width, DEFAULT_COLUMNS);
-		const rawRows = this.getRawRows();
-		const cluster = this.getCluster(renderWidth, rawRows);
-		const scrollableRows = Math.max(1, rawRows - cluster.lines.length);
-		const lines = this.originalRender.call(this.tui, renderWidth, ...args);
-		if (!Array.isArray(lines)) return [];
-		const visibleLines = lines.length <= scrollableRows ? [...lines] : lines.slice(lines.length - scrollableRows);
-		while (visibleLines.length < scrollableRows) {
-			visibleLines.push("");
+		this.renderingScrollableRoot = true;
+		try {
+			this.refreshRootWindow(coercePositiveInteger(width, DEFAULT_COLUMNS), ...args);
+			return [...this.visibleRootLines];
+		} finally {
+			this.renderingScrollableRoot = false;
 		}
-		return visibleLines;
 	}
 
 	/** 包装 terminal.write：把普通输出限制在上方滚动区，并在底部补绘 fixed cluster。 */
@@ -370,6 +399,28 @@ export class FixedBottomEditorCompositor {
 		}
 	}
 
+	/** 接管原版滚动快捷键与鼠标滚轮；其他输入继续交给 Pi editor。 */
+	private handleInput(data: string): { consume?: boolean; data?: string } | undefined {
+		if (this.disposed || this.hasVisibleOverlay()) return undefined;
+
+		const mousePackets = parseSgrMousePackets(data);
+		if (mousePackets) {
+			for (const packet of mousePackets) {
+				const delta = mouseScrollDelta(packet);
+				if (delta !== 0) {
+					this.scrollBy(delta);
+				}
+			}
+			return { consume: true };
+		}
+
+		const keyboardDelta = parseKeyboardScrollDelta(data);
+		if (keyboardDelta === 0) return undefined;
+
+		this.scrollBy(keyboardDelta);
+		return { consume: true };
+	}
+
 	/** 读取给 TUI 暴露的可滚动行数；overlay 或内部渲染期间返回真实行数。 */
 	private getScrollableRows(): number {
 		const rawRows = this.getRawRows();
@@ -385,6 +436,70 @@ export class FixedBottomEditorCompositor {
 
 		const cluster = this.getCluster(this.getTerminalWidth(), rawRows);
 		return Math.max(1, rawRows - cluster.lines.length);
+	}
+
+	/** 刷新上方聊天区窗口，scrollOffset=0 表示贴底，正数表示向历史上方偏移。 */
+	private refreshRootWindow(width: number, ...args: unknown[]): void {
+		if (!this.originalRender) return;
+
+		const rawRows = this.getRawRows();
+		const renderWidth = Math.max(1, Math.floor(width));
+		const cluster = this.getCluster(renderWidth, rawRows);
+		const scrollableRows = Math.max(1, rawRows - cluster.lines.length);
+		const lines = this.originalRender.call(this.tui, renderWidth, ...args);
+		this.rootLines = Array.isArray(lines) ? lines : [];
+		if (this.scrollOffset > 0 && this.lastRootLineCount > 0 && this.rootLines.length > this.lastRootLineCount) {
+			this.scrollOffset += this.rootLines.length - this.lastRootLineCount;
+		}
+		this.lastRootLineCount = this.rootLines.length;
+		this.maxScrollOffset = Math.max(0, this.rootLines.length - scrollableRows);
+		this.scrollOffset = Math.max(0, Math.min(this.scrollOffset, this.maxScrollOffset));
+		this.updateVisibleRootWindow(scrollableRows);
+	}
+
+	/** 按当前 scrollOffset 计算可见聊天行，并补空行撑满可滚动区域。 */
+	private updateVisibleRootWindow(scrollableRows = this.visibleScrollableRows): void {
+		const rows = Math.max(1, scrollableRows);
+		const start = Math.max(0, this.rootLines.length - rows - this.scrollOffset);
+		const visibleLines = this.rootLines.slice(start, start + rows);
+		while (visibleLines.length < rows) {
+			visibleLines.push("");
+		}
+		this.visibleScrollableRows = rows;
+		this.visibleRootLines = visibleLines;
+	}
+
+	/** 原版语义：正数向上看历史，负数回到底部；滚动后只重绘上方 viewport 与底部 cluster。 */
+	private scrollBy(delta: number): void {
+		const width = this.getTerminalWidth();
+		this.refreshRootWindow(width);
+		const nextOffset = Math.max(0, Math.min(this.scrollOffset + delta, this.maxScrollOffset));
+		if (nextOffset === this.scrollOffset) return;
+
+		this.scrollOffset = nextOffset;
+		// 滚轮/快捷键滚动已经同步重绘 viewport；避免再排队完整 TUI render，降低滚动延迟。
+		this.repaintScrollableViewport(width);
+	}
+
+	/** 只重绘上方聊天区，避免滚动操作影响底部 fixed editor。 */
+	private repaintScrollableViewport(width: number): void {
+		if (this.disposed || this.writing || this.hasVisibleOverlay()) return;
+
+		const rawRows = this.getRawRows();
+		const cluster = this.getCluster(width, rawRows);
+		const scrollableRows = Math.max(1, rawRows - cluster.lines.length);
+		this.updateVisibleRootWindow(scrollableRows);
+		let buffer = beginSynchronizedOutput() + setScrollRegion(1, scrollableRows) + moveCursor(1, 1);
+
+		for (let row = 0; row < scrollableRows; row++) {
+			if (row > 0) buffer += "\r\n";
+			buffer += clearLine();
+			buffer += sanitizeLine(this.visibleRootLines[row] ?? "", width);
+		}
+
+		buffer += buildFixedEditorClusterPaint(cluster, rawRows, width, this.getShowHardwareCursor());
+		buffer += endSynchronizedOutput();
+		this.writeOriginal(buffer);
 	}
 
 	/** 调用 renderCluster 并规整输出，确保至少保留一行可滚动区域。 */
@@ -512,6 +627,58 @@ export class FixedBottomEditorCompositor {
 			this.checkingOverlay = false;
 		}
 	}
+}
+
+/** 匹配原版滚动快捷键：Super+↑/↓、PageUp/PageDown、Ctrl+Shift+↑/↓。 */
+function parseKeyboardScrollDelta(data: string): number {
+	if (isKeyRelease(data)) return 0;
+	if (
+		matchesKey(data, "super+up")
+		|| matchesKey(data, "pageUp")
+		|| matchesKey(data, "ctrl+shift+up")
+		|| /^\x1b\[(?:5;9(?::[12])?~|1;6(?::[12])?A|57421;9(?::[12])?u|57419;6(?::[12])?u)$/.test(data)
+	) return 10;
+	if (
+		matchesKey(data, "super+down")
+		|| matchesKey(data, "pageDown")
+		|| matchesKey(data, "ctrl+shift+down")
+		|| /^\x1b\[(?:6;9(?::[12])?~|1;6(?::[12])?B|57422;9(?::[12])?u|57420;6(?::[12])?u)$/.test(data)
+	) return -10;
+	return 0;
+}
+
+/** 解析 SGR mouse reporting 包；非完整鼠标输入返回 null 并交给 editor。 */
+function parseSgrMousePackets(data: string): SgrMousePacket[] | null {
+	const pattern = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/g;
+	const packets: SgrMousePacket[] = [];
+	let offset = 0;
+
+	for (const match of data.matchAll(pattern)) {
+		if (match.index !== offset) return null;
+		offset = match.index + match[0].length;
+		packets.push({
+			code: Number(match[1]),
+			col: Number(match[2]),
+			row: Number(match[3]),
+			final: match[4] as "M" | "m",
+		});
+	}
+
+	return packets.length > 0 && offset === data.length ? packets : null;
+}
+
+/** 提取鼠标基础按钮，匹配原版对修饰位的处理。 */
+function mouseBaseButton(code: number): number {
+	return code & ~(4 | 8 | 16 | 32);
+}
+
+/** 原版滚轮步长：上滚 +3，下滚 -3。 */
+function mouseScrollDelta(packet: SgrMousePacket): number {
+	if (packet.final !== "M") return 0;
+	const baseButton = mouseBaseButton(packet.code);
+	if (baseButton === 64) return 3;
+	if (baseButton === 65) return -3;
+	return 0;
 }
 
 /** 沿原型链查找 rows descriptor，用于读取真实终端高度。 */

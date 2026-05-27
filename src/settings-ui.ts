@@ -2,7 +2,7 @@
 
 import { Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { type PatchState, disablePatch, enablePatch, getGlobalPatchState } from "./features/chrome-frame/index.ts";
-import type { FixedBottomEditorStatus } from "./settings.ts";
+import type { AlpsPiSettings, FixedBottomEditorStatus } from "./settings.ts";
 import type { ThemeLike } from "./features/chrome-frame/styles.ts";
 
 export type SettingsPanelOps = {
@@ -10,9 +10,11 @@ export type SettingsPanelOps = {
 	enableChromeFrame?: () => PatchState;
 	disableChromeFrame?: () => PatchState;
 	setFixedBottomEditorEnabled?: (enabled: boolean) => FixedBottomEditorStatus | void;
+	setBottomStatusEnabled?: (enabled: boolean) => void;
+	onSettingsChanged?: (settings: AlpsPiSettings) => void;
 };
 
-const OPTIONS = ["chromeFrame.enabled", "chromeFrame.assistantFrame", "fixedBottomEditor.enabled"] as const;
+const OPTIONS = ["chromeFrame.enabled", "chromeFrame.assistantFrame", "fixedBottomEditor.enabled", "bottomStatus.enabled"] as const;
 type OptionId = (typeof OPTIONS)[number];
 
 function padToWidth(line: string, width: number): string {
@@ -40,6 +42,8 @@ export class AlpsPiSettingsComponent {
 			enableChromeFrame: ops.enableChromeFrame ?? (() => enablePatch()),
 			disableChromeFrame: ops.disableChromeFrame ?? (() => disablePatch()),
 			setFixedBottomEditorEnabled: ops.setFixedBottomEditorEnabled ?? (() => undefined),
+			setBottomStatusEnabled: ops.setBottomStatusEnabled ?? (() => undefined),
+			onSettingsChanged: ops.onSettingsChanged ?? (() => undefined),
 		};
 	}
 
@@ -56,6 +60,7 @@ export class AlpsPiSettingsComponent {
 			this.renderRow("线框美化", booleanLabel(settings.chromeFrame.enabled), "控制消息、工具与 bash 外框", this.selectedIndex === 0, innerWidth),
 			this.renderRow("Assistant 正文线框", booleanLabel(settings.chromeFrame.assistantFrame), "控制 assistant 正文回复是否包线框", this.selectedIndex === 1, innerWidth),
 			this.renderRow("固定输入框", booleanLabel(settings.fixedBottomEditor.enabled), "控制底部固定编辑器运行时", this.selectedIndex === 2, innerWidth),
+			this.renderRow("底部状态栏", booleanLabel(settings.bottomStatus.enabled), "显示模型、thinking、总 token 和时间", this.selectedIndex === 3, innerWidth),
 			"",
 			hint,
 		];
@@ -119,7 +124,14 @@ export class AlpsPiSettingsComponent {
 			}
 			return;
 		}
+		if (option === "bottomStatus.enabled") {
+			const nextEnabled = !state.config.settings.bottomStatus.enabled;
+			state.config.settings.bottomStatus.enabled = nextEnabled;
+			this.ops.setBottomStatusEnabled(nextEnabled);
+			return;
+		}
 		state.config.settings.chromeFrame.assistantFrame = !state.config.settings.chromeFrame.assistantFrame;
+		this.ops.onSettingsChanged(state.config.settings);
 	}
 
 	private close(): void {

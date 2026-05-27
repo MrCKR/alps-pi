@@ -11,6 +11,7 @@ function createPanel(options: { fixedResult?: { enabled: boolean; installed: boo
 	const state = createInitialPatchState();
 	const calls: string[] = [];
 	const fixedCalls: boolean[] = [];
+	const bottomStatusCalls: boolean[] = [];
 	let closed = false;
 	const component = new AlpsPiSettingsComponent(createFakeTheme(), () => {
 		closed = true;
@@ -32,18 +33,23 @@ function createPanel(options: { fixedResult?: { enabled: boolean; installed: boo
 			fixedCalls.push(enabled);
 			return options.fixedResult ?? { enabled, installed: false };
 		},
+		setBottomStatusEnabled: (enabled: boolean) => {
+			bottomStatusCalls.push(enabled);
+		},
 	});
-	return { state, calls, fixedCalls, component, isClosed: () => closed };
+	return { state, calls, fixedCalls, bottomStatusCalls, component, isClosed: () => closed };
 }
 
-test("设置界面展示线框美化、正文线框和固定输入框，并渲染完整边框", () => {
+test("设置界面展示线框美化、正文线框、固定输入框和底部状态栏，并渲染完整边框", () => {
 	const { component } = createPanel();
 	const lines = component.render(80);
 	const plain = stripAnsi(lines.join("\n"));
 	assert.match(plain, /线框美化/);
 	assert.match(plain, /正文线框/);
 	assert.match(plain, /固定输入框/);
-	assert.match(plain, /固定输入框\s+OFF/);
+	assert.match(plain, /底部状态栏/);
+	assert.match(plain, /固定输入框\s+ON/);
+	assert.match(plain, /底部状态栏\s+OFF/);
 	assert.doesNotMatch(plain, /preview/i);
 	assert.ok(stripAnsi(lines[0]!).startsWith("╭"));
 	assert.ok(stripAnsi(lines.at(-1)!).startsWith("╰"));
@@ -78,16 +84,28 @@ test("设置界面可切换正文线框并关闭", () => {
 
 test("设置界面第三项切换固定输入框并调用 runtime op", () => {
 	const { state, fixedCalls, component } = createPanel();
-	assert.equal(state.config.settings.fixedBottomEditor.enabled, false);
+	assert.equal(state.config.settings.fixedBottomEditor.enabled, true);
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput(" ");
-	assert.equal(state.config.settings.fixedBottomEditor.enabled, true);
-	assert.deepEqual(fixedCalls, [true]);
+	assert.equal(state.config.settings.fixedBottomEditor.enabled, false);
+	assert.deepEqual(fixedCalls, [false]);
+});
+
+test("设置界面第四项切换底部状态栏并调用 runtime op", () => {
+	const { state, bottomStatusCalls, component } = createPanel();
+	assert.equal(state.config.settings.bottomStatus.enabled, false);
+	component.handleInput("\x1b[B");
+	component.handleInput("\x1b[B");
+	component.handleInput("\x1b[B");
+	component.handleInput(" ");
+	assert.equal(state.config.settings.bottomStatus.enabled, true);
+	assert.deepEqual(bottomStatusCalls, [true]);
 });
 
 test("设置界面固定输入框启用失败时回滚 OFF", () => {
 	const { state, fixedCalls, component } = createPanel({ fixedResult: { enabled: false, installed: false, failure: "boom" } });
+	state.config.settings.fixedBottomEditor.enabled = false;
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput(" ");

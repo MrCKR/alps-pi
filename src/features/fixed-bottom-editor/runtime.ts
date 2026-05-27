@@ -31,6 +31,17 @@ type RuntimeUI = {
 
 type CompositorLike = Pick<FixedBottomEditorCompositor, "install" | "dispose" | "hideRenderable" | "renderHidden" | "requestRepaint">;
 
+type FixedEditorContainers = {
+	/** Pi 内置 statusContainer，包含 todo 等扩展状态区域。 */
+	statusContainer: FixedEditorRenderable | null;
+	/** editor 上方 widget 容器，原版会跟随输入框固定。 */
+	widgetContainerAbove: FixedEditorRenderable | null;
+	/** custom editor 所在容器。 */
+	editorContainer: FixedEditorRenderable;
+	/** editor 下方 widget 容器，原版会跟随输入框固定。 */
+	widgetContainerBelow: FixedEditorRenderable | null;
+};
+
 type FixedBottomEditorRuntimeOptions = {
 	/** 测试注入点：生产环境使用真实 compositor。 */
 	createCompositor?: (options: FixedBottomEditorCompositorOptions) => CompositorLike;
@@ -203,8 +214,8 @@ class FixedBottomEditorRuntimeImpl implements FixedBottomEditorRuntime {
 		if (this.installed) return;
 
 		const terminal = this.getTerminal(tui);
-		const editorContainer = findEditorContainer(tui, this.editorInstance);
-		if (!editorContainer) {
+		const containers = findFixedEditorContainers(tui, this.editorInstance);
+		if (!containers) {
 			throw new Error("fixed bottom editor could not find the editor container in TUI children");
 		}
 
@@ -215,12 +226,17 @@ class FixedBottomEditorRuntimeImpl implements FixedBottomEditorRuntime {
 				terminal,
 				getShowHardwareCursor: () => typeof tui?.getShowHardwareCursor === "function" ? Boolean(tui.getShowHardwareCursor()) : true,
 				renderCluster: (width, terminalRows) => renderFixedEditorCluster({
-					editorLines: compositor ? compositor.renderHidden(editorContainer, width) : [],
+					statusLines: compositor ? renderHiddenLines(compositor, [containers.widgetContainerAbove, containers.statusContainer], width) : [],
+					editorLines: compositor ? compositor.renderHidden(containers.editorContainer, width) : [],
+					footerLines: compositor ? renderHiddenLines(compositor, [containers.widgetContainerBelow], width) : [],
 					width,
 					maxHeight: Math.max(1, Math.floor(terminalRows) - 1),
 				}),
 			});
-			compositor.hideRenderable(editorContainer);
+			hideRenderableIfPresent(compositor, containers.statusContainer);
+			hideRenderableIfPresent(compositor, containers.widgetContainerAbove);
+			compositor.hideRenderable(containers.editorContainer);
+			hideRenderableIfPresent(compositor, containers.widgetContainerBelow);
 			compositor.install();
 			this.compositor = compositor;
 			this.installed = true;
@@ -306,23 +322,59 @@ function createEditor(tui: any, theme: any, keybindings: any): any {
 	return new Editor(tui, editorTheme, { paddingX: 0 });
 }
 
-/** 在 TUI 树中查找包含 custom editor 的 renderable 容器。 */
-function findEditorContainer(tui: any, editor: any): FixedEditorRenderable | null {
+/** 在 TUI 树中查找 editor 及相邻 status/widget 容器，保持与原版 fixed editor 的接管范围一致。 */
+function findFixedEditorContainers(tui: any, editor: any): FixedEditorContainers | null {
 	if (!editor) return null;
 
+	const directContainer = tui?.editorContainer;
+	if (isRenderable(directContainer)) {
+		return {
+			statusContainer: isRenderable(tui?.statusContainer) ? tui.statusContainer : null,
+			widgetContainerAbove: isRenderable(tui?.widgetContainerAbove) ? tui.widgetContainerAbove : null,
+			editorContainer: directContainer,
+			widgetContainerBelow: isRenderable(tui?.widgetContainerBelow) ? tui.widgetContainerBelow : null,
+		};
+	}
+
 	const children = Array.isArray(tui?.children) ? tui.children : [];
-	for (const child of children) {
+	for (const [index, child] of children.entries()) {
 		if (child === editor && isRenderable(child)) {
-			return child;
+			return {
+				statusContainer: asRenderable(children[index - 2]),
+				widgetContainerAbove: asRenderable(children[index - 1]),
+				editorContainer: child,
+				widgetContainerBelow: asRenderable(children[index + 1]),
+			};
 		}
 		const nestedChildren = Array.isArray(child?.children) ? child.children : [];
 		if (nestedChildren.includes(editor) && isRenderable(child)) {
-			return child;
+			return {
+				statusContainer: asRenderable(children[index - 2]),
+				widgetContainerAbove: asRenderable(children[index - 1]),
+				editorContainer: child,
+				widgetContainerBelow: asRenderable(children[index + 1]),
+			};
 		}
 	}
 
-	const directContainer = tui?.editorContainer;
-	return isRenderable(directContainer) ? directContainer : null;
+	return null;
+}
+
+/** 渲染被隐藏的容器；空行保留给 cluster 做最终宽高处理。 */
+function renderHiddenLines(compositor: CompositorLike, containers: Array<FixedEditorRenderable | null>, width: number): string[] {
+	return containers.flatMap((container) => container ? compositor.renderHidden(container, width) : []);
+}
+
+/** 可选容器存在时才隐藏，避免假设所有 Pi 版本都有 widget/status 容器。 */
+function hideRenderableIfPresent(compositor: CompositorLike, container: FixedEditorRenderable | null): void {
+	if (container) {
+		compositor.hideRenderable(container);
+	}
+}
+
+/** 将未知值窄化为 compositor 可处理的 renderable。 */
+function asRenderable(value: unknown): FixedEditorRenderable | null {
+	return isRenderable(value) ? value : null;
 }
 
 /** 判断对象是否满足 compositor 需要的 render(width) 能力。 */

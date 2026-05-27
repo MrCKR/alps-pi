@@ -19,6 +19,14 @@ import {
 } from "../src/features/fixed-bottom-editor/compositor.ts";
 import type { FixedEditorCluster } from "../src/features/fixed-bottom-editor/cluster.ts";
 
+function installSequence(): string {
+	return beginSynchronizedOutput() + enterAlternateScreen() + disableAlternateScrollMode() + "\x1b[?1002h\x1b[?1006h" + endSynchronizedOutput();
+}
+
+function resetSequence(): string {
+	return beginSynchronizedOutput() + resetScrollRegion() + "\x1b[?1006l\x1b[?1002l\x1b[?1000l" + enableAlternateScrollMode() + exitAlternateScreen() + showCursor() + endSynchronizedOutput();
+}
+
 function createHarness(options: { overlay?: boolean; overlayStack?: unknown[]; rootLines?: string[] } = {}) {
 	const writes: string[] = [];
 	const renderCalls: number[] = [];
@@ -36,12 +44,21 @@ function createHarness(options: { overlay?: boolean; overlayStack?: unknown[]; r
 			writes.push(data);
 		},
 	};
+	const inputListeners = new Set<(data: string) => { consume?: boolean; data?: string } | undefined>();
 	const tui = {
 		hardwareCursorRow: 4,
 		cursorRow: 2,
 		previousViewportTop: 1,
 		overlayStack: options.overlayStack ?? [],
 		hasOverlay: options.overlay === undefined ? undefined : () => options.overlay,
+		requestRenderCalls: 0,
+		addInputListener(listener: (data: string) => { consume?: boolean; data?: string } | undefined) {
+			inputListeners.add(listener);
+			return () => inputListeners.delete(listener);
+		},
+		requestRender() {
+			this.requestRenderCalls += 1;
+		},
 		render(width: number) {
 			renderCalls.push(width);
 			return options.rootLines ?? ["root-1", "root-2", "root-3", "root-4"];
@@ -73,6 +90,16 @@ function createHarness(options: { overlay?: boolean; overlayStack?: unknown[]; r
 		terminal,
 		tui,
 		writes,
+		input(data: string) {
+			const results = [];
+			for (const listener of inputListeners) {
+				results.push(listener(data));
+			}
+			return results;
+		},
+		getInputListenerCount() {
+			return inputListeners.size;
+		},
 		setRawRows(value: number) {
 			backingRows = value;
 		},
@@ -102,7 +129,7 @@ test("install 后进入 alternate screen、替换 terminal.write，并在 dispos
 
 	harness.compositor.install();
 	assert.notEqual(harness.terminal.write, originalWrite);
-	assert.equal(harness.writes[0], beginSynchronizedOutput() + enterAlternateScreen() + disableAlternateScrollMode() + endSynchronizedOutput());
+	assert.equal(harness.writes[0], installSequence());
 
 	harness.terminal.write("hello");
 	assert.equal(harness.writes.length, 2);
@@ -181,7 +208,7 @@ test("dispose 不覆盖后装 terminal.write", () => {
 	harness.terminal.write("after");
 	assert.deepEqual(harness.writes, [
 		...installWrites,
-		beginSynchronizedOutput() + resetScrollRegion() + enableAlternateScrollMode() + exitAlternateScreen() + showCursor() + endSynchronizedOutput(),
+		resetSequence(),
 		"later:after",
 	]);
 });
@@ -257,6 +284,48 @@ test("render 内容不足可滚动区域时补空行撑满 viewport", () => {
 	assert.deepEqual(harness.tui.render(20), ["root-1", "root-2", "", "", "", "", "", ""]);
 });
 
+test("原版 PageUp/PageDown 快捷键驱动内部聊天区滚动", () => {
+	const rootLines = Array.from({ length: 20 }, (_, index) => `root-${index + 1}`);
+	const harness = createHarness({ rootLines });
+	harness.compositor.install();
+	harness.tui.render(20);
+
+	const upResult = harness.input("\x1b[5~");
+	assert.deepEqual(upResult, [{ consume: true }]);
+	assert.deepEqual(harness.tui.render(20), ["root-3", "root-4", "root-5", "root-6", "root-7", "root-8", "root-9", "root-10"]);
+
+	const downResult = harness.input("\x1b[6~");
+	assert.deepEqual(downResult, [{ consume: true }]);
+	assert.deepEqual(harness.tui.render(20), ["root-13", "root-14", "root-15", "root-16", "root-17", "root-18", "root-19", "root-20"]);
+	// 滚动路径已同步重绘 viewport，不再额外排队完整 TUI render，避免滚轮不跟手。
+	assert.equal(harness.tui.requestRenderCalls, 0);
+});
+
+test("原版 Super/Ctrl+Shift 方向键快捷键与鼠标滚轮共享滚动窗口", () => {
+	const rootLines = Array.from({ length: 20 }, (_, index) => `root-${index + 1}`);
+	const harness = createHarness({ rootLines });
+	harness.compositor.install();
+	harness.tui.render(20);
+
+	assert.deepEqual(harness.input("\x1b[1;6A"), [{ consume: true }]);
+	assert.deepEqual(harness.input("\x1b[<65;1;1M"), [{ consume: true }]);
+	assert.deepEqual(harness.tui.render(20), ["root-6", "root-7", "root-8", "root-9", "root-10", "root-11", "root-12", "root-13"]);
+
+	assert.deepEqual(harness.input("\x1b[1;6B"), [{ consume: true }]);
+	assert.deepEqual(harness.input("\x1b[<64;1;1M"), [{ consume: true }]);
+	assert.deepEqual(harness.tui.render(20), ["root-10", "root-11", "root-12", "root-13", "root-14", "root-15", "root-16", "root-17"]);
+});
+
+test("overlay 可见时滚动快捷键不消费，dispose 后移除 input listener", () => {
+	const harness = createHarness({ overlay: true, rootLines: Array.from({ length: 20 }, (_, index) => `root-${index + 1}`) });
+	harness.compositor.install();
+	assert.equal(harness.getInputListenerCount(), 1);
+
+	assert.deepEqual(harness.input("\x1b[5~"), [undefined]);
+	harness.compositor.dispose();
+	assert.equal(harness.getInputListenerCount(), 0);
+});
+
 test("install 后替换 tui.render 和 tui.doRender，并在 dispose 后恢复", () => {
 	const harness = createHarness();
 	const originalRender = harness.tui.render;
@@ -323,7 +392,7 @@ test("tui.hasOverlay() 为 true 时，render/write/doRender 均让路给原始�
 	harness.terminal.write("overlay-write");
 	harness.tui.doRender();
 
-	assert.deepEqual(harness.writes, [beginSynchronizedOutput() + enterAlternateScreen() + disableAlternateScrollMode() + endSynchronizedOutput(), "overlay-write"]);
+	assert.deepEqual(harness.writes, [installSequence(), "overlay-write"]);
 	assert.deepEqual(harness.doRenderCalls, ["doRender"]);
 	assert.equal(harness.getRenderClusterCalls(), 0);
 
@@ -341,7 +410,7 @@ test("tui.overlayStack 有可见元素时，render/doRender/write/rows 均让路
 	harness.terminal.write("stack-write");
 	harness.tui.doRender();
 
-	assert.deepEqual(harness.writes, [beginSynchronizedOutput() + enterAlternateScreen() + disableAlternateScrollMode() + endSynchronizedOutput(), "stack-write"]);
+	assert.deepEqual(harness.writes, [installSequence(), "stack-write"]);
 	assert.deepEqual(harness.doRenderCalls, ["doRender"]);
 	assert.equal(harness.getRenderClusterCalls(), 0);
 });

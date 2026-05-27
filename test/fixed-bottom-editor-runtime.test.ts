@@ -30,7 +30,15 @@ function createTui(options: { terminal?: any } = {}) {
 	return { terminal, tui, writes };
 }
 
-function createCtx(options: { terminal?: any; autoInstantiate?: boolean; hasUI?: boolean; attachEditorContainer?: boolean } = {}) {
+function createStaticContainer(prefix: string) {
+	return {
+		render(width: number) {
+			return [`${prefix}:${width}`];
+		},
+	};
+}
+
+function createCtx(options: { terminal?: any; autoInstantiate?: boolean; hasUI?: boolean; attachEditorContainer?: boolean; attachAdjacentContainers?: boolean } = {}) {
 	const { tui, writes } = createTui({ terminal: options.terminal });
 	const calls: Array<{ type: "editor" | "footer"; value: any }> = [];
 	let editorFactory: any;
@@ -46,8 +54,15 @@ function createCtx(options: { terminal?: any; autoInstantiate?: boolean; hasUI?:
 			return this.children.flatMap((child: any) => child.render(width));
 		},
 	};
+	const statusContainer = createStaticContainer("status");
+	const widgetContainerAbove = createStaticContainer("above");
+	const widgetContainerBelow = createStaticContainer("below");
 	if (options.attachEditorContainer !== false) {
-		tui.children.push(editorContainer);
+		if (options.attachAdjacentContainers) {
+			tui.children.push(statusContainer, widgetContainerAbove, editorContainer, widgetContainerBelow);
+		} else {
+			tui.children.push(editorContainer);
+		}
 	}
 
 	const ctx: any = {
@@ -82,7 +97,10 @@ function createCtx(options: { terminal?: any; autoInstantiate?: boolean; hasUI?:
 		calls,
 		ctx,
 		editorContainer,
+		statusContainer,
 		tui,
+		widgetContainerAbove,
+		widgetContainerBelow,
 		writes,
 		getEditorFactory: () => editorFactory,
 		getFooterFactory: () => footerFactory,
@@ -204,6 +222,23 @@ test("footer factory 传入 fake tui 后安装 compositor", () => {
 	assert.equal(status.installed, true);
 	assert.notEqual(harness.tui.render(40), []);
 	assert.equal(harness.tui.requestRenderCalls.at(-1), true);
+});
+
+test("安装 compositor 时把原生 status 与 widget 容器纳入底部固定 cluster", () => {
+	const harness = createCtx({ autoInstantiate: true, attachAdjacentContainers: true });
+	const runtime = createFixedBottomEditorRuntime();
+
+	runtime.bindSession(harness.ctx);
+	const status = runtime.setEnabled(true);
+	harness.tui.terminal.write("paint");
+
+	assert.equal(status.installed, true);
+	assert.deepEqual(harness.statusContainer.render(40), []);
+	assert.deepEqual(harness.widgetContainerAbove.render(40), []);
+	assert.deepEqual(harness.widgetContainerBelow.render(40), []);
+	assert.ok(harness.writes.at(-1)?.includes("above:40"));
+	assert.ok(harness.writes.at(-1)?.includes("status:40"));
+	assert.ok(harness.writes.at(-1)?.includes("below:40"));
 });
 
 test("缺 terminal.write 时失败且不半安装", () => {

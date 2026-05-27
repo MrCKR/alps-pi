@@ -3,7 +3,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createPreviewComponent, disablePatch, enablePatch, formatPatchStatus, getGlobalPatchState, getRuntimeTheme, type PatchState } from "./features/chrome-frame/index.ts";
 import { createSettingsComponent } from "./settings-ui.ts";
-import type { FixedBottomEditorStatus } from "./settings.ts";
+import type { AlpsPiSettings, FixedBottomEditorStatus } from "./settings.ts";
 
 export type CommandOps = {
 	enable?: () => PatchState;
@@ -11,6 +11,8 @@ export type CommandOps = {
 	status?: () => PatchState;
 	setFixedBottomEditorEnabled?: (enabled: boolean, ctx: any) => FixedBottomEditorStatus | void;
 	getFixedBottomEditorStatus?: () => FixedBottomEditorStatus;
+	setBottomStatusEnabled?: (enabled: boolean, ctx: any) => void;
+	onSettingsChanged?: (settings: AlpsPiSettings, ctx: any) => void;
 };
 
 const HELP = "用法：/alps-pi 打开美化设置；可选参数 preview/status。";
@@ -33,6 +35,11 @@ function formatFixedBottomEditorStatus(status: FixedBottomEditorStatus): string 
 	return `fixedBottomEditor: ${status.enabled ? "enabled" : "disabled"}\nfixedBottomEditorInstalled: ${status.installed}${failure}`;
 }
 
+/** 汇总底部状态栏开关状态输出。 */
+function formatBottomStatusStatus(state: PatchState): string {
+	return `bottomStatus: ${state.config.settings.bottomStatus.enabled ? "enabled" : "disabled"}`;
+}
+
 function notify(ctx: any, message: string, level: "info" | "warning" | "error" = "info") {
 	if (ctx?.ui?.notify) {
 		ctx.ui.notify(message, level);
@@ -49,6 +56,10 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 			const enableFn = ops.enable ?? (() => enablePatch());
 			const disableFn = ops.disable ?? (() => disablePatch());
 			const getFixedStatus = ops.getFixedBottomEditorStatus ?? (() => getDefaultFixedBottomEditorStatus(statusFn()));
+			const setBottomStatusEnabled = ops.setBottomStatusEnabled ?? ((enabled: boolean) => {
+				statusFn().config.settings.bottomStatus.enabled = enabled;
+			});
+			const onSettingsChanged = ops.onSettingsChanged ?? (() => undefined);
 			const setFixedEnabled = ops.setFixedBottomEditorEnabled ?? ((enabled: boolean) => {
 				const state = statusFn();
 				state.config.settings.fixedBottomEditor.enabled = false;
@@ -90,8 +101,16 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 								settingsTui = _tui;
 								settingsOverlayComponent = createSettingsComponent(theme ?? fallbackTheme, done, {
 									getState: statusFn,
-									enableChromeFrame: enableFn,
-									disableChromeFrame: disableFn,
+									disableChromeFrame: () => {
+										const result = disableFn();
+										onSettingsChanged(result.config.settings, ctx);
+										return result;
+									},
+									enableChromeFrame: () => {
+										const result = enableFn();
+										onSettingsChanged(result.config.settings, ctx);
+										return result;
+									},
 									setFixedBottomEditorEnabled: (enabled) => {
 										try {
 											// 固定输入框依赖当前 interactive session；从命令 ctx 懒绑定可覆盖 /reload 后未触发 session_start 的场景。
@@ -100,6 +119,14 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 											refocusSettingsOverlay();
 										}
 									},
+									setBottomStatusEnabled: (enabled) => {
+										try {
+											setBottomStatusEnabled(enabled, ctx);
+										} finally {
+											refocusSettingsOverlay();
+										}
+									},
+									onSettingsChanged: (settings) => onSettingsChanged(settings, ctx),
 								});
 								return settingsOverlayComponent;
 							},
@@ -118,7 +145,8 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 					return;
 				}
 				case "status": {
-					notify(ctx, `${formatPatchStatus(statusFn())}\n${formatFixedBottomEditorStatus(getFixedStatus())}`, "info");
+					const state = statusFn();
+					notify(ctx, `${formatPatchStatus(state)}\n${formatFixedBottomEditorStatus(getFixedStatus())}\n${formatBottomStatusStatus(state)}`, "info");
 					return;
 				}
 				case "preview": {
