@@ -47,6 +47,12 @@ function createHarness(options: { failEnable?: boolean } = {}) {
 		setEnabled(nextEnabled: boolean) {
 			bottomStatusCalls.push(`set:${nextEnabled}`);
 		},
+		resetSessionStartTime() {
+			bottomStatusCalls.push("resetTime");
+		},
+		setLastPrompt(prompt: unknown) {
+			bottomStatusCalls.push(`prompt:${String(prompt)}`);
+		},
 		dispose() {
 			bottomStatusCalls.push("dispose");
 		},
@@ -125,7 +131,7 @@ test("session_start 调用 runtime.bindSession，并按默认设置安装 fixed 
 	harness.emit("session_start", { id: "one" });
 
 	assert.deepEqual(harness.runtimeCalls, ["bind:one", "set:true"]);
-	assert.deepEqual(harness.bottomStatusCalls, ["bind:one", "set:false"]);
+	assert.deepEqual(harness.bottomStatusCalls, ["bind:one", "resetTime", "prompt:", "set:false"]);
 });
 
 test("若设置为 true，session_start 尝试安装 runtime", () => {
@@ -163,7 +169,7 @@ test("shutdown 后下一次 session_start 会按持久化设置恢复 fixed edit
 	harness.emit("session_start", { id: "next" });
 
 	assert.deepEqual(harness.runtimeCalls, ["dispose", "bind:next", "set:true"]);
-	assert.deepEqual(harness.bottomStatusCalls, ["dispose", "bind:next", "set:true"]);
+	assert.deepEqual(harness.bottomStatusCalls, ["dispose", "bind:next", "resetTime", "prompt:", "set:true"]);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, true);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.bottomStatus.enabled, true);
 });
@@ -174,7 +180,7 @@ test("session_start 会按设置安装 bottom status", () => {
 
 	harness.emit("session_start", { id: "bottom" });
 
-	assert.deepEqual(harness.bottomStatusCalls, ["bind:bottom", "set:true"]);
+	assert.deepEqual(harness.bottomStatusCalls, ["bind:bottom", "resetTime", "prompt:", "set:true"]);
 });
 
 test("session_start 安装失败时回写 fixedBottomEditor=false", () => {
@@ -204,7 +210,7 @@ test("扩展启动时读取持久化设置", () => {
 	assert.equal(settings.fixedBottomEditor.enabled, false);
 	assert.equal(settings.bottomStatus.enabled, true);
 	assert.deepEqual(harness.runtimeCalls, ["bind:persisted"]);
-	assert.deepEqual(harness.bottomStatusCalls, ["bind:persisted", "set:true"]);
+	assert.deepEqual(harness.bottomStatusCalls, ["bind:persisted", "resetTime", "prompt:", "set:true"]);
 });
 
 test("模型、thinking 与消息事件会刷新 bottom status runtime", () => {
@@ -212,6 +218,7 @@ test("模型、thinking 与消息事件会刷新 bottom status runtime", () => {
 
 	harness.emit("model_select", { id: "model" });
 	harness.emit("thinking_level_select", { id: "think" }, { level: "high" });
+	harness.emit("before_agent_start", { id: "prompt" }, { prompt: "上一个问题" });
 	harness.emit("message_update", { id: "update" }, { message: { usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } } });
 	harness.emit("message_end", { id: "end" });
 	harness.emit("turn_end", { id: "turn" });
@@ -221,6 +228,8 @@ test("模型、thinking 与消息事件会刷新 bottom status runtime", () => {
 		"render",
 		"bind:think",
 		"thinking:high",
+		"bind:prompt",
+		"prompt:上一个问题",
 		"bind:update",
 		"liveUsage",
 		"bind:end",

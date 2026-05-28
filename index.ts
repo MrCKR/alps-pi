@@ -64,6 +64,8 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 	pi.on("session_start", (_event: any, ctx: any) => {
 		fixedBottomEditorRuntime.bindSession(ctx);
 		bottomStatusRuntime.bindSession(ctx);
+		bottomStatusRuntime.resetSessionStartTime();
+		bottomStatusRuntime.setLastPrompt("");
 		const state = getGlobalPatchState();
 		if (state.config.settings.fixedBottomEditor.enabled) {
 			const status = fixedBottomEditorRuntime.setEnabled(true);
@@ -80,6 +82,11 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 	pi.on("thinking_level_select", (event: any, ctx: any) => {
 		bottomStatusRuntime.bindSession(ctx);
 		bottomStatusRuntime.setThinkingLevel(event?.level);
+	});
+
+	pi.on("before_agent_start", (event: any, ctx: any) => {
+		bottomStatusRuntime.bindSession(ctx);
+		bottomStatusRuntime.setLastPrompt(event?.prompt);
 	});
 
 	pi.on("message_update", (event: any, ctx: any) => {

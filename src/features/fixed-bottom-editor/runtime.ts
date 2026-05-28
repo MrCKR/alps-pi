@@ -226,9 +226,11 @@ class FixedBottomEditorRuntimeImpl implements FixedBottomEditorRuntime {
 				terminal,
 				getShowHardwareCursor: () => typeof tui?.getShowHardwareCursor === "function" ? Boolean(tui.getShowHardwareCursor()) : true,
 				renderCluster: (width, terminalRows) => renderFixedEditorCluster({
-					statusLines: compositor ? renderHiddenLines(compositor, [containers.widgetContainerAbove, containers.statusContainer], width) : [],
+					// 对齐原版分层：原生 status/动画在主状态栏上方，主状态栏贴近输入框。
+					statusLines: compositor ? renderHiddenLines(compositor, [containers.statusContainer], width) : [],
+					topLines: compositor ? renderHiddenLines(compositor, [containers.widgetContainerAbove], width) : [],
 					editorLines: compositor ? compositor.renderHidden(containers.editorContainer, width) : [],
-					footerLines: compositor ? renderHiddenLines(compositor, [containers.widgetContainerBelow], width) : [],
+					lastPromptLines: compositor ? renderHiddenLines(compositor, [containers.widgetContainerBelow], width) : [],
 					width,
 					maxHeight: Math.max(1, Math.floor(terminalRows) - 1),
 				}),

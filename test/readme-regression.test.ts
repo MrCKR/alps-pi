@@ -24,13 +24,15 @@ test("README 说明设置面板四项", async () => {
 	assert.match(readme, /线框美化\s+控制消息、工具与 bash 外框/);
 	assert.match(readme, /Assistant 正文线框\s+控制 assistant 正文回复是否包线框/);
 	assert.match(readme, /固定输入框\s+控制实验性底部固定编辑器 runtime，默认 ON/);
-	assert.match(readme, /底部状态栏\s+显示模型、thinking、总 token 和当前时间，默认 OFF/);
+	assert.match(readme, /底部状态栏\s+显示模型、thinking、上下文、耗时和上个问题，默认 OFF/);
 });
 
 test("README 说明底部状态栏默认关闭与 Alt+S 行为", async () => {
 	const readme = await readReadme();
 
 	assert.match(readme, /底部状态栏默认关闭/);
+	assert.match(readme, /细线上下文进度或已用量/);
+	assert.match(readme, /上一个问题/);
 	assert.match(readme, /缺失的数据不会显示占位/);
 	assert.match(readme, /Alt\+S.*暂存并清空输入框/);
 });

@@ -12,11 +12,17 @@ export const FIXED_EDITOR_CURSOR_MARKER =
 		: FALLBACK_CURSOR_MARKER;
 
 export type FixedEditorClusterInput = {
+	/** 原生 status 行，例如 working 动画、todo/status 区域；位于主状态栏上方。 */
+	statusLines?: readonly string[];
+	/** 输入框上方主状态栏，贴近 editor 上边缘。 */
+	topLines?: readonly string[];
 	/** 编辑器渲染行。 */
 	editorLines?: readonly string[];
-	/** 状态行，位于编辑器上方。 */
-	statusLines?: readonly string[];
-	/** 页脚行，位于编辑器下方。 */
+	/** 输入框下方次级状态行。 */
+	secondaryLines?: readonly string[];
+	/** 输入框下方最后一行用户问题。 */
+	lastPromptLines?: readonly string[];
+	/** 兼容旧调用：追加到 secondaryLines。 */
 	footerLines?: readonly string[];
 	/** 最大可见列宽。 */
 	width: number;
@@ -43,6 +49,14 @@ type ClusterLine = {
 	cursorCol?: number;
 };
 
+type ClusterSections = {
+	status: ClusterLine[];
+	top: ClusterLine[];
+	editor: ClusterLine[];
+	secondary: ClusterLine[];
+	lastPrompt: ClusterLine[];
+};
+
 /** 组装底部固定区域，负责宽度裁剪、光标提取与高度裁剪。 */
 export function renderFixedEditorCluster(input: FixedEditorClusterInput): FixedEditorCluster {
 	const width = coerceDimension(input.width);
@@ -51,15 +65,12 @@ export function renderFixedEditorCluster(input: FixedEditorClusterInput): FixedE
 		return { lines: [] };
 	}
 
-	const collectedLines = collectClusterLines(input).map((line) => ({
-		...line,
-		line: truncateVisibleLine(line.line, width),
-	}));
-	if (collectedLines.length === 0) {
+	const sections = collectClusterSections(input, width);
+	if (Object.values(sections).every((lines) => lines.length === 0)) {
 		return { lines: [] };
 	}
 
-	const visibleLines = limitClusterHeight(collectedLines, maxHeight);
+	const visibleLines = limitClusterHeight(sections, maxHeight);
 	const lines = visibleLines.map((line) => line.line);
 	const cursorRow = findCursorLineIndex(visibleLines);
 	if (cursorRow === -1) {
@@ -80,18 +91,22 @@ function coerceDimension(value: number): number {
 	return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
 }
 
-/** 按 status -> editor -> footer 的自上而下顺序收集 cluster 行。 */
-function collectClusterLines(input: FixedEditorClusterInput): ClusterLine[] {
-	return [
-		...normalizeLines(input.statusLines),
-		...normalizeLines(input.editorLines),
-		...normalizeLines(input.footerLines),
-	].map(extractCursorMarker);
+/** 按原版分层收集 cluster：status -> top -> editor -> secondary -> lastPrompt。 */
+function collectClusterSections(input: FixedEditorClusterInput, width: number): ClusterSections {
+	return {
+		status: normalizeLines(input.statusLines, width),
+		top: normalizeLines(input.topLines, width),
+		editor: normalizeLines(input.editorLines, width),
+		secondary: normalizeLines([...(input.secondaryLines ?? []), ...(input.footerLines ?? [])], width),
+		lastPrompt: normalizeLines(input.lastPromptLines, width),
+	};
 }
 
-/** 复制输入行，避免调用方数组被后续处理意外共享。 */
-function normalizeLines(lines: readonly string[] | undefined): string[] {
-	return lines ? [...lines] : [];
+/** 复制输入行、裁剪宽度并提取光标 marker，避免调用方数组被后续处理意外共享。 */
+function normalizeLines(lines: readonly string[] | undefined, width: number): ClusterLine[] {
+	return lines
+		? [...lines].map((line) => extractCursorMarker(truncateVisibleLine(line, width)))
+		: [];
 }
 
 /** 提取并移除光标 marker；多余 marker 一并移除，光标采用该行第一个 marker。 */
@@ -114,21 +129,49 @@ function truncateVisibleLine(line: string, width: number): string {
 	return visibleWidth(line) <= width ? line : truncateToWidth(line, width, "", false);
 }
 
-/** 高度超限时保留包含光标的窗口；没有光标时保留底部最新区域。 */
-function limitClusterHeight(lines: ClusterLine[], maxHeight: number): ClusterLine[] {
-	if (lines.length <= maxHeight) {
-		return lines;
-	}
+/** 高度超限时按原版优先保留 editor，再让 top/status/secondary/lastPrompt 竞争剩余空间。 */
+function limitClusterHeight(sections: ClusterSections, maxHeight: number): ClusterLine[] {
+	const editor = capEditorLines(sections.editor, maxHeight);
+	let remaining = maxHeight - editor.length;
+
+	const top = takeTail(sections.top, remaining);
+	remaining -= top.length;
+
+	const secondary = takeTail(sections.secondary, remaining);
+	remaining -= secondary.length;
+
+	const lastPrompt = takeTail(sections.lastPrompt, remaining);
+	remaining -= lastPrompt.length;
+
+	const status = takeTail(sections.status, remaining);
+
+	return [
+		...status,
+		...top,
+		...editor,
+		...secondary,
+		...lastPrompt,
+	];
+}
+
+/** 高度不足时优先保留包含光标的 editor 窗口。 */
+function capEditorLines(lines: ClusterLine[], count: number): ClusterLine[] {
+	if (count <= 0) return [];
+	if (lines.length <= count) return lines;
 
 	const cursorIndex = findCursorLineIndex(lines);
-	if (cursorIndex === -1) {
-		return lines.slice(lines.length - maxHeight);
+	if (cursorIndex !== -1) {
+		const start = Math.max(0, Math.min(cursorIndex - count + 1, lines.length - count));
+		return lines.slice(start, start + count);
 	}
 
-	const rowsBeforeCursor = Math.floor((maxHeight - 1) / 2);
-	const lastStart = lines.length - maxHeight;
-	const start = Math.max(0, Math.min(cursorIndex - rowsBeforeCursor, lastStart));
-	return lines.slice(start, start + maxHeight);
+	return lines.slice(0, count);
+}
+
+/** 从尾部取指定行数，用于保留最新 status/widget 信息。 */
+function takeTail(lines: ClusterLine[], count: number): ClusterLine[] {
+	if (count <= 0) return [];
+	return lines.length <= count ? lines : lines.slice(lines.length - count);
 }
 
 /** 返回最靠近底部的 cursor marker 行，匹配 pi-tui 从底部扫描光标的行为。 */

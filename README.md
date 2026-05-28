@@ -55,7 +55,7 @@ pi install git:https://github.com/MrCKR/alps-pi
 线框美化              控制消息、工具与 bash 外框
 Assistant 正文线框    控制 assistant 正文回复是否包线框
 固定输入框            控制实验性底部固定编辑器 runtime，默认 ON
-底部状态栏            显示模型、thinking、总 token 和当前时间，默认 OFF
+底部状态栏            显示模型、thinking、上下文、耗时和上个问题，默认 OFF
 ```
 
 操作方式：
@@ -89,7 +89,7 @@ Esc/q 关闭
 
 开启 `固定输入框` 后，扩展会临时接管 editor/footer 和 terminal 绘制，以实现“聊天区在上方滚动、输入框固定在底部”。这属于实验性绘制接管。关闭开关或 `session_shutdown` 时会恢复 Pi 默认 editor/footer，并重置终端滚动区域和光标状态。
 
-开启 `底部状态栏` 后，扩展会在 editor 上方注册 widget。固定输入框开启时，该 widget 会随输入框一起固定到底部。状态栏只显示可取得的数据：模型、thinking、总 token 和当前时间；缺失的数据不会显示占位。`Alt+S` 对齐原版行为：有输入时暂存并清空输入框，输入框为空时恢复暂存内容。
+开启 `底部状态栏` 后，扩展会在 editor 上方注册主状态 widget，并在 editor 下方注册上一个问题 widget。固定输入框开启时，这两个 widget 会随输入框一起固定到底部。状态栏只显示可取得的数据：模型、thinking、细线上下文进度或已用量、本次对话耗时、上一个问题；缺失的数据不会显示占位。`Alt+S` 对齐原版行为：有输入时暂存并清空输入框，输入框为空时恢复暂存内容。
 
 ## 颜色控制
 

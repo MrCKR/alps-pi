@@ -8,7 +8,7 @@ import { assertLinesWithin, stripAnsi } from "./helpers.test.ts";
 
 test("空输入返回空 cluster", () => {
 	assert.deepEqual(renderFixedEditorCluster({ width: 80, maxHeight: 4 }), { lines: [] });
-	assert.deepEqual(renderFixedEditorCluster({ editorLines: [], statusLines: [], footerLines: [], width: 80, maxHeight: 4 }), { lines: [] });
+	assert.deepEqual(renderFixedEditorCluster({ editorLines: [], statusLines: [], topLines: [], secondaryLines: [], lastPromptLines: [], width: 80, maxHeight: 4 }), { lines: [] });
 });
 
 test("行宽超过 width 时会截断", () => {
@@ -39,18 +39,46 @@ test("ANSI、CJK 和 emoji 不导致可见宽度超出 width", () => {
 	}
 });
 
+test("按原版分层顺序渲染 status、top、editor、secondary 和 last prompt", () => {
+	const cluster = renderFixedEditorCluster({
+		statusLines: ["status-animation"],
+		topLines: ["top-status"],
+		editorLines: ["> input"],
+		secondaryLines: ["secondary"],
+		lastPromptLines: ["↳ last prompt"],
+		width: 40,
+		maxHeight: 8,
+	});
+
+	assert.deepEqual(cluster.lines.map(stripAnsi), ["status-animation", "top-status", "> input", "secondary", "↳ last prompt"]);
+});
+
+test("高度不足时优先保留 editor、top，再保留下方 last prompt，丢弃原生 status", () => {
+	const cluster = renderFixedEditorCluster({
+		statusLines: ["status-animation"],
+		topLines: ["top-status"],
+		editorLines: ["> input"],
+		lastPromptLines: ["↳ last prompt"],
+		width: 40,
+		maxHeight: 3,
+	});
+
+	assert.deepEqual(cluster.lines.map(stripAnsi), ["top-status", "> input", "↳ last prompt"]);
+});
+
 test("包含 CURSOR_MARKER 时能提取 cursor，并从输出行删除 marker", () => {
 	const marker = FIXED_EDITOR_CURSOR_MARKER;
 	const cluster = renderFixedEditorCluster({
 		statusLines: ["status"],
+		topLines: ["top"],
 		editorLines: [`hello ${marker}世界`],
-		footerLines: ["footer"],
+		lastPromptLines: ["last"],
 		width: 20,
 		maxHeight: 5,
 	});
 
-	assert.deepEqual(cluster.cursor, { row: 1, col: 6 });
-	assert.equal(cluster.lines[1], "hello 世界");
+	assert.deepEqual(cluster.cursor, { row: 2, col: 6 });
+	assert.equal(cluster.lines[2], "hello 世界");
 	assert.equal(cluster.lines.some((line) => line.includes(marker)), false);
 	assertLinesWithin(cluster.lines, 20);
 });
@@ -63,7 +91,7 @@ test("editor 行数超过可用高度时，优先保留 cursor 附近行", () =>
 		maxHeight: 3,
 	});
 
-	assert.deepEqual(cluster.lines.map(stripAnsi), ["line-1", "line-2 cursor", "line-3"]);
-	assert.deepEqual(cluster.cursor, { row: 1, col: 7 });
+	assert.deepEqual(cluster.lines.map(stripAnsi), ["line-0", "line-1", "line-2 cursor"]);
+	assert.deepEqual(cluster.cursor, { row: 2, col: 7 });
 	assertLinesWithin(cluster.lines, 20);
 });

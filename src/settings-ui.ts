@@ -60,7 +60,7 @@ export class AlpsPiSettingsComponent {
 			this.renderRow("线框美化", booleanLabel(settings.chromeFrame.enabled), "控制消息、工具与 bash 外框", this.selectedIndex === 0, innerWidth),
 			this.renderRow("Assistant 正文线框", booleanLabel(settings.chromeFrame.assistantFrame), "控制 assistant 正文回复是否包线框", this.selectedIndex === 1, innerWidth),
 			this.renderRow("固定输入框", booleanLabel(settings.fixedBottomEditor.enabled), "控制底部固定编辑器运行时", this.selectedIndex === 2, innerWidth),
-			this.renderRow("底部状态栏", booleanLabel(settings.bottomStatus.enabled), "显示模型、thinking、总 token 和时间", this.selectedIndex === 3, innerWidth),
+			this.renderRow("底部状态栏", booleanLabel(settings.bottomStatus.enabled), "显示模型、thinking、上下文、耗时和上个问题", this.selectedIndex === 3, innerWidth),
 			"",
 			hint,
 		];
