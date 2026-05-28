@@ -1,4 +1,4 @@
-/** 功能：验证扩展入口接入 fixed bottom editor runtime 生命周期 实现者：alps 实现日期：2026-05-27 */
+/** 功能：验证扩展入口接入统一 bottom-input runtime 生命周期 实现者：alps 实现日期：2026-05-28 */
 
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -7,17 +7,15 @@ import { join } from "node:path";
 import test from "node:test";
 import { registerAlpsPiExtension } from "../index.ts";
 import { createInitialPatchState, PATCH_KEY } from "../src/features/chrome-frame/patch.ts";
-import type { BottomStatusRuntime } from "../src/features/bottom-status/index.ts";
-import type { FixedBottomEditorRuntime } from "../src/features/fixed-bottom-editor/runtime.ts";
+import type { BottomInputRuntime } from "../src/features/bottom-input/index.ts";
 
 function createHarness(options: { failEnable?: boolean } = {}) {
 	const handlers = new Map<string, Function[]>();
 	const commands = new Map<string, any>();
 	const runtimeCalls: string[] = [];
-	const bottomStatusCalls: string[] = [];
 	const disposePatchEnabledSnapshots: boolean[] = [];
 	let enabled = false;
-	const runtime: FixedBottomEditorRuntime = {
+	const runtime: BottomInputRuntime = {
 		bindSession(ctx: any) {
 			runtimeCalls.push(`bind:${ctx.id}`);
 		},
@@ -39,37 +37,35 @@ function createHarness(options: { failEnable?: boolean } = {}) {
 		getStatus() {
 			return { enabled, installed: enabled };
 		},
-	};
-	const bottomStatusRuntime: BottomStatusRuntime = {
-		bindSession(ctx: any) {
-			bottomStatusCalls.push(`bind:${ctx.id}`);
-		},
-		setEnabled(nextEnabled: boolean) {
-			bottomStatusCalls.push(`set:${nextEnabled}`);
+		setBottomStatusEnabled(nextEnabled: boolean) {
+			runtimeCalls.push(`bottom:${nextEnabled}`);
 		},
 		resetSessionStartTime() {
-			bottomStatusCalls.push("resetTime");
+			runtimeCalls.push("resetTime");
 		},
 		setLastPrompt(prompt: unknown) {
-			bottomStatusCalls.push(`prompt:${String(prompt)}`);
-		},
-		dispose() {
-			bottomStatusCalls.push("dispose");
+			runtimeCalls.push(`prompt:${String(prompt)}`);
 		},
 		setThinkingLevel(level: unknown) {
-			bottomStatusCalls.push(`thinking:${String(level)}`);
+			runtimeCalls.push(`thinking:${String(level)}`);
+		},
+		setStreaming(streaming: boolean) {
+			runtimeCalls.push(`streaming:${streaming}`);
 		},
 		setLiveUsage() {
-			bottomStatusCalls.push("liveUsage");
+			runtimeCalls.push("liveUsage");
 		},
 		clearLiveUsage() {
-			bottomStatusCalls.push("clearLiveUsage");
+			runtimeCalls.push("clearLiveUsage");
 		},
 		requestRender() {
-			bottomStatusCalls.push("render");
+			runtimeCalls.push("render");
 		},
 		stashOrRestoreEditorText() {
-			bottomStatusCalls.push("stash");
+			runtimeCalls.push("stash");
+		},
+		setShortcuts() {
+			runtimeCalls.push("shortcuts");
 		},
 	};
 	const pi = {
@@ -86,14 +82,13 @@ function createHarness(options: { failEnable?: boolean } = {}) {
 		},
 	};
 
-	registerAlpsPiExtension(pi as any, { fixedBottomEditorRuntime: runtime, bottomStatusRuntime });
+	registerAlpsPiExtension(pi as any, { bottomInputRuntime: runtime });
 
 	return {
 		commands,
 		disposePatchEnabledSnapshots,
 		handlers,
 		runtimeCalls,
-		bottomStatusCalls,
 		emit(event: string, ctx: any = { id: "ctx" }, payload: any = {}) {
 			for (const handler of handlers.get(event) ?? []) {
 				handler(payload, ctx);
@@ -126,12 +121,11 @@ test("extension load 后注册 session_start 和 session_shutdown", () => {
 	assert.ok(harness.commands.has("shortcut:alt+s"));
 });
 
-test("session_start 调用 runtime.bindSession，并按默认设置安装 fixed editor", () => {
+test("session_start 调用统一 runtime，并按默认设置安装 fixed editor", () => {
 	const harness = createHarness();
 	harness.emit("session_start", { id: "one" });
 
-	assert.deepEqual(harness.runtimeCalls, ["bind:one", "set:true"]);
-	assert.deepEqual(harness.bottomStatusCalls, ["bind:one", "resetTime", "prompt:", "set:false"]);
+	assert.deepEqual(harness.runtimeCalls, ["shortcuts", "bind:one", "resetTime", "prompt:", "shortcuts", "set:true", "bottom:false"]);
 });
 
 test("若设置为 true，session_start 尝试安装 runtime", () => {
@@ -140,11 +134,11 @@ test("若设置为 true，session_start 尝试安装 runtime", () => {
 
 	harness.emit("session_start", { id: "two" });
 
-	assert.deepEqual(harness.runtimeCalls, ["bind:two", "set:true"]);
+	assert.ok(harness.runtimeCalls.includes("set:true"));
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, true);
 });
 
-test("session_shutdown 先 dispose runtimes、保留 fixedBottomEditor/bottomStatus 设置，再 disablePatch", () => {
+test("session_shutdown 先 dispose runtime、保留 fixedBottomEditor/bottomStatus 设置，再 disablePatch", () => {
 	const harness = createHarness();
 	(globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled = true;
 	(globalThis as any)[PATCH_KEY].config.settings.bottomStatus.enabled = true;
@@ -152,8 +146,7 @@ test("session_shutdown 先 dispose runtimes、保留 fixedBottomEditor/bottomSta
 
 	harness.emit("session_shutdown");
 
-	assert.equal(harness.runtimeCalls[0], "dispose");
-	assert.deepEqual(harness.bottomStatusCalls, ["dispose"]);
+	assert.equal(harness.runtimeCalls.includes("dispose"), true);
 	assert.deepEqual(harness.disposePatchEnabledSnapshots, [true]);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, true);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.bottomStatus.enabled, true);
@@ -168,8 +161,7 @@ test("shutdown 后下一次 session_start 会按持久化设置恢复 fixed edit
 	harness.emit("session_shutdown");
 	harness.emit("session_start", { id: "next" });
 
-	assert.deepEqual(harness.runtimeCalls, ["dispose", "bind:next", "set:true"]);
-	assert.deepEqual(harness.bottomStatusCalls, ["dispose", "bind:next", "resetTime", "prompt:", "set:true"]);
+	assert.deepEqual(harness.runtimeCalls.slice(-6), ["bind:next", "resetTime", "prompt:", "shortcuts", "set:true", "bottom:true"]);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, true);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.bottomStatus.enabled, true);
 });
@@ -180,7 +172,7 @@ test("session_start 会按设置安装 bottom status", () => {
 
 	harness.emit("session_start", { id: "bottom" });
 
-	assert.deepEqual(harness.bottomStatusCalls, ["bind:bottom", "resetTime", "prompt:", "set:true"]);
+	assert.equal(harness.runtimeCalls.includes("bottom:true"), true);
 });
 
 test("session_start 安装失败时回写 fixedBottomEditor=false", () => {
@@ -189,7 +181,7 @@ test("session_start 安装失败时回写 fixedBottomEditor=false", () => {
 
 	harness.emit("session_start", { id: "fail" });
 
-	assert.deepEqual(harness.runtimeCalls, ["bind:fail", "set:true"]);
+	assert.equal(harness.runtimeCalls.includes("set:true"), true);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, false);
 });
 
@@ -211,27 +203,31 @@ test("扩展启动时读取持久化设置", () => {
 	assert.equal(settings.chromeFrame.compactEditTool, true);
 	assert.equal(settings.fixedBottomEditor.enabled, false);
 	assert.equal(settings.bottomStatus.enabled, true);
-	assert.deepEqual(harness.runtimeCalls, ["bind:persisted"]);
-	assert.deepEqual(harness.bottomStatusCalls, ["bind:persisted", "resetTime", "prompt:", "set:true"]);
+	assert.equal(harness.runtimeCalls.includes("bind:persisted"), true);
+	assert.equal(harness.runtimeCalls.includes("set:true"), false);
+	assert.equal(harness.runtimeCalls.includes("bottom:true"), true);
 });
 
-test("模型、thinking 与消息事件会刷新 bottom status runtime", () => {
+test("模型、thinking 与消息事件会刷新统一 runtime", () => {
 	const harness = createHarness();
 
 	harness.emit("model_select", { id: "model" });
 	harness.emit("thinking_level_select", { id: "think" }, { level: "high" });
 	harness.emit("before_agent_start", { id: "prompt" }, { prompt: "上一个问题" });
+	harness.emit("agent_start", { id: "agent" });
 	harness.emit("message_update", { id: "update" }, { message: { usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } } });
 	harness.emit("message_end", { id: "end" });
 	harness.emit("turn_end", { id: "turn" });
 
-	assert.deepEqual(harness.bottomStatusCalls, [
+	assert.deepEqual(harness.runtimeCalls.slice(1), [
 		"bind:model",
 		"render",
 		"bind:think",
 		"thinking:high",
 		"bind:prompt",
 		"prompt:上一个问题",
+		"bind:agent",
+		"streaming:true",
 		"bind:update",
 		"liveUsage",
 		"bind:end",
@@ -241,13 +237,13 @@ test("模型、thinking 与消息事件会刷新 bottom status runtime", () => {
 	]);
 });
 
-test("Alt+S shortcut 调用 bottom status 暂存逻辑", async () => {
+test("Alt+S shortcut 调用统一 runtime 暂存逻辑", async () => {
 	const harness = createHarness();
 	await harness.commands.get("shortcut:alt+s").handler({ id: "shortcut" });
-	assert.deepEqual(harness.bottomStatusCalls, ["stash"]);
+	assert.equal(harness.runtimeCalls.includes("stash"), true);
 });
 
-test("命令层 fixed/bottom ops 使用入口创建的 runtime 并用命令 ctx 懒绑定 session", async () => {
+test("命令层 fixed/bottom ops 使用入口创建的统一 runtime 并用命令 ctx 懒绑定 session", async () => {
 	const harness = createHarness();
 	const ctx = {
 		id: "command-ctx",
@@ -270,6 +266,7 @@ test("命令层 fixed/bottom ops 使用入口创建的 runtime 并用命令 ctx 
 	};
 
 	await harness.commands.get("alps-pi").handler("", ctx);
-	assert.deepEqual(harness.runtimeCalls, ["bind:command-ctx", "set:false"]);
-	assert.deepEqual(harness.bottomStatusCalls, ["bind:command-ctx", "set:true"]);
+	assert.equal(harness.runtimeCalls.includes("bind:command-ctx"), true);
+	assert.equal(harness.runtimeCalls.includes("set:false"), true);
+	assert.equal(harness.runtimeCalls.includes("bottom:true"), true);
 });

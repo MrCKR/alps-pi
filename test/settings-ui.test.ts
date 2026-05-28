@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createInitialPatchState } from "../src/features/chrome-frame/patch.ts";
 import { AlpsPiSettingsComponent } from "../src/settings-ui.ts";
+import { DEFAULT_SETTINGS } from "../src/settings.ts";
+import { validateShortcutChange } from "../src/features/bottom-input/shortcuts.ts";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { createFakeTheme, stripAnsi } from "./helpers.test.ts";
 
@@ -136,4 +138,26 @@ test("设置界面固定输入框启用失败时回滚 OFF", () => {
 	assert.equal(state.config.settings.fixedBottomEditor.enabled, false);
 	assert.deepEqual(fixedCalls, [true]);
 	assert.match(stripAnsi(component.render(80).join("\n")), /固定输入框\s+OFF/);
+});
+
+test("快捷键校验拒绝归一化后的 Pi 保留键", () => {
+	for (const shortcut of ["ctrl+shift+p", "shift+ctrl+p", "ctrl+shift+o", "shift+ctrl+o"]) {
+		const result = validateShortcutChange(DEFAULT_SETTINGS.shortcuts, "copyEditor", shortcut);
+		assert.equal(result.ok, false, shortcut);
+		if (!result.ok) assert.match(result.reason, /保留/);
+	}
+});
+
+test("快捷键设置 Backspace 恢复默认会拒绝冲突", () => {
+	const { state, component } = createPanel();
+	state.config.settings.shortcuts.copyEditor = "ctrl+alt+g";
+	state.config.settings.shortcuts.cutEditor = DEFAULT_SETTINGS.shortcuts.copyEditor;
+
+	for (let i = 0; i < 6; i++) component.handleInput("\x1b[B");
+	component.handleInput(" ");
+	component.handleInput("\x1b[B");
+	component.handleInput("\x7f");
+
+	assert.equal(state.config.settings.shortcuts.copyEditor, "ctrl+alt+g");
+	assert.match(stripAnsi(component.render(80).join("\n")), /冲突/);
 });

@@ -187,6 +187,10 @@ function normalizeSettings(settings: AlpsPiSettings | any, enabled: boolean): Al
 				...DEFAULT_CONFIG.settings.bottomStatus,
 				...(settings.bottomStatus ?? {}),
 			},
+			shortcuts: {
+				...DEFAULT_CONFIG.settings.shortcuts,
+				...(settings.shortcuts ?? {}),
+			},
 		} as AlpsPiSettings;
 	}
 	return {
@@ -202,6 +206,10 @@ function normalizeSettings(settings: AlpsPiSettings | any, enabled: boolean): Al
 		bottomStatus: {
 			enabled: Boolean(settings?.bottomStatus?.enabled ?? DEFAULT_CONFIG.settings.bottomStatus.enabled),
 		},
+		shortcuts: {
+			...DEFAULT_CONFIG.settings.shortcuts,
+			...(settings?.shortcuts ?? {}),
+		},
 	};
 }
 
@@ -214,6 +222,7 @@ function createTrackedSettings(settings: AlpsPiSettings, enabled: boolean, onCha
 	normalized.chromeFrame = createTrackedObject(normalized.chromeFrame, onChange);
 	normalized.fixedBottomEditor = createTrackedObject(normalized.fixedBottomEditor, onChange);
 	normalized.bottomStatus = createTrackedObject(normalized.bottomStatus, onChange);
+	normalized.shortcuts = createTrackedObject(normalized.shortcuts, onChange);
 	return createTrackedObject(normalized, onChange);
 }
 

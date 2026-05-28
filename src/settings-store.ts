@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { cloneDefaultSettings, type AlpsPiSettings } from "./settings.ts";
+import { normalizeShortcut, shortcutConflictKey, shortcutUsesSuper, isSupportedSuperShortcut, RESERVED_BOTTOM_INPUT_SHORTCUTS, SHORTCUT_KEYS } from "./features/bottom-input/shortcuts.ts";
 
 const SETTINGS_ENV = "ALPS_PI_SETTINGS_PATH";
 
@@ -53,6 +54,7 @@ export function cloneSettings(settings: AlpsPiSettings): AlpsPiSettings {
 		chromeFrame: { ...settings.chromeFrame },
 		fixedBottomEditor: { ...settings.fixedBottomEditor },
 		bottomStatus: { ...settings.bottomStatus },
+		shortcuts: { ...settings.shortcuts },
 	};
 }
 
@@ -72,7 +74,35 @@ function normalizeSettings(value: unknown, defaults: AlpsPiSettings): AlpsPiSett
 		bottomStatus: {
 			enabled: readBoolean(raw.bottomStatus, "enabled", defaults.bottomStatus.enabled),
 		},
+		shortcuts: normalizeShortcutSettings(raw.shortcuts, defaults.shortcuts),
 	};
+}
+
+function normalizeShortcutSettings(parent: unknown, defaults: AlpsPiSettings["shortcuts"]): AlpsPiSettings["shortcuts"] {
+	const result = { ...defaults };
+	if (!isRecord(parent)) return result;
+	const occupied = new Set(SHORTCUT_KEYS.map((key) => shortcutConflictKey(defaults[key])));
+	for (const key of SHORTCUT_KEYS) {
+		const value = parent[key];
+		if (typeof value !== "string") continue;
+		const normalized = normalizeShortcut(value);
+		if (!normalized || isReservedShortcut(normalized)) continue;
+		if (shortcutUsesSuper(normalized) && !isSupportedSuperShortcut(normalized)) continue;
+		const defaultConflictKey = shortcutConflictKey(defaults[key]);
+		const nextConflictKey = shortcutConflictKey(normalized);
+		occupied.delete(defaultConflictKey);
+		if (occupied.has(nextConflictKey)) {
+			occupied.add(defaultConflictKey);
+			continue;
+		}
+		result[key] = normalized;
+		occupied.add(nextConflictKey);
+	}
+	return result;
+}
+
+function isReservedShortcut(shortcut: string): boolean {
+	return RESERVED_BOTTOM_INPUT_SHORTCUTS.has(shortcutConflictKey(shortcut));
 }
 
 function readBoolean(parent: unknown, key: string, fallback: boolean): boolean {

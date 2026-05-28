@@ -32,7 +32,9 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 			const setBottomStatusEnabled = ops.setBottomStatusEnabled ?? ((enabled: boolean) => {
 				getGlobalPatchState().config.settings.bottomStatus.enabled = enabled;
 			});
-			const onSettingsChanged = ops.onSettingsChanged ?? (() => undefined);
+			const onSettingsChanged = ops.onSettingsChanged ?? ((settings: AlpsPiSettings) => {
+				getGlobalPatchState().config.settings.shortcuts = { ...settings.shortcuts };
+			});
 			const setFixedEnabled = ops.setFixedBottomEditorEnabled ?? ((enabled: boolean) => {
 				const state = getGlobalPatchState();
 				state.config.settings.fixedBottomEditor.enabled = false;

@@ -21,6 +21,33 @@ export type BottomStatusSettings = {
 	enabled: boolean;
 };
 
+export type BottomInputShortcutSettings = {
+	/** Alt+S 暂存/恢复输入框。 */
+	stashEditor: string;
+	/** 复制输入框文本。 */
+	copyEditor: string;
+	/** 剪切输入框文本。 */
+	cutEditor: string;
+	/** 聊天区向上滚动。 */
+	scrollChatUp: string;
+	/** 聊天区向下滚动。 */
+	scrollChatDown: string;
+	/** 编辑器光标到开头。 */
+	editorStart: string;
+	/** 编辑器光标到末尾。 */
+	editorEnd: string;
+	/** 跳到上一条用户消息。 */
+	jumpPreviousUserMessage: string;
+	/** 跳到下一条用户消息。 */
+	jumpNextUserMessage: string;
+	/** 跳到上一条助手消息。 */
+	jumpPreviousAssistantMessage: string;
+	/** 跳到下一条助手消息。 */
+	jumpNextAssistantMessage: string;
+	/** 回到聊天底部。 */
+	jumpChatBottom: string;
+};
+
 export type FixedBottomEditorStatus = {
 	/** 用户期望的运行时开关状态。 */
 	enabled: boolean;
@@ -37,6 +64,8 @@ export type AlpsPiSettings = {
 	fixedBottomEditor: FixedBottomEditorSettings;
 	/** 底部状态栏功能配置。 */
 	bottomStatus: BottomStatusSettings;
+	/** 底部输入框快捷键配置。 */
+	shortcuts: BottomInputShortcutSettings;
 };
 
 export const DEFAULT_SETTINGS: AlpsPiSettings = {
@@ -52,6 +81,20 @@ export const DEFAULT_SETTINGS: AlpsPiSettings = {
 	bottomStatus: {
 		enabled: false,
 	},
+	shortcuts: {
+		stashEditor: "alt+s",
+		copyEditor: "ctrl+alt+c",
+		cutEditor: "ctrl+alt+x",
+		scrollChatUp: "super+up",
+		scrollChatDown: "super+down",
+		editorStart: "super+shift+up",
+		editorEnd: "super+shift+down",
+		jumpPreviousUserMessage: "ctrl+shift+u",
+		jumpNextUserMessage: "ctrl+shift+i",
+		jumpPreviousAssistantMessage: "ctrl+alt+,",
+		jumpNextAssistantMessage: "ctrl+alt+.",
+		jumpChatBottom: "ctrl+shift+g",
+	},
 };
 
 export function cloneDefaultSettings(): AlpsPiSettings {
@@ -59,5 +102,6 @@ export function cloneDefaultSettings(): AlpsPiSettings {
 		chromeFrame: { ...DEFAULT_SETTINGS.chromeFrame },
 		fixedBottomEditor: { ...DEFAULT_SETTINGS.fixedBottomEditor },
 		bottomStatus: { ...DEFAULT_SETTINGS.bottomStatus },
+		shortcuts: { ...DEFAULT_SETTINGS.shortcuts },
 	};
 }
