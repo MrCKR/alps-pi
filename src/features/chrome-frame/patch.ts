@@ -409,6 +409,11 @@ function createStyleSignature(id: string, kind: ChromeKind, status: ChromeStatus
 	return [id, kind, status ?? "", toolName ?? "", configVersion, expanded ? "expanded" : "collapsed", style.bg, style.border, style.label, style.text].join(CACHE_KEY_SEPARATOR);
 }
 
+function createTimingContentKey(kind: ChromeKind, instance: any, innerLines: readonly string[]): string {
+	if (kind === "tool" && instance?.toolCallId) return `tool:${String(instance.toolCallId)}`;
+	return innerLines.join("\n");
+}
+
 export function createSafeBoxRender(kind: ChromeKind, inner: (innerWidth: number) => string[], options: SafeBoxRenderOptions): (width: number) => string[] {
 	return (width: number) => {
 		const innerWidth = Math.max(1, Math.floor(width) - 4);
@@ -454,7 +459,8 @@ export function createWrappedRender(
 			}
 			const innerKey = displayedLines.join("\n");
 			const styleKey = createStyleSignature(id, kind, status, toolName, config, state.configVersion, Boolean(instance?.expanded));
-			const timingKey = [innerKey, kind, toolName ?? "", status ?? ""].join(CACHE_KEY_SEPARATOR);
+			const timingContentKey = createTimingContentKey(kind, instance, innerLines);
+			const timingKey = [timingContentKey, kind, toolName ?? "", status ?? ""].join(CACHE_KEY_SEPARATOR);
 			const timing = updateTimingState(instance, timingKey);
 			const elapsedText = formatElapsedSincePrevious(timing);
 			const cache = (instance as any)[RENDER_CACHE_KEY] as RenderCacheEntry | undefined;

@@ -172,6 +172,37 @@ test("重复渲染同一线框不刷新更新时间", () => {
 	}
 });
 
+test("Tool 展开不刷新线框更新时间", () => {
+	class ExpandableTool {
+		toolName = "read";
+		toolCallId = "tool-call-1";
+		isPartial = false;
+		result = { isError: false, content: [{ type: "text", text: "first line\nsecond line" }] };
+		expanded = false;
+		render(_width: number) {
+			return this.expanded ? ["read src/a.ts", "first line", "second line"] : ["read src/a.ts"];
+		}
+	}
+	const originalNow = Date.now;
+	const theme = createFakeTheme();
+	const wrapped = createWrappedRender("ToolFake", "tool", ExpandableTool.prototype.render, () => theme);
+	const first = new FakeComponent();
+	const tool = new ExpandableTool();
+	try {
+		Date.now = () => 1_000;
+		createWrappedRender("Fake", "assistant", FakeComponent.prototype.render, () => theme).call(first, 36);
+		Date.now = () => 2_000;
+		wrapped.call(tool, 48);
+		Date.now = () => 10_000;
+		tool.expanded = true;
+		const lines = wrapped.call(tool, 48);
+
+		assert.match(stripAnsi(lines.at(-1)!), /1s ╯$/);
+	} finally {
+		Date.now = originalNow;
+	}
+});
+
 test("disablePatch 后线框间隔 registry 会重置", () => {
 	const originalNow = Date.now;
 	const original = FakeComponent.prototype.render;
