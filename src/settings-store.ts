@@ -63,6 +63,8 @@ function normalizeSettings(value: unknown, defaults: AlpsPiSettings): AlpsPiSett
 		chromeFrame: {
 			enabled: readBoolean(raw.chromeFrame, "enabled", defaults.chromeFrame.enabled),
 			assistantFrame: readBoolean(raw.chromeFrame, "assistantFrame", defaults.chromeFrame.assistantFrame),
+			toolCompactMode: readBoolean(raw.chromeFrame, "toolCompactMode", defaults.chromeFrame.toolCompactMode),
+			compactEditTool: readBoolean(raw.chromeFrame, "compactEditTool", defaults.chromeFrame.compactEditTool),
 		},
 		fixedBottomEditor: {
 			enabled: readBoolean(raw.fixedBottomEditor, "enabled", defaults.fixedBottomEditor.enabled),

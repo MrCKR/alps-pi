@@ -26,6 +26,8 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 	const persistedSettings = readPersistedSettings();
 	state.config.settings.chromeFrame.enabled = persistedSettings.chromeFrame.enabled;
 	state.config.settings.chromeFrame.assistantFrame = persistedSettings.chromeFrame.assistantFrame;
+	state.config.settings.chromeFrame.toolCompactMode = persistedSettings.chromeFrame.toolCompactMode;
+	state.config.settings.chromeFrame.compactEditTool = persistedSettings.chromeFrame.compactEditTool;
 	state.config.settings.fixedBottomEditor.enabled = persistedSettings.fixedBottomEditor.enabled;
 	state.config.settings.bottomStatus.enabled = persistedSettings.bottomStatus.enabled;
 
@@ -111,6 +113,8 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 			bottomStatusRuntime.dispose();
 		} finally {
 			const state = getGlobalPatchState();
+			state.config.settings.chromeFrame.toolCompactMode = persisted.chromeFrame.toolCompactMode;
+			state.config.settings.chromeFrame.compactEditTool = persisted.chromeFrame.compactEditTool;
 			state.config.settings.fixedBottomEditor.enabled = persisted.fixedBottomEditor.enabled;
 			state.config.settings.bottomStatus.enabled = persisted.bottomStatus.enabled;
 			writePersistedSettings(state.config.settings);

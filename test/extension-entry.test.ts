@@ -196,7 +196,7 @@ test("session_start 安装失败时回写 fixedBottomEditor=false", () => {
 test("扩展启动时读取持久化设置", () => {
 	const file = process.env.ALPS_PI_SETTINGS_PATH!;
 	writeFileSync(file, JSON.stringify({
-		chromeFrame: { enabled: false, assistantFrame: false },
+		chromeFrame: { enabled: false, assistantFrame: false, toolCompactMode: false, compactEditTool: true },
 		fixedBottomEditor: { enabled: false },
 		bottomStatus: { enabled: true },
 	}), "utf-8");
@@ -207,6 +207,8 @@ test("扩展启动时读取持久化设置", () => {
 	const settings = (globalThis as any)[PATCH_KEY].config.settings;
 	assert.equal(settings.chromeFrame.enabled, false);
 	assert.equal(settings.chromeFrame.assistantFrame, false);
+	assert.equal(settings.chromeFrame.toolCompactMode, false);
+	assert.equal(settings.chromeFrame.compactEditTool, true);
 	assert.equal(settings.fixedBottomEditor.enabled, false);
 	assert.equal(settings.bottomStatus.enabled, true);
 	assert.deepEqual(harness.runtimeCalls, ["bind:persisted"]);

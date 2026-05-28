@@ -526,6 +526,63 @@ test("Tool 极简模式把 todo ≡ 视为低价值工具名行", () => {
 	assert.doesNotMatch(body, /todo ≡/);
 });
 
+
+test("Tool 极简模式保留 read skill 的 Pi 紧凑调用摘要", () => {
+	class ReadSkillTool {
+		toolName = "read";
+		isPartial = false;
+		result = { isError: false, content: [{ type: "text", text: "---\nname: actors\ndescription: demo" }] };
+		expanded = false;
+		render(_width: number) {
+			return ["[skill] actors (Ctrl+O to expand)", "", "---", "name: actors"];
+		}
+	}
+	const { lines } = renderToolInstance(new ReadSkillTool());
+	const body = bodyText(lines);
+
+	assert.match(body, /\[skill\] actors/);
+	assert.doesNotMatch(body, /---/);
+});
+
+
+test("Tool 极简模式为 JSON 结果工具优先显示参数摘要", () => {
+	class InspectTool {
+		toolName = "inspect";
+		args = { target: "tool:read", view: "schema", verbose: true };
+		isPartial = false;
+		result = { isError: false, content: [{ type: "text", text: "{\n  \"name\": \"read\"\n}" }] };
+		expanded = false;
+		render(_width: number) {
+			return ["inspect", "", "{", "  \"name\": \"read\""];
+		}
+	}
+	const { lines } = renderToolInstance(new InspectTool());
+	const body = bodyText(lines);
+
+	assert.match(body, /inspect target=tool:read view=schema/);
+	assert.match(body, /verbose=true/);
+	assert.doesNotMatch(body, /^\s*\{/m);
+});
+
+
+test("Tool 极简模式跳过 result 中的结构符号行", () => {
+	class JsonResultTool {
+		toolName = "custom";
+		isPartial = false;
+		result = { isError: false, content: [{ type: "text", text: "{\n  \"ok\": true\n}" }] };
+		expanded = false;
+		render(_width: number) {
+			return ["custom", "", "{", "  \"ok\": true"];
+		}
+	}
+	const { lines } = renderToolInstance(new JsonResultTool());
+	const body = bodyText(lines);
+
+	assert.match(body, /\"ok\": true/);
+	assert.doesNotMatch(body, /^\s*\{/m);
+});
+
+
 test("Tool 极简缓存随 expanded 与设置变化失效", () => {
 	const original = MultiLineComponent.prototype.render;
 	const theme = createFakeTheme();

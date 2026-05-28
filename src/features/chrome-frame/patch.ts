@@ -324,6 +324,11 @@ function normalizeToolLine(line: string): string {
 
 const LOW_VALUE_TOOL_REST_PATTERN = /^[=:：≡☰-]+$/;
 const STATUS_ONLY_TOOL_LINE_PATTERN = /^[✓✔✗✘×✕-]+$/;
+const STRUCTURAL_ONLY_TOOL_TEXT_PATTERN = /^[{}\[\],]+$/;
+const FRONTMATTER_BOUNDARY_PATTERN = /^-{3,}$/;
+const MARKDOWN_FENCE_PATTERN = /^`{3,}/;
+const ARG_SUMMARY_VALUE_LIMIT = 48;
+const ARG_SUMMARY_PART_LIMIT = 4;
 
 type ToolLineMatcher = {
 	lowerToolName?: string;
@@ -358,12 +363,28 @@ function isStatusOnlyToolText(text: string): boolean {
 	return STATUS_ONLY_TOOL_LINE_PATTERN.test(text);
 }
 
+function isStructuralOnlyToolText(text: string): boolean {
+	return STRUCTURAL_ONLY_TOOL_TEXT_PATTERN.test(text) || FRONTMATTER_BOUNDARY_PATTERN.test(text) || MARKDOWN_FENCE_PATTERN.test(text);
+}
+
+function isLowValueToolText(text: string, matcher?: ToolLineMatcher): boolean {
+	if (isStatusOnlyToolText(text) || isStructuralOnlyToolText(text)) return true;
+	const rest = matcher ? getToolLineRest(text, matcher) : undefined;
+	return rest !== undefined && isLowValueToolRest(rest);
+}
+
+function isRenderedResourceSummaryLine(text: string): boolean {
+	return /^\[(?:skill|resource|docs)\]\s+\S/i.test(text);
+}
+
+/** 从 tool 原始渲染中找调用摘要；保留 Pi 对 skill/resource read 的紧凑摘要。 */
 function firstInvocationSummaryLine(lines: readonly string[], matcher: ToolLineMatcher): string | undefined {
 	for (const raw of lines) {
 		for (const line of String(raw).split("\n")) {
 			if (!isVisibleTextLine(line)) continue;
 			const text = normalizeToolLine(line);
 			if (text.startsWith("$ ") && text.slice(2).trim().length > 0) return line;
+			if (isRenderedResourceSummaryLine(text)) return line;
 			const rest = getToolLineRest(text, matcher);
 			if (rest !== undefined && !isLowValueToolRest(rest)) return line;
 		}
@@ -371,28 +392,53 @@ function firstInvocationSummaryLine(lines: readonly string[], matcher: ToolLineM
 	return undefined;
 }
 
-function firstNonBoilerplateToolLine(lines: readonly string[], matcher: ToolLineMatcher): string | undefined {
+function firstMeaningfulToolLine(lines: readonly string[], matcher?: ToolLineMatcher): string | undefined {
 	for (const raw of lines) {
 		for (const line of String(raw).split("\n")) {
 			if (!isVisibleTextLine(line)) continue;
 			const text = normalizeToolLine(line);
-			const rest = getToolLineRest(text, matcher);
-			if (rest !== undefined && isLowValueToolRest(rest)) continue;
-			if (isStatusOnlyToolText(text)) continue;
+			if (isLowValueToolText(text, matcher)) continue;
 			return line;
 		}
 	}
 	return undefined;
 }
 
-/** 提取 tool 极简模式正文：优先显示关键调用行，缺失时回退结果首行，再跳过原始低价值行。 */
+function firstNonBoilerplateToolLine(lines: readonly string[], matcher: ToolLineMatcher): string | undefined {
+	return firstMeaningfulToolLine(lines, matcher);
+}
+
+function compactArgValue(value: unknown): string | undefined {
+	if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") return undefined;
+	const normalized = String(value).replace(/\s+/g, " ").trim();
+	if (!normalized) return undefined;
+	return normalized.length > ARG_SUMMARY_VALUE_LIMIT ? `${normalized.slice(0, ARG_SUMMARY_VALUE_LIMIT - 1)}…` : normalized;
+}
+
+/** 为没有自定义调用渲染的工具生成短参数摘要，避免 JSON 结果首行成为唯一正文。 */
+function createToolArgsSummary(toolName: string | undefined, instance: any): string | undefined {
+	if (!toolName) return undefined;
+	const args = instance?.args;
+	if (!args || typeof args !== "object" || Array.isArray(args)) return undefined;
+	const parts: string[] = [];
+	for (const [key, value] of Object.entries(args)) {
+		const compactValue = compactArgValue(value);
+		if (compactValue === undefined) continue;
+		parts.push(`${key}=${compactValue}`);
+		if (parts.length >= ARG_SUMMARY_PART_LIMIT) break;
+	}
+	return parts.length > 0 ? `${toolName} ${parts.join(" ")}` : undefined;
+}
+
+/** 提取 tool 极简模式正文：优先显示调用意图，缺失时回退有意义的结果首行。 */
 export function compactToolLines(lines: readonly string[], instance?: any): string[] {
 	const toolName = instance?.toolName === undefined ? undefined : String(instance.toolName);
 	const matcher = createToolLineMatcher(toolName);
 	const invocationLine = firstInvocationSummaryLine(lines, matcher);
+	const argsSummaryLine = createToolArgsSummary(toolName, instance);
 	const resultLines = instance ? getToolResultContentLines(instance) : undefined;
-	const resultLine = resultLines ? firstVisibleTextLine(resultLines) : undefined;
-	const line = invocationLine ?? resultLine ?? firstNonBoilerplateToolLine(lines, matcher);
+	const resultLine = resultLines ? firstMeaningfulToolLine(resultLines) : undefined;
+	const line = invocationLine ?? argsSummaryLine ?? resultLine ?? firstNonBoilerplateToolLine(lines, matcher);
 	return line ? [line] : [];
 }
 

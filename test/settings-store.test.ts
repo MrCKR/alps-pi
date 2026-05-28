@@ -11,6 +11,8 @@ test("启动默认设置固定输入框开启，底部状态栏关闭", () => {
 	const settings = cloneStartupSettings();
 
 	assert.equal(settings.chromeFrame.enabled, true);
+	assert.equal(settings.chromeFrame.toolCompactMode, true);
+	assert.equal(settings.chromeFrame.compactEditTool, false);
 	assert.equal(settings.fixedBottomEditor.enabled, true);
 	assert.equal(settings.bottomStatus.enabled, false);
 });
@@ -20,6 +22,8 @@ test("读写持久化设置并合并缺失字段", () => {
 	const file = join(dir, "settings.json");
 	try {
 		const settings = cloneStartupSettings();
+		settings.chromeFrame.toolCompactMode = false;
+		settings.chromeFrame.compactEditTool = true;
 		settings.fixedBottomEditor.enabled = false;
 		settings.bottomStatus.enabled = true;
 		writePersistedSettings(settings, file);
@@ -28,6 +32,8 @@ test("读写持久化设置并合并缺失字段", () => {
 		assert.equal(loaded.fixedBottomEditor.enabled, false);
 		assert.equal(loaded.bottomStatus.enabled, true);
 		assert.equal(loaded.chromeFrame.assistantFrame, true);
+		assert.equal(loaded.chromeFrame.toolCompactMode, false);
+		assert.equal(loaded.chromeFrame.compactEditTool, true);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
