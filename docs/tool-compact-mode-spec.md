@@ -210,7 +210,7 @@ And 图片行按现有 image fallback / 安全渲染逻辑处理
 - 默认设置包含：
   - `chromeFrame.toolCompactMode === true`
   - `chromeFrame.compactEditTool === false`
-- 设置 UI 展示四个选项：
+- 设置 UI 至少展示以下四个 chrome-frame 选项：
   - 线框美化
   - Assistant 正文线框
   - Tool 极简模式

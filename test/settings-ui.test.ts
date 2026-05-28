@@ -40,14 +40,18 @@ function createPanel(options: { fixedResult?: { enabled: boolean; installed: boo
 	return { state, calls, fixedCalls, bottomStatusCalls, component, isClosed: () => closed };
 }
 
-test("设置界面展示线框美化、正文线框、固定输入框和底部状态栏，并渲染完整边框", () => {
+test("设置界面展示线框美化、正文线框、Tool 极简模式、edit 收起、固定输入框和底部状态栏，并渲染完整边框", () => {
 	const { component } = createPanel();
 	const lines = component.render(80);
 	const plain = stripAnsi(lines.join("\n"));
 	assert.match(plain, /线框美化/);
 	assert.match(plain, /正文线框/);
+	assert.match(plain, /Tool 极简模式/);
+	assert.match(plain, /极简下收起 edit/);
 	assert.match(plain, /固定输入框/);
 	assert.match(plain, /底部状态栏/);
+	assert.match(plain, /Tool 极简模式\s+ON/);
+	assert.match(plain, /极简下收起 edit\s+OFF/);
 	assert.match(plain, /固定输入框\s+ON/);
 	assert.match(plain, /底部状态栏\s+OFF/);
 	assert.doesNotMatch(plain, /preview/i);
@@ -82,9 +86,24 @@ test("设置界面可切换正文线框并关闭", () => {
 	assert.equal(isClosed(), true);
 });
 
-test("设置界面第三项切换固定输入框并调用 runtime op", () => {
+test("设置界面可切换 Tool 极简模式与 edit 收起", () => {
+	const { state, component } = createPanel();
+	assert.equal(state.config.settings.chromeFrame.toolCompactMode, true);
+	assert.equal(state.config.settings.chromeFrame.compactEditTool, false);
+	component.handleInput("\x1b[B");
+	component.handleInput("\x1b[B");
+	component.handleInput(" ");
+	assert.equal(state.config.settings.chromeFrame.toolCompactMode, false);
+	component.handleInput("\x1b[B");
+	component.handleInput(" ");
+	assert.equal(state.config.settings.chromeFrame.compactEditTool, true);
+});
+
+test("设置界面第五项切换固定输入框并调用 runtime op", () => {
 	const { state, fixedCalls, component } = createPanel();
 	assert.equal(state.config.settings.fixedBottomEditor.enabled, true);
+	component.handleInput("\x1b[B");
+	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput(" ");
@@ -92,9 +111,11 @@ test("设置界面第三项切换固定输入框并调用 runtime op", () => {
 	assert.deepEqual(fixedCalls, [false]);
 });
 
-test("设置界面第四项切换底部状态栏并调用 runtime op", () => {
+test("设置界面第六项切换底部状态栏并调用 runtime op", () => {
 	const { state, bottomStatusCalls, component } = createPanel();
 	assert.equal(state.config.settings.bottomStatus.enabled, false);
+	component.handleInput("\x1b[B");
+	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
@@ -106,6 +127,8 @@ test("设置界面第四项切换底部状态栏并调用 runtime op", () => {
 test("设置界面固定输入框启用失败时回滚 OFF", () => {
 	const { state, fixedCalls, component } = createPanel({ fixedResult: { enabled: false, installed: false, failure: "boom" } });
 	state.config.settings.fixedBottomEditor.enabled = false;
+	component.handleInput("\x1b[B");
+	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput(" ");

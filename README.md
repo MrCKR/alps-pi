@@ -45,15 +45,16 @@ pi install git:https://github.com/MrCKR/alps-pi
 
 ```text
 /alps-pi             打开设置界面
-/alps-pi status      查看当前 patch 与固定输入框状态
 /alps-pi preview     预览美化线框样式
 ```
 
-`/alps-pi` 设置界面目前保留四个开关：
+`/alps-pi` 设置界面目前保留六个开关：
 
 ```text
 线框美化              控制消息、工具与 bash 外框
 Assistant 正文线框    控制 assistant 正文回复是否包线框
+Tool 极简模式         未展开 tool 只显示第一条有效文本行，默认 ON
+极简下收起 edit       允许 edit tool 也按极简模式展示，默认 OFF
 固定输入框            控制实验性底部固定编辑器 runtime，默认 ON
 底部状态栏            显示模型、thinking、上下文、耗时和上个问题，默认 OFF
 ```

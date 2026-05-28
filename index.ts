@@ -46,7 +46,6 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 			writePersistedSettings(state.config.settings);
 			return status;
 		},
-		getFixedBottomEditorStatus: () => fixedBottomEditorRuntime.getStatus(),
 		setBottomStatusEnabled: (enabled, ctx) => {
 			const state = getGlobalPatchState();
 			state.config.settings.bottomStatus.enabled = enabled;

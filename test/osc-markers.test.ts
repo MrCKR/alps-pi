@@ -50,24 +50,28 @@ test("marker 不参与 visibleWidth 计算", () => {
 	assert.equal(visibleWidth(`${START}abc${END}${FINAL}`), 3);
 });
 
-test("box 后 marker 被恢复到新首行和尾行开头", () => {
+test("box 后 marker 被恢复到正文首尾而不是边框", () => {
 	const theme = createFakeTheme();
 	const input = [`${START}hello`, `${END}${FINAL}world`];
 	const extracted = extractBoundaryOscMarkers(input);
 	const boxed = renderNeonBox("assistant", extracted.lines, 30, theme);
-	const restored = restoreBoundaryOscMarkers(boxed, extracted);
-	assert.ok(restored[0]!.startsWith(START));
-	assert.ok(restored.at(-1)!.startsWith(`${END}${FINAL}`));
-	assert.equal(visibleWidth(restored[0]!), 30);
-	assert.equal(visibleWidth(restored.at(-1)!), 30);
+	const restored = restoreBoundaryOscMarkers(boxed, extracted, { startIndex: 1, endIndex: boxed.length - 2 });
+	assert.equal(restored[0]!.startsWith(START), false);
+	assert.ok(restored[1]!.startsWith(START));
+	assert.ok(restored.at(-2)!.startsWith(`${END}${FINAL}`));
+	assert.equal(restored.at(-1)!.startsWith(`${END}${FINAL}`), false);
+	assert.equal(visibleWidth(restored[1]!), 30);
+	assert.equal(visibleWidth(restored.at(-2)!), 30);
 });
 
 
-test("renderNeonBox 直接处理真实 Pi OSC133 边界且不把 END/FINAL 放入内容行", () => {
+test("renderNeonBox 直接处理真实 Pi OSC133 边界且不把 END/FINAL 放到底边框", () => {
 	const theme = createFakeTheme();
 	const lines = renderNeonBox("user", [`${START}hello`, `${END}${FINAL}world`], 32, theme);
-	assert.ok(lines[0]!.startsWith(START));
-	assert.ok(lines.at(-1)!.startsWith(`${END}${FINAL}`));
+	assert.equal(lines[0]!.startsWith(START), false);
+	assert.ok(lines[1]!.startsWith(START));
+	assert.ok(lines.at(-2)!.startsWith(`${END}${FINAL}`));
+	assert.equal(lines.at(-1)!.startsWith(`${END}${FINAL}`), false);
 	const plainContent = lines.slice(1, -1).map(stripAnsi).join("\n");
 	assert.equal(plainContent.includes(END), false);
 	assert.equal(plainContent.includes(FINAL), false);
@@ -76,14 +80,16 @@ test("renderNeonBox 直接处理真实 Pi OSC133 边界且不把 END/FINAL 放�
 });
 
 
-test("真实 User/Assistant renderer 的 OSC133 前缀 marker 会恢复到新 box 首尾边界", () => {
+test("真实 User/Assistant renderer 的 OSC133 前缀 marker 会恢复到正文首尾", () => {
 	ensurePiTheme();
 	const userLines = new UserMessageComponent("hello").render(40);
 	const assistantLines = new AssistantMessageComponent({ content: [{ type: "text", text: "hello" }] } as any).render(40);
 	for (const [kind, original] of [["user", userLines], ["assistant", assistantLines]] as const) {
 		const boxed = renderNeonBox(kind, original, 44, createFakeTheme());
-		assert.ok(boxed[0]!.startsWith(START), kind);
-		assert.ok(boxed.at(-1)!.startsWith(`${END}${FINAL}`), kind);
+		assert.equal(boxed[0]!.startsWith(START), false, kind);
+		assert.ok(boxed[1]!.startsWith(START), kind);
+		assert.ok(boxed.at(-2)!.startsWith(`${END}${FINAL}`), kind);
+		assert.equal(boxed.at(-1)!.startsWith(`${END}${FINAL}`), false, kind);
 		const plainContent = boxed.slice(1, -1).map(stripAnsi).join("\n");
 		assert.equal(plainContent.includes(END), false, kind);
 		assert.equal(plainContent.includes(FINAL), false, kind);

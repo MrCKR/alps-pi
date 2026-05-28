@@ -14,11 +14,11 @@
 ## 2. 成功标准
 
 1. 新装或 `/reload` 后，固定底部输入框默认关闭。
-2. `/alps-pi` 设置面板出现第三个开关：`固定输入框`。
+2. `/alps-pi` 设置面板出现 `固定输入框` 开关。
 3. 打开开关后，运行时安装 fixed editor runtime，输入框固定在底部，聊天内容在上方独立滚动。
 4. 关闭开关后，恢复 Pi 默认输入框布局。
 5. 多次开关、`/reload`、`session_shutdown` 后不会留下脏终端状态。
-6. 现有消息线框能力不回归：总开关、assistant 正文线框、status、preview 继续可用。
+6. 现有消息线框能力不回归：总开关、assistant 正文线框、preview 继续可用。
 7. 自动化测试覆盖设置、命令契约、runtime 生命周期、cluster 裁剪与 compositor 恢复。
 
 ## 3. 非目标
@@ -52,8 +52,8 @@ src/features/fixed-bottom-editor/
 
 ```text
 src/settings.ts                         新增 fixedBottomEditor.enabled 默认 false
-src/settings-ui.ts                      新增设置面板第三项
-src/commands.ts                         把 fixed runtime ops 注入设置面板，status 展示状态
+src/settings-ui.ts                      新增固定输入框设置项；当前设置面板共五项，固定输入框为第五项
+src/commands.ts                         把 fixed runtime ops 注入设置面板
 index.ts                                session_start 绑定 runtime，session_shutdown 释放 runtime
 src/features/chrome-frame/patch.ts      保持消息 chrome patch 职责，不塞 compositor 状态
 ```
@@ -133,6 +133,8 @@ Scenario: 用户打开 /alps-pi 设置面板
   When 用户执行 /alps-pi
   Then 设置面板显示 总开关
   And 设置面板显示 正文线框
+  And 设置面板显示 Tool 极简模式
+  And 设置面板显示 极简下收起 edit
   And 设置面板显示 固定输入框
   And 固定输入框 当前状态为 OFF
 ```
@@ -160,7 +162,7 @@ Scenario: 用户打开固定输入框
 
 验收测试：
 
-- `settings-ui` 第三项切换调用 fixed runtime op。
+- `settings-ui` 第五项切换调用 fixed runtime op。
 - 成功时状态变为 `ON`。
 - 失败时状态回滚为 `OFF` 或记录 `failure`，不能半安装。
 
@@ -251,10 +253,10 @@ Scenario: editor render 行包含 CURSOR_MARKER
   - `cloneDefaultSettings()` 返回包含 `fixedBottomEditor` 的新对象。
 
 - `test/settings-ui.test.ts`
-  - 面板渲染三项。
+  - 面板渲染五项。
   - `固定输入框` 初始为 `OFF`。
-  - `Down -> Down -> Space` 可切换第三项。
-  - 切换第三项时调用 `setFixedBottomEditorEnabled(true)`。
+  - `Down x4 -> Space` 可切换第五项。
+  - 切换第五项时调用 `setFixedBottomEditorEnabled(true)`。
   - 每行宽度仍等于 render width。
 
 再实现：
@@ -277,13 +279,12 @@ C:/Users/Administrator/AppData/Local/nvm/v22.22.3/npm.cmd test
 - `test/command-contract.test.ts`
   - `/alps-pi` 打开设置面板时，把 fixed runtime ops 传给 settings component。
   - 切换固定输入框不会调用 message patch enable/disable。
-  - `/alps-pi status` 输出包含 fixed editor 状态。
+  - `/alps-pi` 设置界面切换 fixed editor 时调用 runtime ops。
 
 再实现：
 
 - 扩展 `CommandOps`。
 - `registerAlpsPiCommand()` 创建 settings component 时传入 fixed editor ops。
-- `status` 拼接 fixed editor 状态。
 
 ---
 
@@ -384,8 +385,8 @@ C:/Users/Administrator/AppData/Local/nvm/v22.22.3/npm.cmd test
 再实现：
 
 - 更新 `README.md`：
-  - 命令仍然只有 `/alps-pi`、`status`、`preview`。
-  - 设置面板包含三项。
+  - 命令仍然只有 `/alps-pi`、`preview`。
+  - 设置面板包含五项：线框美化、Assistant 正文线框、Tool 极简模式、极简下收起 edit、固定输入框。
   - 风险说明：固定输入框会接管 editor/footer 和 terminal 绘制，属于实验性开关。
 
 ## 7. 风险与对应防护
@@ -406,7 +407,7 @@ C:/Users/Administrator/AppData/Local/nvm/v22.22.3/npm.cmd test
 自动化测试通过后，还必须手工验证：
 
 1. `/reload` 后默认关闭。
-2. `/alps-pi` 打开设置，第三项显示为 OFF。
+2. `/alps-pi` 打开设置，第五项固定输入框显示为 OFF。
 3. 打开固定输入框后，长对话输出时输入框停留在底部。
 4. 关闭固定输入框后，恢复默认布局。
 5. 终端 resize 后没有残影和错位。
@@ -424,7 +425,7 @@ C:/Users/Administrator/AppData/Local/nvm/v22.22.3/npm.cmd test
 
 ```text
 1. settings + settings-ui + 测试
-2. command ops + status + 测试
+2. command ops + 测试
 3. cluster 纯函数 + 测试
 4. compositor 最小骨架 + 测试
 5. runtime manager + 测试

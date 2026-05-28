@@ -102,6 +102,26 @@ test("不渲染底板背景，只调用边框与标题 token", () => {
 });
 
 
+test("bottom border 可在右下角显示消息间隔", () => {
+	const theme = createFakeTheme();
+	const lines = renderNeonBox("assistant", ["ok"], 32, theme, { elapsedText: "1m05s" });
+	const bottom = stripAnsi(lines.at(-1)!);
+
+	assert.match(bottom, /1m05s ╯$/);
+	assert.equal(visibleWidth(bottom), 32);
+	assertLinesWithin(lines, 32);
+});
+
+test("bottom border 宽度不足时仍保持外框闭合", () => {
+	const theme = createFakeTheme();
+	const lines = renderNeonBox("assistant", ["ok"], 8, theme, { elapsedText: "123456789s" });
+	const bottom = stripAnsi(lines.at(-1)!);
+
+	assert.ok(bottom.startsWith("╰"));
+	assert.ok(bottom.endsWith("╯"));
+	assert.equal(visibleWidth(bottom), 8);
+});
+
 test("top border label 后会重新应用 border token，避免嵌套 fg reset 丢色", () => {
 	const theme = createFakeTheme();
 	renderNeonBox("toolSuccess", ["ok"], 30, theme, { toolName: "read" });

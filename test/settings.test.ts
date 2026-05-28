@@ -4,6 +4,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DEFAULT_SETTINGS, cloneDefaultSettings } from "../src/settings.ts";
 
+test("默认开启 Tool 极简模式且默认不收起 edit", () => {
+	assert.equal(DEFAULT_SETTINGS.chromeFrame.toolCompactMode, true);
+	assert.equal(DEFAULT_SETTINGS.chromeFrame.compactEditTool, false);
+});
+
 test("固定输入框默认开启", () => {
 	assert.equal(DEFAULT_SETTINGS.fixedBottomEditor.enabled, true);
 });
@@ -22,6 +27,8 @@ test("cloneDefaultSettings 返回包含固定输入框和底部状态栏的新�
 		chromeFrame: {
 			enabled: false,
 			assistantFrame: true,
+			toolCompactMode: true,
+			compactEditTool: false,
 		},
 		fixedBottomEditor: {
 			enabled: true,

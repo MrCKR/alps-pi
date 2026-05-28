@@ -247,15 +247,14 @@ test("Alt+S shortcut 调用 bottom status 暂存逻辑", async () => {
 
 test("命令层 fixed/bottom ops 使用入口创建的 runtime 并用命令 ctx 懒绑定 session", async () => {
 	const harness = createHarness();
-	await harness.commands.get("alps-pi").handler("status", { ui: { notify() {} } });
-	assert.deepEqual(harness.runtimeCalls, []);
-
 	const ctx = {
 		id: "command-ctx",
 		hasUI: true,
 		ui: {
 			custom(factory: any) {
 				const component = factory({}, undefined, {}, () => {});
+				component.handleInput("\x1b[B");
+				component.handleInput("\x1b[B");
 				component.handleInput("\x1b[B");
 				component.handleInput("\x1b[B");
 				component.handleInput(" ");

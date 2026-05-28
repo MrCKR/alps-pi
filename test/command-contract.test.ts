@@ -88,7 +88,6 @@ function createHarness(options: { fixedFailure?: string } = {}) {
 			state.patched.clear();
 			return state;
 		},
-		status: () => (globalThis as any)[PATCH_KEY],
 		setFixedBottomEditorEnabled: (enabled: boolean) => {
 			fixedCalls.push(enabled);
 			const state = (globalThis as any)[PATCH_KEY];
@@ -100,14 +99,6 @@ function createHarness(options: { fixedFailure?: string } = {}) {
 			fixedInstalled = enabled;
 			state.config.settings.fixedBottomEditor.enabled = enabled;
 			return { enabled, installed: fixedInstalled };
-		},
-		getFixedBottomEditorStatus: () => {
-			const status = {
-				enabled: (globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled,
-				installed: fixedInstalled,
-				failure: options.fixedFailure,
-			};
-			return status.failure ? status : { enabled: status.enabled, installed: status.installed };
 		},
 		setBottomStatusEnabled: (enabled: boolean) => {
 			bottomStatusCalls.push(enabled);
@@ -152,38 +143,6 @@ test("注册 /alps-pi 命令且描述为中文", () => {
 	assert.match(harness.commands.get("alps-pi").description, /打开 Alps Pi 美化设置/);
 });
 
-test("status 在 disabled 时精确显示 patch、fixed editor 与底部状态栏状态", async () => {
-	const harness = createHarness();
-	await harness.commands.get("alps-pi").handler("status", harness.ctx);
-	const message = harness.notifications.at(-1)?.message ?? "";
-	assert.match(message, /Alps Pi: disabled/);
-	assert.match(message, /fixedBottomEditor: enabled/);
-	assert.match(message, /fixedBottomEditorInstalled: false/);
-	assert.match(message, /bottomStatus: disabled/);
-});
-
-test("status 在 enabled 时显示 patched components", async () => {
-	const harness = createHarness();
-	(globalThis as any)[PATCH_KEY].enabled = true;
-	(globalThis as any)[PATCH_KEY].patched.add("AssistantMessageComponent");
-	await harness.commands.get("alps-pi").handler("status", harness.ctx);
-	assert.ok(harness.notifications.some((n) => /enabled/.test(n.message) && /AssistantMessageComponent/.test(n.message)));
-});
-
-test("status 输出包含 fixed editor 状态", async () => {
-	const harness = createHarness();
-	(globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled = true;
-	await harness.commands.get("alps-pi").handler("status", harness.ctx);
-	assert.ok(harness.notifications.some((n) => /fixedBottomEditor: enabled/.test(n.message) && /fixedBottomEditorInstalled: false/.test(n.message)));
-});
-
-test("status 输出 fixed editor failure 行", async () => {
-	const harness = createHarness({ fixedFailure: "boom" });
-	await harness.commands.get("alps-pi").handler("status", harness.ctx);
-	const message = harness.notifications.at(-1)?.message ?? "";
-	assert.match(message, /fixedBottomEditorFailure: boom/);
-});
-
 test("无参数打开设置界面，可切换线框美化与正文线框", async () => {
 	const harness = createHarness();
 	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
@@ -209,6 +168,8 @@ test("设置界面切换固定输入框调用 fixed op 且不调用 message patc
 	const component = harness.customCalls[0].component;
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
+	component.handleInput("\x1b[B");
+	component.handleInput("\x1b[B");
 	component.handleInput(" ");
 	assert.deepEqual(harness.fixedCalls, [false]);
 	assert.deepEqual(harness.patchCalls, []);
@@ -222,6 +183,8 @@ test("设置界面切换底部状态栏调用 bottom status op", async () => {
 	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
 	await Promise.resolve();
 	const component = harness.customCalls[0].component;
+	component.handleInput("\x1b[B");
+	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
@@ -241,6 +204,8 @@ test("设置界面切换固定输入框后恢复 overlay 焦点", async () => {
 	harness.setFocusedComponent(fakeEditor);
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
+	component.handleInput("\x1b[B");
+	component.handleInput("\x1b[B");
 	component.handleInput(" ");
 
 	assert.equal(harness.getFocusedComponent(), component);
@@ -256,6 +221,8 @@ test("设置界面 fixed op 返回 failure 时回滚为 OFF", async () => {
 	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
 	await Promise.resolve();
 	const component = harness.customCalls[0].component;
+	component.handleInput("\x1b[B");
+	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput(" ");
@@ -291,14 +258,14 @@ test("preview custom rejection 被 await/catch 并通知错误", async () => {
 	assert.ok(harness.notifications.some((n) => n.level === "error" && /Preview failed: custom failed/.test(n.message)));
 });
 
-test("enable/disable/config/config-ui/settings 已移除并返回帮助", async () => {
-	for (const action of ["enable", "disable", "config", "config-ui", "settings"]) {
+test("enable/disable/config/config-ui/settings/status 已移除并返回帮助", async () => {
+	for (const action of ["enable", "disable", "config", "config-ui", "settings", "status"]) {
 		const harness = createHarness();
 		await harness.commands.get("alps-pi").handler(action, harness.ctx);
 		assert.deepEqual(harness.patchCalls, []);
 		assert.deepEqual(harness.fixedCalls, []);
 		assert.deepEqual(harness.bottomStatusCalls, []);
-		assert.ok(harness.notifications.some((n) => /用法/.test(n.message) && /preview\/status/.test(n.message)), action);
+		assert.ok(harness.notifications.some((n) => /用法/.test(n.message) && /可选参数 preview/.test(n.message)), action);
 	}
 });
 

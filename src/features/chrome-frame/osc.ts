@@ -6,6 +6,11 @@ export type OscExtraction = {
 	endMarkers: string[];
 };
 
+export type OscRestoreOptions = {
+	startIndex?: number;
+	endIndex?: number;
+};
+
 const OSC133_PATTERN = /^\x1b\]133;([ABC])\x07/;
 const OSC133_ALL_CODES = new Set(["A", "B", "C"]);
 const OSC133_START_CODES = new Set(["A"]);
@@ -49,15 +54,21 @@ export function extractBoundaryOscMarkers(lines: readonly string[]): OscExtracti
 
 export const stripBoundaryOscMarkers = extractBoundaryOscMarkers;
 
-export function restoreBoundaryOscMarkers(lines: readonly string[], markers: OscExtraction): string[] {
+function clampLineIndex(index: number | undefined, fallback: number, length: number): number {
+	if (!Number.isFinite(index)) return fallback;
+	return Math.min(Math.max(0, Math.floor(index as number)), Math.max(0, length - 1));
+}
+
+export function restoreBoundaryOscMarkers(lines: readonly string[], markers: OscExtraction, options: OscRestoreOptions = {}): string[] {
 	if (lines.length === 0) return [];
 	const restored = [...lines];
 	if (markers.startMarkers.length > 0) {
-		restored[0] = markers.startMarkers.join("") + restored[0];
+		const startIndex = clampLineIndex(options.startIndex, 0, restored.length);
+		restored[startIndex] = markers.startMarkers.join("") + restored[startIndex];
 	}
 	if (markers.endMarkers.length > 0) {
-		const last = restored.length - 1;
-		restored[last] = markers.endMarkers.join("") + restored[last];
+		const endIndex = clampLineIndex(options.endIndex, restored.length - 1, restored.length);
+		restored[endIndex] = markers.endMarkers.join("") + restored[endIndex];
 	}
 	return restored;
 }

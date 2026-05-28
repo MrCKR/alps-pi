@@ -18,11 +18,13 @@ test("README 说明固定输入框默认开启且设置持久化", async () => {
 	assert.match(readme, /设置会持久化/);
 });
 
-test("README 说明设置面板四项", async () => {
+test("README 说明设置面板六项", async () => {
 	const readme = await readReadme();
 
 	assert.match(readme, /线框美化\s+控制消息、工具与 bash 外框/);
 	assert.match(readme, /Assistant 正文线框\s+控制 assistant 正文回复是否包线框/);
+	assert.match(readme, /Tool 极简模式\s+未展开 tool 只显示第一条有效文本行，默认 ON/);
+	assert.match(readme, /极简下收起 edit\s+允许 edit tool 也按极简模式展示，默认 OFF/);
 	assert.match(readme, /固定输入框\s+控制实验性底部固定编辑器 runtime，默认 ON/);
 	assert.match(readme, /底部状态栏\s+显示模型、thinking、上下文、耗时和上个问题，默认 OFF/);
 });

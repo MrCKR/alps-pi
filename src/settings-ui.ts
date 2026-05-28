@@ -14,7 +14,7 @@ export type SettingsPanelOps = {
 	onSettingsChanged?: (settings: AlpsPiSettings) => void;
 };
 
-const OPTIONS = ["chromeFrame.enabled", "chromeFrame.assistantFrame", "fixedBottomEditor.enabled", "bottomStatus.enabled"] as const;
+const OPTIONS = ["chromeFrame.enabled", "chromeFrame.assistantFrame", "chromeFrame.toolCompactMode", "chromeFrame.compactEditTool", "fixedBottomEditor.enabled", "bottomStatus.enabled"] as const;
 type OptionId = (typeof OPTIONS)[number];
 
 function padToWidth(line: string, width: number): string {
@@ -59,8 +59,10 @@ export class AlpsPiSettingsComponent {
 			"",
 			this.renderRow("线框美化", booleanLabel(settings.chromeFrame.enabled), "控制消息、工具与 bash 外框", this.selectedIndex === 0, innerWidth),
 			this.renderRow("Assistant 正文线框", booleanLabel(settings.chromeFrame.assistantFrame), "控制 assistant 正文回复是否包线框", this.selectedIndex === 1, innerWidth),
-			this.renderRow("固定输入框", booleanLabel(settings.fixedBottomEditor.enabled), "控制底部固定编辑器运行时", this.selectedIndex === 2, innerWidth),
-			this.renderRow("底部状态栏", booleanLabel(settings.bottomStatus.enabled), "显示模型、thinking、上下文、耗时和上个问题", this.selectedIndex === 3, innerWidth),
+			this.renderRow("Tool 极简模式", booleanLabel(settings.chromeFrame.toolCompactMode), "未展开 tool 只显示第一条有效文本行", this.selectedIndex === 2, innerWidth),
+			this.renderRow("极简下收起 edit", booleanLabel(settings.chromeFrame.compactEditTool), "允许 edit tool 也按极简模式展示", this.selectedIndex === 3, innerWidth),
+			this.renderRow("固定输入框", booleanLabel(settings.fixedBottomEditor.enabled), "控制底部固定编辑器运行时", this.selectedIndex === 4, innerWidth),
+			this.renderRow("底部状态栏", booleanLabel(settings.bottomStatus.enabled), "显示模型、thinking、上下文、耗时和上个问题", this.selectedIndex === 5, innerWidth),
 			"",
 			hint,
 		];
@@ -113,6 +115,16 @@ export class AlpsPiSettingsComponent {
 		const state = this.ops.getState();
 		if (option === "chromeFrame.enabled") {
 			state.config.settings.chromeFrame.enabled ? this.ops.disableChromeFrame() : this.ops.enableChromeFrame();
+			return;
+		}
+		if (option === "chromeFrame.toolCompactMode") {
+			state.config.settings.chromeFrame.toolCompactMode = !state.config.settings.chromeFrame.toolCompactMode;
+			this.ops.onSettingsChanged(state.config.settings);
+			return;
+		}
+		if (option === "chromeFrame.compactEditTool") {
+			state.config.settings.chromeFrame.compactEditTool = !state.config.settings.chromeFrame.compactEditTool;
+			this.ops.onSettingsChanged(state.config.settings);
 			return;
 		}
 		if (option === "fixedBottomEditor.enabled") {

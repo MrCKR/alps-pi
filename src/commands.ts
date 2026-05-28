@@ -1,44 +1,19 @@
-/** 功能：注册 /alps-pi 命令并实现 settings/status/preview 契约 实现者：alps 实现日期：2026-05-26 */
+/** 功能：注册 /alps-pi 命令并实现 settings/preview 契约 实现者：alps 实现日期：2026-05-26 */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createPreviewComponent, disablePatch, enablePatch, formatPatchStatus, getGlobalPatchState, getRuntimeTheme, type PatchState } from "./features/chrome-frame/index.ts";
+import { createPreviewComponent, disablePatch, enablePatch, getGlobalPatchState, getRuntimeTheme, type PatchState } from "./features/chrome-frame/index.ts";
 import { createSettingsComponent } from "./settings-ui.ts";
 import type { AlpsPiSettings, FixedBottomEditorStatus } from "./settings.ts";
 
 export type CommandOps = {
 	enable?: () => PatchState;
 	disable?: () => PatchState;
-	status?: () => PatchState;
 	setFixedBottomEditorEnabled?: (enabled: boolean, ctx: any) => FixedBottomEditorStatus | void;
-	getFixedBottomEditorStatus?: () => FixedBottomEditorStatus;
 	setBottomStatusEnabled?: (enabled: boolean, ctx: any) => void;
 	onSettingsChanged?: (settings: AlpsPiSettings, ctx: any) => void;
 };
 
-const HELP = "用法：/alps-pi 打开美化设置；可选参数 preview/status。";
-
-/** 返回未注入 runtime 时的保守状态；真实启停必须由入口传入 ops。 */
-function getDefaultFixedBottomEditorStatus(state: PatchState): FixedBottomEditorStatus {
-	const status: FixedBottomEditorStatus = {
-		enabled: state.config.settings.fixedBottomEditor.enabled,
-		installed: false,
-	};
-	if (state.config.settings.fixedBottomEditor.enabled) {
-		status.failure = "fixed bottom editor runtime ops not registered";
-	}
-	return status;
-}
-
-/** 汇总 fixed editor runtime 状态输出。 */
-function formatFixedBottomEditorStatus(status: FixedBottomEditorStatus): string {
-	const failure = status.failure ? `\nfixedBottomEditorFailure: ${status.failure}` : "";
-	return `fixedBottomEditor: ${status.enabled ? "enabled" : "disabled"}\nfixedBottomEditorInstalled: ${status.installed}${failure}`;
-}
-
-/** 汇总底部状态栏开关状态输出。 */
-function formatBottomStatusStatus(state: PatchState): string {
-	return `bottomStatus: ${state.config.settings.bottomStatus.enabled ? "enabled" : "disabled"}`;
-}
+const HELP = "用法：/alps-pi 打开美化设置；可选参数 preview。";
 
 function notify(ctx: any, message: string, level: "info" | "warning" | "error" = "info") {
 	if (ctx?.ui?.notify) {
@@ -52,16 +27,14 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 		handler: async (args: string, ctx: any) => {
 			const trimmedArgs = (args ?? "").trim();
 			const action = trimmedArgs === "" ? "" : trimmedArgs.split(/\s+/)[0]!;
-			const statusFn = ops.status ?? getGlobalPatchState;
 			const enableFn = ops.enable ?? (() => enablePatch());
 			const disableFn = ops.disable ?? (() => disablePatch());
-			const getFixedStatus = ops.getFixedBottomEditorStatus ?? (() => getDefaultFixedBottomEditorStatus(statusFn()));
 			const setBottomStatusEnabled = ops.setBottomStatusEnabled ?? ((enabled: boolean) => {
-				statusFn().config.settings.bottomStatus.enabled = enabled;
+				getGlobalPatchState().config.settings.bottomStatus.enabled = enabled;
 			});
 			const onSettingsChanged = ops.onSettingsChanged ?? (() => undefined);
 			const setFixedEnabled = ops.setFixedBottomEditorEnabled ?? ((enabled: boolean) => {
-				const state = statusFn();
+				const state = getGlobalPatchState();
 				state.config.settings.fixedBottomEditor.enabled = false;
 				const status: FixedBottomEditorStatus = { enabled: false, installed: false };
 				if (enabled) {
@@ -100,7 +73,7 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 							(_tui: any, theme: any, _keybindings: any, done: () => void) => {
 								settingsTui = _tui;
 								settingsOverlayComponent = createSettingsComponent(theme ?? fallbackTheme, done, {
-									getState: statusFn,
+									getState: getGlobalPatchState,
 									disableChromeFrame: () => {
 										const result = disableFn();
 										onSettingsChanged(result.config.settings, ctx);
@@ -142,11 +115,6 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 						const message = error instanceof Error ? error.message : String(error);
 						notify(ctx, `Settings failed: ${message}`, "error");
 					}
-					return;
-				}
-				case "status": {
-					const state = statusFn();
-					notify(ctx, `${formatPatchStatus(state)}\n${formatFixedBottomEditorStatus(getFixedStatus())}\n${formatBottomStatusStatus(state)}`, "info");
 					return;
 				}
 				case "preview": {

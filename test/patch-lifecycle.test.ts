@@ -162,6 +162,29 @@ test("模拟旧 wrapper 热重载后会迁移到当前 wrapper 且保留原始 r
 	assert.equal(UserFake.prototype.render, original);
 });
 
+test("模拟同 key 旧版本 wrapper 热重载后会重新包裹", () => {
+	const list = targets();
+	const original = UserFake.prototype.render;
+	const oldWrapped = function oldVersionWrappedRender(this: UserFake, width: number) {
+		return original.call(this, width);
+	};
+	Object.defineProperty(oldWrapped, Symbol.for("alps.pi.wrappedRender.v2"), {
+		value: { id: "UserMessageComponent", version: 2, originalRender: original },
+		configurable: false,
+	});
+	UserFake.prototype.render = oldWrapped as typeof UserFake.prototype.render;
+	const state = getGlobalPatchState();
+	state.enabled = true;
+	state.patched.add("UserMessageComponent");
+	state.originals.set("UserMessageComponent", original);
+
+	enablePatch(list);
+
+	assert.notEqual(UserFake.prototype.render, oldWrapped);
+	disablePatch(list);
+	assert.equal(UserFake.prototype.render, original);
+});
+
 test("patched render 产生单层 box", () => {
 	const list = targets();
 	enablePatch(list);

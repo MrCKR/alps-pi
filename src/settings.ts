@@ -5,6 +5,10 @@ export type ChromeFrameSettings = {
 	enabled: boolean;
 	/** Assistant 正文线框：控制普通 assistant 回复是否包裹外框。 */
 	assistantFrame: boolean;
+	/** Tool 极简模式：未展开的 LLM tool 只显示第一条有效文本行。 */
+	toolCompactMode: boolean;
+	/** 极简下收起 edit：允许 edit tool 也按极简模式展示。 */
+	compactEditTool: boolean;
 };
 
 export type FixedBottomEditorSettings = {
@@ -39,6 +43,8 @@ export const DEFAULT_SETTINGS: AlpsPiSettings = {
 	chromeFrame: {
 		enabled: false,
 		assistantFrame: true,
+		toolCompactMode: true,
+		compactEditTool: false,
 	},
 	fixedBottomEditor: {
 		enabled: true,

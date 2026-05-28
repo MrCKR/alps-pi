@@ -9,6 +9,7 @@ export type RenderBoxOptions = {
 	toolName?: string;
 	status?: ChromeStatus;
 	config?: ChromeConfig;
+	elapsedText?: string;
 };
 
 const MIN_FULL_BOX_WIDTH = 8;
@@ -53,8 +54,21 @@ function buildTopBorder(label: string, width: number, theme: ThemeLike, borderTo
 	return leftBorder + styledLabel + rightBorder;
 }
 
-function buildBottomBorder(width: number, theme: ThemeLike, borderToken: string): string {
-	return styleText(theme, borderToken, "╰" + "─".repeat(Math.max(0, width - 2)) + "╯");
+function buildBottomBorder(width: number, theme: ThemeLike, borderToken: string, elapsedText?: string): string {
+	const text = elapsedText?.trim();
+	if (!text) {
+		return styleText(theme, borderToken, "╰" + "─".repeat(Math.max(0, width - 2)) + "╯");
+	}
+
+	// 将消息间隔压到底边右侧；宽度不足时截断文本，优先保持外框闭合。
+	const textBudget = Math.max(0, width - visibleWidth("╰  ╯"));
+	const visibleText = truncateToWidth(text, textBudget, "", false);
+	if (!visibleText) {
+		return styleText(theme, borderToken, "╰" + "─".repeat(Math.max(0, width - 2)) + "╯");
+	}
+	const suffix = ` ${visibleText} `;
+	const dashCount = Math.max(0, width - visibleWidth(`╰${suffix}╯`));
+	return styleText(theme, borderToken, "╰" + "─".repeat(dashCount) + suffix + "╯");
 }
 
 function wrapContentLine(line: string, innerWidth: number, hasImage: boolean): string[] {
@@ -106,8 +120,15 @@ export function renderNeonBox(kind: ChromeKind, contentLines: readonly string[],
 	const innerWidth = Math.max(1, boxWidth - 4);
 
 	const lines: string[] = [];
+	let firstContentLineIndex = -1;
+	let lastContentLineIndex = -1;
 	const pushTextLine = (line: string) => {
 		lines.push(applyLineBackground(theme, style.bg, line, boxWidth));
+	};
+	const pushContentLine = (line: string) => {
+		if (firstContentLineIndex < 0) firstContentLineIndex = lines.length;
+		lines.push(line);
+		lastContentLineIndex = lines.length - 1;
 	};
 	pushTextLine(buildTopBorder(label, boxWidth, theme, style.border, style.label));
 	for (const raw of rawLines) {
@@ -117,17 +138,20 @@ export function renderNeonBox(kind: ChromeKind, contentLines: readonly string[],
 			const wrapped = wrapContentLine(part, innerWidth, partHasImage);
 			for (const wrappedLine of wrapped) {
 				if (partHasImage) {
-					lines.push(wrappedLine);
+					pushContentLine(wrappedLine);
 				} else {
-					pushTextLine(renderContentLine(wrappedLine, boxWidth, theme, style.border, style.text));
+					pushContentLine(applyLineBackground(theme, style.bg, renderContentLine(wrappedLine, boxWidth, theme, style.border, style.text), boxWidth));
 				}
 			}
 		}
 	}
 	if (lines.length === 1) {
-		pushTextLine(renderContentLine("", boxWidth, theme, style.border, style.text));
+		pushContentLine(applyLineBackground(theme, style.bg, renderContentLine("", boxWidth, theme, style.border, style.text), boxWidth));
 	}
-	pushTextLine(buildBottomBorder(boxWidth, theme, style.border));
+	pushTextLine(buildBottomBorder(boxWidth, theme, style.border, options.elapsedText));
 
-	return restoreBoundaryOscMarkers(lines, markers);
+	return restoreBoundaryOscMarkers(lines, markers, {
+		startIndex: firstContentLineIndex >= 0 ? firstContentLineIndex : 0,
+		endIndex: lastContentLineIndex >= 0 ? lastContentLineIndex : lines.length - 1,
+	});
 }
