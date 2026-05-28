@@ -81,10 +81,11 @@ export function renderBottomInputStatus(input: BottomInputStatusState): BottomIn
 	const extensionStatuses = getVisibleExtensionStatuses(input.footerData);
 	const elapsedSeconds = Math.floor(Math.max(0, input.now - input.sessionStartTime) / 1000);
 	const usage = readContextUsageSnapshot(input.ctx, input.isStreaming, input.liveUsage, input.latestAssistantUsage);
+	const modelName = readModelName(input.ctx);
 	const cacheKey = JSON.stringify({
 		width: safeWidth,
 		bottomStatusEnabled: input.bottomStatusEnabled,
-		model: normalizeModelName(input.ctx?.model?.name || input.ctx?.model?.id),
+		model: modelName,
 		thinking: readThinkingLevel(input.ctx) ?? input.currentThinkingLevel ?? readThinkingLevelFromSession(input.ctx),
 		context: usage,
 		elapsedSeconds,
@@ -207,7 +208,7 @@ export function readContextUsageSnapshot(
 }
 
 function renderModelSegment(ctx: any, theme: ThemeLike, icons: BottomInputIconSet): string | null {
-	const modelName = normalizeModelName(ctx?.model?.name || ctx?.model?.id);
+	const modelName = readModelName(ctx);
 	if (!modelName) return null;
 	const content = icons.model ? `${icons.model} ${modelName}` : modelName;
 	return safeFg(theme, "accent", content);
@@ -355,8 +356,20 @@ function readBranchEntries(ctx: any): any[] {
 }
 
 function readModelContextWindow(ctx: any): number {
-	const contextWindow = ctx?.model?.contextWindow;
-	return typeof contextWindow === "number" && Number.isFinite(contextWindow) && contextWindow > 0 ? contextWindow : 0;
+	try {
+		const contextWindow = ctx?.model?.contextWindow;
+		return typeof contextWindow === "number" && Number.isFinite(contextWindow) && contextWindow > 0 ? contextWindow : 0;
+	} catch {
+		return 0;
+	}
+}
+
+function readModelName(ctx: any): string | null {
+	try {
+		return normalizeModelName(ctx?.model?.name || ctx?.model?.id);
+	} catch {
+		return null;
+	}
 }
 
 function renderContextBar(percent: number, color: string): string {

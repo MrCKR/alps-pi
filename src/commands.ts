@@ -16,9 +16,27 @@ export type CommandOps = {
 const HELP = "用法：/alps-pi 打开美化设置；可选参数 preview。";
 
 function notify(ctx: any, message: string, level: "info" | "warning" | "error" = "info") {
-	if (ctx?.ui?.notify) {
-		ctx.ui.notify(message, level);
+	try {
+		if (ctx?.ui?.notify) {
+			ctx.ui.notify(message, level);
+		}
+	} catch {
+		// 通知依赖当前 session UI；reload 后旧 ctx 失效时直接忽略。
 	}
+}
+
+/** 安全读取命令 UI；ctx stale 时返回 undefined，避免设置面板回调继续使用旧 session。 */
+function readCommandUI(ctx: any): any | undefined {
+	try {
+		return ctx?.ui;
+	} catch {
+		return undefined;
+	}
+}
+
+function isStaleCtxError(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error);
+	return message.includes("extension ctx is stale") || message.includes("stale ctx");
 }
 
 export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): void {
@@ -47,45 +65,64 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 
 			switch (action) {
 				case "": {
-					if (!ctx?.ui?.custom) {
+					const ui = readCommandUI(ctx);
+					if (!ui?.custom) {
 						notify(ctx, "Settings require interactive UI.", "warning");
 						return;
 					}
+					let active = true;
+					const runIfActive = <T>(operation: () => T): T | undefined => {
+						if (!active || readCommandUI(ctx) !== ui) return undefined;
+						try {
+							return operation();
+						} catch (error) {
+							if (!isStaleCtxError(error)) throw error;
+							active = false;
+							return undefined;
+						}
+					};
 					try {
-						const fallbackTheme = ctx?.ui?.theme ?? getRuntimeTheme();
-						await ctx.ui.custom((_tui: any, theme: any, _keybindings: any, done: () => void) => createSettingsComponent(theme ?? fallbackTheme, done, {
+						const fallbackTheme = ui.theme ?? getRuntimeTheme();
+						await ui.custom((_tui: any, theme: any, _keybindings: any, done: () => void) => createSettingsComponent(theme ?? fallbackTheme, done, {
 							getState: getGlobalPatchState,
-							disableChromeFrame: () => {
+							disableChromeFrame: () => runIfActive(() => {
 								const result = disableFn();
 								onSettingsChanged(result.config.settings, ctx);
 								return result;
-							},
-							enableChromeFrame: () => {
+							}) ?? getGlobalPatchState(),
+							enableChromeFrame: () => runIfActive(() => {
 								const result = enableFn();
 								onSettingsChanged(result.config.settings, ctx);
 								return result;
-							},
+							}) ?? getGlobalPatchState(),
 							setFixedBottomEditorEnabled: (enabled) => {
-								// 固定输入框依赖当前 interactive session；从命令 ctx 懒绑定可覆盖 /reload 后未触发 session_start 的场景。
-								return setFixedEnabled(enabled, ctx);
+								// 固定输入框依赖当前 interactive session；ctx stale 时旧设置面板回调失效。
+								return runIfActive(() => setFixedEnabled(enabled, ctx));
 							},
-							setBottomStatusEnabled: (enabled) => setBottomStatusEnabled(enabled, ctx),
-							onSettingsChanged: (settings) => onSettingsChanged(settings, ctx),
+							setBottomStatusEnabled: (enabled) => {
+								runIfActive(() => setBottomStatusEnabled(enabled, ctx));
+							},
+							onSettingsChanged: (settings) => {
+								runIfActive(() => onSettingsChanged(settings, ctx));
+							},
 						}));
 					} catch (error) {
 						const message = error instanceof Error ? error.message : String(error);
 						notify(ctx, `Settings failed: ${message}`, "error");
+					} finally {
+						active = false;
 					}
 					return;
 				}
 				case "preview": {
-					if (!ctx?.ui?.custom) {
+					const ui = readCommandUI(ctx);
+					if (!ui?.custom) {
 						notify(ctx, "Preview requires interactive UI.", "warning");
 						return;
 					}
 					try {
-						const fallbackTheme = ctx?.ui?.theme ?? getRuntimeTheme();
-						await ctx.ui.custom(
+						const fallbackTheme = ui.theme ?? getRuntimeTheme();
+						await ui.custom(
 							(_tui: any, theme: any, _keybindings: any, done: () => void) => createPreviewComponent(theme ?? fallbackTheme, done),
 							{
 								overlay: true,

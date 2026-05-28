@@ -69,6 +69,9 @@ export type BottomInputRuntime = {
 type RuntimeUI = {
 	setEditorComponent?: (factory: ((tui: any, theme: any, keybindings: any) => any) | undefined) => void;
 	setFooter?: (factory: ((tui: any, theme: any, footerData: any) => any) | undefined) => void;
+	setStatus?: (key: string, value: string | undefined) => void;
+	theme?: any;
+	onTerminalInput?: (handler: (data: string) => { consume?: boolean } | undefined) => (() => void) | void;
 };
 
 type CompositorLike = Pick<
@@ -122,6 +125,8 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	private readonly now: () => number;
 	private readonly copyToClipboardImpl: (text: string) => Promise<void> | void;
 	private ctx: any;
+	private ui: RuntimeUI | undefined;
+	private generation = 0;
 	private enabled = false;
 	private bottomStatusEnabled = false;
 	private installed = false;
@@ -159,16 +164,23 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		this.shortcuts = resolveBottomInputShortcuts(options.shortcuts);
 	}
 
-	/** 保存当前 session context；若之前已有安装，先清理旧 session 资源。 */
+	/** 保存当前 session context；切换 session 前先释放旧 UI 资源，避免 stale ctx 继续被异步回调访问。 */
 	bindSession(ctx: any): void {
-		const sameUiSession = this.ctx?.ui && ctx?.ui && this.ctx.ui === ctx.ui;
-		if (this.ctx && this.ctx !== ctx && !sameUiSession && (this.installed || this.layoutInstalled)) {
+		const previousCtx = this.ctx;
+		const previousUi = this.ui;
+		const nextUi = readRuntimeUI(ctx);
+		const sameUiSession = Boolean(previousUi && nextUi && previousUi === nextUi);
+		if (previousCtx && previousCtx !== ctx && !sameUiSession && (this.installed || this.layoutInstalled)) {
 			this.disable();
 		}
-		if (!this.ctx && ctx) {
+		if (!previousCtx && ctx) {
 			this.sessionStartTime = this.now();
 		}
+		if (previousCtx !== ctx || previousUi !== nextUi) {
+			this.generation += 1;
+		}
 		this.ctx = ctx;
+		this.ui = nextUi;
 		this.failure = undefined;
 	}
 
@@ -177,8 +189,10 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	}
 
 	dispose(): void {
+		this.generation += 1;
 		this.disable();
 		this.ctx = undefined;
+		this.ui = undefined;
 		this.editorInstance = undefined;
 		this.footerComponent = undefined;
 		this.restoreFooterDataHook();
@@ -252,8 +266,15 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		if (!this.enabled || (!this.installed && !this.layoutInstalled)) return;
 		if (options.full) this.renderPendingFull = true;
 		if (this.renderPending) return;
+		const generation = this.generation;
 		this.renderPending = true;
 		this.renderTimer = setTimeout(() => {
+			if (generation !== this.generation || !this.enabled) {
+				this.renderPending = false;
+				this.renderPendingFull = false;
+				this.renderTimer = null;
+				return;
+			}
 			const shouldRenderFull = this.renderPendingFull;
 			this.renderPending = false;
 			this.renderPendingFull = false;
@@ -393,8 +414,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	}
 
 	private getBoundUI(): RuntimeUI | undefined {
-		if (!this.ctx || this.ctx.hasUI !== true || !this.ctx.ui) return undefined;
-		return this.ctx.ui as RuntimeUI;
+		return this.ui;
 	}
 
 	private validateUI(ui: RuntimeUI): void {
@@ -522,7 +542,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 			return cloneStatusLayout(this.cachedLayout.result);
 		}
 
-		const theme = this.theme ?? this.ctx?.ui?.theme ?? FALLBACK_EDITOR_THEME;
+		const theme = this.theme ?? this.ui?.theme ?? FALLBACK_EDITOR_THEME;
 		const result = renderBottomInputStatus({
 			ctx: this.ctx,
 			footerData: this.footerData,
@@ -567,12 +587,16 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	}
 
 	private installInputListener(): void {
-		if (this.removeInputListener || typeof this.ctx?.ui?.onTerminalInput !== "function") return;
-		this.removeInputListener = this.ctx.ui.onTerminalInput((data: string) => this.handleShortcutInput(data) ? { consume: true } : undefined);
+		if (this.removeInputListener || typeof this.ui?.onTerminalInput !== "function") return;
+		const generation = this.generation;
+		this.removeInputListener = this.ui.onTerminalInput((data: string) => {
+			if (generation !== this.generation) return undefined;
+			return this.handleShortcutInput(data) ? { consume: true } : undefined;
+		}) ?? null;
 	}
 
 	private handleShortcutInput(data: string): boolean {
-		if (!this.enabled || hasOverlay(this.ctx)) return false;
+		if (!this.enabled || hasOverlay(this.ctx, this.tui)) return false;
 		if (isStashShortcutInput(data, this.shortcuts.stashEditor)) {
 			this.stashOrRestoreEditorText(this.ctx);
 			return true;
@@ -618,7 +642,9 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		}
 	}
 
+	/** 包装 footerData 状态写入，footer 变化后只触发当前 session 的重绘。 */
 	private installFooterStatusRepaintHook(footerData: any): void {
+		const generation = this.generation;
 		const writableFooterData = footerData as {
 			setExtensionStatus?: (key: string, text: string | undefined) => void;
 			clearExtensionStatuses?: () => void;
@@ -627,6 +653,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		const originalSetExtensionStatus = writableFooterData.setExtensionStatus;
 		const originalClearExtensionStatuses = writableFooterData.clearExtensionStatuses;
 		const request = () => {
+			if (generation !== this.generation) return;
 			this.resetLayoutCache();
 			this.requestRender();
 		};
@@ -664,7 +691,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 
 	private restoreDefaultLayout(): void {
 		if (!this.layoutInstalled) return;
-		const ui = this.ctx?.ui as RuntimeUI | undefined;
+		const ui = this.ui;
 		if (!ui) return;
 		try {
 			ui.setEditorComponent?.(undefined);
@@ -677,7 +704,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 			this.failure = formatFailure(error);
 		}
 		try {
-			this.ctx?.ui?.setStatus?.(STASH_STATUS_KEY, undefined);
+			ui.setStatus?.(STASH_STATUS_KEY, undefined);
 		} catch {
 			// 清理状态失败不影响 layout 恢复。
 		}
@@ -703,7 +730,11 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 
 	private startClockTimer(): void {
 		if (!this.startClock || this.timer) return;
-		this.timer = setInterval(() => this.requestRender(), STATUS_RENDER_INTERVAL_MS);
+		const generation = this.generation;
+		this.timer = setInterval(() => {
+			if (generation !== this.generation) return;
+			this.requestRender();
+		}, STATUS_RENDER_INTERVAL_MS);
 		this.timer.unref?.();
 	}
 
@@ -940,14 +971,31 @@ function copyTextToClipboard(text: string, copyToClipboard: (text: string) => Pr
 }
 
 function notify(ctx: any, message: string, level: "info" | "warning" | "error"): void {
-	ctx?.ui?.notify?.(message, level);
+	try {
+		ctx?.ui?.notify?.(message, level);
+	} catch {
+		// 通知依赖 session UI；reload 后旧 ctx 失效时直接忽略。
+	}
 }
 
-function hasOverlay(ctx: any): boolean {
-	const tui = ctx?.ui?.tui ?? ctx?.tui;
-	if (typeof tui?.hasOverlay === "function") return Boolean(tui.hasOverlay());
-	const overlayStack = Array.isArray(tui?.overlayStack) ? tui.overlayStack : [];
-	return overlayStack.some((entry: any) => entry?.visible !== false && entry?.hidden !== true);
+function hasOverlay(ctx: any, fallbackTui?: any): boolean {
+	try {
+		const tui = fallbackTui ?? ctx?.ui?.tui ?? ctx?.tui;
+		if (typeof tui?.hasOverlay === "function") return Boolean(tui.hasOverlay());
+		const overlayStack = Array.isArray(tui?.overlayStack) ? tui.overlayStack : [];
+		return overlayStack.some((entry: any) => entry?.visible !== false && entry?.hidden !== true);
+	} catch {
+		return false;
+	}
+}
+
+function readRuntimeUI(ctx: any): RuntimeUI | undefined {
+	try {
+		if (!ctx || ctx.hasUI !== true || !ctx.ui) return undefined;
+		return ctx.ui as RuntimeUI;
+	} catch {
+		return undefined;
+	}
 }
 
 function hasNonWhitespaceText(value: string): boolean {

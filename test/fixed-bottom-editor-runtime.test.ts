@@ -65,9 +65,22 @@ function createCtx(options: { terminal?: any; autoInstantiate?: boolean; hasUI?:
 		}
 	}
 
+	let inputHandler: ((data: string) => { consume?: boolean } | undefined) | undefined;
+	let removedInputListeners = 0;
+	const statusCalls: Array<{ key: string; value: string | undefined }> = [];
 	const ctx: any = {
 		hasUI: options.hasUI ?? true,
 		ui: {
+			onTerminalInput(handler: (data: string) => { consume?: boolean } | undefined) {
+				inputHandler = handler;
+				return () => {
+					removedInputListeners += 1;
+					if (inputHandler === handler) inputHandler = undefined;
+				};
+			},
+			setStatus(key: string, value: string | undefined) {
+				statusCalls.push({ key, value });
+			},
 			setEditorComponent(factory: any) {
 				calls.push({ type: "editor", value: factory });
 				editorFactory = factory;
@@ -106,6 +119,9 @@ function createCtx(options: { terminal?: any; autoInstantiate?: boolean; hasUI?:
 		getFooterFactory: () => footerFactory,
 		getEditorInstance: () => editorInstance,
 		getFooterInstance: () => footerInstance,
+		getInputHandler: () => inputHandler,
+		getRemovedInputListeners: () => removedInputListeners,
+		statusCalls,
 		instantiateEditor() {
 			editorContainer.children = [];
 			editorInstance = editorFactory(tui, undefined, { matches: () => false });
@@ -423,8 +439,7 @@ test("dispose 幂等并清理 session 引用", () => {
 	assert.match(status.failure ?? "", /bound UI session/);
 });
 
-test("full render 请求会升级已排队的普通 repaint", async () => {
-	const harness = createCtx({ autoInstantiate: true });
+function createCountingRuntime() {
 	let repaintCalls = 0;
 	const runtime = createFixedBottomEditorRuntime({
 		createCompositor() {
@@ -451,6 +466,12 @@ test("full render 请求会升级已排队的普通 repaint", async () => {
 			};
 		},
 	});
+	return { runtime, getRepaintCalls: () => repaintCalls };
+}
+
+test("full render 请求会升级已排队的普通 repaint", async () => {
+	const harness = createCtx({ autoInstantiate: true });
+	const { runtime, getRepaintCalls } = createCountingRuntime();
 	runtime.bindSession(harness.ctx);
 	runtime.setEnabled(true);
 	harness.tui.requestRenderCalls.length = 0;
@@ -460,5 +481,52 @@ test("full render 请求会升级已排队的普通 repaint", async () => {
 	await new Promise((resolve) => setTimeout(resolve, 40));
 
 	assert.deepEqual(harness.tui.requestRenderCalls, [false]);
-	assert.equal(repaintCalls, 0);
+	assert.equal(getRepaintCalls(), 0);
+});
+
+test("dispose 会让 pending render 失效且不再 repaint", async () => {
+	const harness = createCtx({ autoInstantiate: true });
+	const { runtime, getRepaintCalls } = createCountingRuntime();
+	runtime.bindSession(harness.ctx);
+	runtime.setEnabled(true);
+	harness.tui.requestRenderCalls.length = 0;
+
+	runtime.requestRender();
+	runtime.dispose();
+	await new Promise((resolve) => setTimeout(resolve, 40));
+
+	assert.deepEqual(harness.tui.requestRenderCalls, []);
+	assert.equal(getRepaintCalls(), 0);
+});
+
+test("dispose 使用已缓存 UI 恢复 layout，不重新读取 stale ctx.ui", () => {
+	const harness = createCtx({ autoInstantiate: true });
+	const runtime = createFixedBottomEditorRuntime();
+	runtime.bindSession(harness.ctx);
+	runtime.setEnabled(true);
+	Object.defineProperty(harness.ctx, "ui", {
+		get() {
+			throw new Error("stale ctx");
+		},
+	});
+
+	assert.doesNotThrow(() => runtime.dispose());
+	assertLayoutRestored(harness);
+	assert.equal(harness.statusCalls.at(-1)?.key, "alps-pi-stash");
+	assert.equal(harness.statusCalls.at(-1)?.value, undefined);
+});
+
+test("旧 input listener 在重新 bind session 后不会消费输入", () => {
+	const oldHarness = createCtx({ autoInstantiate: true });
+	const newHarness = createCtx({ autoInstantiate: true });
+	const runtime = createFixedBottomEditorRuntime();
+	runtime.bindSession(oldHarness.ctx);
+	runtime.setEnabled(true);
+	const oldHandler = oldHarness.getInputHandler();
+
+	runtime.bindSession(newHarness.ctx);
+	runtime.setEnabled(true);
+
+	assert.equal(oldHarness.getRemovedInputListeners(), 1);
+	assert.equal(oldHandler?.("\u001bs"), undefined);
 });

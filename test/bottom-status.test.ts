@@ -201,6 +201,30 @@ test("streaming 时 live usage 不被旧 core context 覆盖", () => {
 	assert.doesNotMatch(line, /69\.9%\/272k/);
 });
 
+test("状态渲染遇到 stale ctx getter 时 fail-soft", () => {
+	const harness = createCtx();
+	Object.defineProperty(harness.ctx, "model", {
+		get() {
+			throw new Error("stale ctx");
+		},
+	});
+	Object.defineProperty(harness.ctx, "sessionManager", {
+		get() {
+			throw new Error("stale ctx");
+		},
+	});
+	harness.ctx.getContextUsage = () => {
+		throw new Error("stale ctx");
+	};
+
+	assert.doesNotThrow(() => renderStatus({ ctx: harness.ctx, liveUsage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0 }, now: 2000 }));
+	const { rendered } = renderStatus({ ctx: harness.ctx, liveUsage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0 }, now: 2000 });
+	const line = stripAnsi(rendered.topLines.join("\n"));
+
+	assert.doesNotMatch(line, /GPT-5\.5/);
+	assert.match(line, /ctx 15/);
+});
+
 test("Alt+S 有输入时暂存并清空，空输入时恢复", () => {
 	const harness = createCtx();
 	const runtime = createBottomInputRuntime({ startClock: false });
