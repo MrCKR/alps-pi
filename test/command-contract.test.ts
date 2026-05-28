@@ -13,7 +13,6 @@ function createHarness(options: { fixedFailure?: string } = {}) {
 	const overlayHandles: any[] = [];
 	let focusedComponent: any;
 	let customResult: Promise<any> = Promise.resolve(undefined);
-	let confirmResult = false;
 	const patchCalls: string[] = [];
 	const fixedCalls: boolean[] = [];
 	const bottomStatusCalls: boolean[] = [];
@@ -30,7 +29,7 @@ function createHarness(options: { fixedFailure?: string } = {}) {
 			theme: undefined as any,
 			async confirm(title: string, message: string) {
 				notifications.push({ message: `${title}\n${message}`, level: "confirm" });
-				return confirmResult;
+				return false;
 			},
 			notify(message: string, level: string) {
 				notifications.push({ message, level });
@@ -59,9 +58,11 @@ function createHarness(options: { fixedFailure?: string } = {}) {
 							focusedComponent = component;
 						},
 					};
-					fakeTui.overlayStack.push({ component, preFocus: undefined });
-					options?.onHandle?.(handle);
-					overlayHandles.push(handle);
+					if (options?.overlay) {
+						fakeTui.overlayStack.push({ component, preFocus: undefined });
+						options?.onHandle?.(handle);
+						overlayHandles.push(handle);
+					}
 					customCalls.push({ factory, options, component, done, fakeTui });
 					return await customResult;
 				} catch (error) {
@@ -123,13 +124,6 @@ function createHarness(options: { fixedFailure?: string } = {}) {
 		fixedCalls,
 		bottomStatusCalls,
 		settingsChangedCalls,
-		getFocusedComponent: () => focusedComponent,
-		setFocusedComponent(value: any) {
-			focusedComponent = value;
-		},
-		setConfirmResult(value: boolean) {
-			confirmResult = value;
-		},
 	};
 }
 
@@ -148,7 +142,7 @@ test("无参数打开设置界面，可切换线框美化与正文线框", async
 	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
 	await Promise.resolve();
 	assert.equal(harness.customCalls.length, 1);
-	assert.equal(harness.customCalls[0].options.overlay, true);
+	assert.equal(harness.customCalls[0].options, undefined);
 	const component = harness.customCalls[0].component;
 	assert.match(component.render(80).join("\n"), /线框美化/);
 	component.handleInput(" ");
@@ -195,22 +189,19 @@ test("设置界面切换底部状态栏调用 bottom status op", async () => {
 	await pending;
 });
 
-test("设置界面切换固定输入框后恢复 overlay 焦点", async () => {
+test("设置界面使用 non-overlay custom，不再注册 overlay handle 或焦点恢复 hack", async () => {
 	const harness = createHarness();
 	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
 	await Promise.resolve();
 	const component = harness.customCalls[0].component;
-	const fakeEditor = { render: () => [] };
-	harness.setFocusedComponent(fakeEditor);
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput(" ");
 
-	assert.equal(harness.getFocusedComponent(), component);
-	assert.equal(harness.overlayHandles[0]?.focusCalls, 1);
-	assert.equal(harness.customCalls[0].fakeTui.overlayStack[0].preFocus, fakeEditor);
+	assert.equal(harness.customCalls[0].options, undefined);
+	assert.deepEqual(harness.overlayHandles, []);
 	component.handleInput("q");
 	await pending;
 });

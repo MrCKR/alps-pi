@@ -1,11 +1,11 @@
 /** 功能：验证 Alps Pi 设置持久化读写 实现者：alps 实现日期：2026-05-27 */
 
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { cloneStartupSettings, readPersistedSettings, writePersistedSettings } from "../src/settings-store.ts";
+import { cloneStartupSettings, PI_SETTINGS_NAMESPACE, readNamespacedPiSettings, readPersistedSettings, writeNamespacedPiSettings, writePersistedSettings } from "../src/settings-store.ts";
 import { DEFAULT_SETTINGS } from "../src/settings.ts";
 
 test("启动默认设置固定输入框开启，底部状态栏关闭", () => {
@@ -76,6 +76,70 @@ test("完整默认快捷键持久化不会被误拒绝", () => {
 		const loaded = readPersistedSettings(file);
 		assert.deepEqual(loaded.shortcuts, DEFAULT_SETTINGS.shortcuts);
 	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("Pi 原生 settings 的 alps-pi 命名空间可读写且保留其它字段", () => {
+	const dir = mkdtempSync(join(tmpdir(), "alps-pi-settings-"));
+	const file = join(dir, "settings.json");
+	try {
+		writeFileSync(file, JSON.stringify({ theme: "dark", showHardwareCursor: true }), "utf-8");
+		const settings = cloneStartupSettings();
+		settings.bottomStatus.enabled = true;
+
+		writeNamespacedPiSettings(settings, file);
+
+		const root = JSON.parse(readFileSync(file, "utf-8"));
+		assert.equal(root.theme, "dark");
+		assert.equal(root.showHardwareCursor, true);
+		assert.equal(root[PI_SETTINGS_NAMESPACE].bottomStatus.enabled, true);
+		assert.equal(root.alpsPi, undefined);
+		assert.equal(readNamespacedPiSettings(file).bottomStatus.enabled, true);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("Pi 原生 settings 缺少 alps-pi 时从旧独立文件迁移", () => {
+	const dir = mkdtempSync(join(tmpdir(), "alps-pi-settings-"));
+	const piFile = join(dir, "settings.json");
+	const legacyFile = join(dir, "legacy-settings.json");
+	try {
+		writeFileSync(piFile, JSON.stringify({ theme: "dark" }), "utf-8");
+		writeFileSync(legacyFile, JSON.stringify({ fixedBottomEditor: { enabled: false }, bottomStatus: { enabled: true } }), "utf-8");
+
+		const loaded = readNamespacedPiSettings(piFile, legacyFile);
+
+		assert.equal(loaded.fixedBottomEditor.enabled, false);
+		assert.equal(loaded.bottomStatus.enabled, true);
+		const root = JSON.parse(readFileSync(piFile, "utf-8"));
+		assert.equal(root.theme, "dark");
+		assert.equal(root[PI_SETTINGS_NAMESPACE].fixedBottomEditor.enabled, false);
+		assert.equal(root[PI_SETTINGS_NAMESPACE].bottomStatus.enabled, true);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("测试隔离路径存在时不碰 Pi 原生 settings 文件", () => {
+	const dir = mkdtempSync(join(tmpdir(), "alps-pi-settings-"));
+	const isolatedFile = join(dir, "isolated.json");
+	const piFile = join(dir, "settings.json");
+	const previous = process.env.ALPS_PI_SETTINGS_PATH;
+	try {
+		process.env.ALPS_PI_SETTINGS_PATH = isolatedFile;
+		writeFileSync(piFile, JSON.stringify({ theme: "dark" }), "utf-8");
+		const settings = cloneStartupSettings();
+		settings.bottomStatus.enabled = true;
+
+		writePersistedSettings(settings);
+
+		assert.equal(existsSync(isolatedFile), true);
+		assert.deepEqual(JSON.parse(readFileSync(piFile, "utf-8")), { theme: "dark" });
+	} finally {
+		if (previous === undefined) delete process.env.ALPS_PI_SETTINGS_PATH;
+		else process.env.ALPS_PI_SETTINGS_PATH = previous;
 		rmSync(dir, { recursive: true, force: true });
 	}
 });

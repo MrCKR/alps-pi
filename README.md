@@ -34,7 +34,7 @@ pi install git:https://github.com/MrCKR/alps-pi
 - 消息线框默认启用，无需每次手动打开。
 - 固定底部输入框默认开启，可以在 `/alps-pi` 设置界面关闭。
 - 底部状态栏默认关闭，需要在 `/alps-pi` 设置界面手动开启。
-- `/alps-pi` 设置会持久化，`/reload` 或新会话后会按上次设置恢复。
+- `/alps-pi` 设置会持久化到 Pi 原生 `~/.pi/agent/settings.json` 的 `"alps-pi"` 字段，`/reload` 或新会话后会按上次设置恢复。
 - `/alps-pi` 提供设置界面。
 - 运行期 monkey patch 和固定输入框 runtime 可回滚。
 - 普通空消息不会渲染成空白框。

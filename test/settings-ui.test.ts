@@ -42,7 +42,7 @@ function createPanel(options: { fixedResult?: { enabled: boolean; installed: boo
 	return { state, calls, fixedCalls, bottomStatusCalls, component, isClosed: () => closed };
 }
 
-test("设置界面展示线框美化、正文线框、Tool 极简模式、edit 收起、固定输入框和底部状态栏，并渲染完整边框", () => {
+test("设置界面展示线框美化、正文线框、Tool 极简模式、edit 收起、固定输入框和底部状态栏，并使用原生上下横线", () => {
 	const { component } = createPanel();
 	const lines = component.render(80);
 	const plain = stripAnsi(lines.join("\n"));
@@ -57,14 +57,12 @@ test("设置界面展示线框美化、正文线框、Tool 极简模式、edit �
 	assert.match(plain, /固定输入框\s+ON/);
 	assert.match(plain, /底部状态栏\s+OFF/);
 	assert.doesNotMatch(plain, /preview/i);
-	assert.ok(stripAnsi(lines[0]!).startsWith("╭"));
-	assert.ok(stripAnsi(lines.at(-1)!).startsWith("╰"));
-	for (const line of lines) {
-		const stripped = stripAnsi(line);
-		assert.ok(stripped.startsWith("╭") || stripped.startsWith("╰") || stripped.startsWith("│"), stripped);
-		assert.ok(stripped.endsWith("╮") || stripped.endsWith("╯") || stripped.endsWith("│"), stripped);
-		assert.equal(visibleWidth(line), 80);
-	}
+	assert.doesNotMatch(plain, /Alps Pi 美化设置/);
+	assert.equal(stripAnsi(lines[0]!), "─".repeat(80));
+	assert.equal(stripAnsi(lines.at(-1)!), "─".repeat(80));
+	assert.match(plain, />/);
+	assert.match(plain, /Type to search · Enter\/Space to change · Esc to cancel/);
+	assert.ok(lines.every((line) => visibleWidth(line) <= 80));
 });
 
 test("设置界面可切换线框美化", () => {
@@ -127,8 +125,16 @@ test("设置界面第六项切换底部状态栏并调用 runtime op", () => {
 });
 
 test("设置界面固定输入框启用失败时回滚 OFF", () => {
-	const { state, fixedCalls, component } = createPanel({ fixedResult: { enabled: false, installed: false, failure: "boom" } });
+	const state = createInitialPatchState();
 	state.config.settings.fixedBottomEditor.enabled = false;
+	const fixedCalls: boolean[] = [];
+	const component = new AlpsPiSettingsComponent(createFakeTheme(), undefined, {
+		getState: () => state,
+		setFixedBottomEditorEnabled: (enabled: boolean) => {
+			fixedCalls.push(enabled);
+			return { enabled: false, installed: false, failure: "boom" };
+		},
+	});
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
@@ -153,11 +159,72 @@ test("快捷键设置 Backspace 恢复默认会拒绝冲突", () => {
 	state.config.settings.shortcuts.copyEditor = "ctrl+alt+g";
 	state.config.settings.shortcuts.cutEditor = DEFAULT_SETTINGS.shortcuts.copyEditor;
 
-	for (let i = 0; i < 6; i++) component.handleInput("\x1b[B");
-	component.handleInput(" ");
+	openShortcutSettings(component);
 	component.handleInput("\x1b[B");
 	component.handleInput("\x7f");
 
 	assert.equal(state.config.settings.shortcuts.copyEditor, "ctrl+alt+g");
 	assert.match(stripAnsi(component.render(80).join("\n")), /冲突/);
 });
+
+test("快捷键设置 Enter 捕获并保存新快捷键", () => {
+	const { state, component } = createPanel();
+	openShortcutSettings(component);
+	component.handleInput("\r");
+	component.handleInput("\x1bg");
+
+	assert.equal(state.config.settings.shortcuts.stashEditor, "alt+g");
+	assert.match(stripAnsi(component.render(80).join("\n")), /alt\+g/);
+	assert.match(stripAnsi(component.render(80).join("\n")), /已保存/);
+});
+
+test("快捷键设置捕获中 Esc 取消且不修改", () => {
+	const { state, component } = createPanel();
+	openShortcutSettings(component);
+	component.handleInput("\r");
+	component.handleInput("\x1b");
+
+	assert.equal(state.config.settings.shortcuts.stashEditor, DEFAULT_SETTINGS.shortcuts.stashEditor);
+	assert.match(stripAnsi(component.render(80).join("\n")), /已取消/);
+});
+
+test("快捷键设置捕获中 Backspace 恢复默认", () => {
+	const { state, component } = createPanel();
+	state.config.settings.shortcuts.stashEditor = "alt+g";
+	openShortcutSettings(component);
+	component.handleInput("\r");
+	component.handleInput("\x7f");
+
+	assert.equal(state.config.settings.shortcuts.stashEditor, DEFAULT_SETTINGS.shortcuts.stashEditor);
+	assert.match(stripAnsi(component.render(80).join("\n")), /已恢复默认/);
+});
+
+test("快捷键设置捕获中拒绝保留键和冲突键", () => {
+	const { state, component } = createPanel();
+	openShortcutSettings(component);
+	component.handleInput("\r");
+	component.handleInput("\x1b[80;6u");
+	assert.equal(state.config.settings.shortcuts.stashEditor, DEFAULT_SETTINGS.shortcuts.stashEditor);
+	assert.match(stripAnsi(component.render(80).join("\n")), /保留/);
+
+	component.handleInput("\x1b[67;7u");
+	assert.equal(state.config.settings.shortcuts.stashEditor, DEFAULT_SETTINGS.shortcuts.stashEditor);
+	assert.match(stripAnsi(component.render(80).join("\n")), /冲突/);
+});
+
+test("快捷键设置保存后关闭捕获并返回快捷键页", () => {
+	const { state, component } = createPanel();
+	openShortcutSettings(component);
+	component.handleInput("\r");
+	component.handleInput("\x1bg");
+	component.handleInput("\x1b");
+
+	assert.equal(state.config.settings.shortcuts.stashEditor, "alt+g");
+	assert.doesNotMatch(stripAnsi(component.render(80).join("\n")), /正在设置/);
+	assert.match(stripAnsi(component.render(80).join("\n")), /线框美化/);
+});
+
+function openShortcutSettings(component: AlpsPiSettingsComponent): void {
+	for (let i = 0; i < 6; i++) component.handleInput("\x1b[B");
+	component.handleInput(" ");
+}

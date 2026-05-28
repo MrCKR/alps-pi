@@ -1,12 +1,13 @@
 /** 功能：读写 Alps Pi 用户级持久化设置 实现者：alps 实现日期：2026-05-27 */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { cloneDefaultSettings, type AlpsPiSettings } from "./settings.ts";
 import { normalizeShortcut, shortcutConflictKey, shortcutUsesSuper, isSupportedSuperShortcut, RESERVED_BOTTOM_INPUT_SHORTCUTS, SHORTCUT_KEYS } from "./features/bottom-input/shortcuts.ts";
 
 const SETTINGS_ENV = "ALPS_PI_SETTINGS_PATH";
+export const PI_SETTINGS_NAMESPACE = "alps-pi";
 
 /** 返回启动默认设置；消息线框与固定输入框默认开启，底部状态栏仍默认关闭。 */
 export function cloneStartupSettings(): AlpsPiSettings {
@@ -17,34 +18,64 @@ export function cloneStartupSettings(): AlpsPiSettings {
 	return settings;
 }
 
-/** 计算持久化设置路径；测试可用环境变量隔离真实用户配置。 */
+/** 计算当前持久化主路径；测试隔离变量存在时返回隔离文件，否则返回 Pi 原生 settings。 */
 export function getSettingsPath(): string {
-	const override = process.env[SETTINGS_ENV]?.trim();
-	return override || join(homedir(), ".pi", "agent", "alps-pi", "settings.json");
+	return getIsolatedSettingsPath() ?? getPiSettingsPath();
 }
 
-/** 读取用户设置；缺文件或格式不完整时合并启动默认值。 */
-export function readPersistedSettings(path = getSettingsPath()): AlpsPiSettings {
+/** 返回 Pi 原生全局 settings 文件路径。 */
+export function getPiSettingsPath(): string {
+	return join(getAgentDir(), "settings.json");
+}
+
+/** 返回旧版独立设置文件路径；只用于 fallback 读取和迁移。 */
+export function getLegacySettingsPath(): string {
+	return join(getAgentDir(), "alps-pi", "settings.json");
+}
+
+/** 读取用户设置；默认使用 Pi settings 的 "alps-pi" 命名空间，测试可传入独立文件路径。 */
+export function readPersistedSettings(path?: string): AlpsPiSettings {
+	const isolatedPath = path ?? getIsolatedSettingsPath();
+	if (isolatedPath) {
+		return readStandaloneSettings(isolatedPath, cloneStartupSettings());
+	}
+	return readNamespacedPiSettings(getPiSettingsPath(), getLegacySettingsPath());
+}
+
+/** 写入用户设置；默认只替换 Pi settings 的 "alps-pi" 字段，测试可传入独立文件路径。 */
+export function writePersistedSettings(settings: AlpsPiSettings, path?: string): void {
+	const isolatedPath = path ?? getIsolatedSettingsPath();
+	if (isolatedPath) {
+		writeStandaloneSettings(settings, isolatedPath);
+		return;
+	}
+	writeNamespacedPiSettings(settings, getPiSettingsPath());
+}
+
+/** 从指定 Pi settings 文件读取 "alps-pi" 命名空间；缺失时尝试从旧文件迁移。 */
+export function readNamespacedPiSettings(piSettingsPath: string, legacySettingsPath = getLegacySettingsPath()): AlpsPiSettings {
 	const defaults = cloneStartupSettings();
-	if (!existsSync(path)) {
-		return defaults;
-	}
+	const namespaceSettings = readNamespaceFromPiFile(piSettingsPath, defaults);
+	if (namespaceSettings) return namespaceSettings;
 
-	try {
-		return normalizeSettings(JSON.parse(readFileSync(path, "utf-8")), defaults);
-	} catch (error) {
-		console.debug?.(`[alps-pi] Failed to read settings from ${path}:`, error);
-		return defaults;
+	const legacySettings = readStandaloneSettingsIfExists(legacySettingsPath, defaults);
+	if (legacySettings) {
+		writeNamespacedPiSettings(legacySettings, piSettingsPath);
+		return legacySettings;
 	}
+	return defaults;
 }
 
-/** 写入用户设置；失败只记录调试信息，不能破坏 UI 操作。 */
-export function writePersistedSettings(settings: AlpsPiSettings, path = getSettingsPath()): void {
+/** 写入指定 Pi settings 文件的 "alps-pi" 命名空间，保留其它原生设置字段。 */
+export function writeNamespacedPiSettings(settings: AlpsPiSettings, piSettingsPath: string): void {
 	try {
-		mkdirSync(dirname(path), { recursive: true });
-		writeFileSync(path, JSON.stringify(cloneSettings(settings), null, 2) + "\n", "utf-8");
+		const root = readPiSettingsRoot(piSettingsPath);
+		if (!root) return;
+		root[PI_SETTINGS_NAMESPACE] = cloneSettings(settings);
+		mkdirSync(dirname(piSettingsPath), { recursive: true });
+		writeFileSync(piSettingsPath, JSON.stringify(root, null, 2) + "\n", "utf-8");
 	} catch (error) {
-		console.debug?.(`[alps-pi] Failed to write settings to ${path}:`, error);
+		console.debug?.(`[alps-pi] Failed to write settings namespace to ${piSettingsPath}:`, error);
 	}
 }
 
@@ -56,6 +87,52 @@ export function cloneSettings(settings: AlpsPiSettings): AlpsPiSettings {
 		bottomStatus: { ...settings.bottomStatus },
 		shortcuts: { ...settings.shortcuts },
 	};
+}
+
+function getIsolatedSettingsPath(): string | undefined {
+	return process.env[SETTINGS_ENV]?.trim() || undefined;
+}
+
+function readStandaloneSettings(path: string, defaults: AlpsPiSettings): AlpsPiSettings {
+	const settings = readStandaloneSettingsIfExists(path, defaults);
+	return settings ?? defaults;
+}
+
+function readStandaloneSettingsIfExists(path: string, defaults: AlpsPiSettings): AlpsPiSettings | undefined {
+	if (!existsSync(path)) return undefined;
+	try {
+		return normalizeSettings(JSON.parse(readFileSync(path, "utf-8")), defaults);
+	} catch (error) {
+		console.debug?.(`[alps-pi] Failed to read settings from ${path}:`, error);
+		return undefined;
+	}
+}
+
+function readNamespaceFromPiFile(path: string, defaults: AlpsPiSettings): AlpsPiSettings | undefined {
+	if (!existsSync(path)) return undefined;
+	try {
+		const root = JSON.parse(readFileSync(path, "utf-8"));
+		if (!isRecord(root) || root[PI_SETTINGS_NAMESPACE] === undefined) return undefined;
+		return normalizeSettings(root[PI_SETTINGS_NAMESPACE], defaults);
+	} catch (error) {
+		console.debug?.(`[alps-pi] Failed to read settings namespace from ${path}:`, error);
+		return undefined;
+	}
+}
+
+function readPiSettingsRoot(path: string): Record<string, any> | undefined {
+	if (!existsSync(path)) return {};
+	try {
+		const root = JSON.parse(readFileSync(path, "utf-8"));
+		if (!isRecord(root)) {
+			console.debug?.(`[alps-pi] Refuse to write settings namespace because ${path} is not a JSON object.`);
+			return undefined;
+		}
+		return root;
+	} catch (error) {
+		console.debug?.(`[alps-pi] Refuse to write settings namespace because ${path} is invalid JSON:`, error);
+		return undefined;
+	}
 }
 
 /** 只接受已知 boolean 字段，避免坏配置污染运行时。 */
@@ -76,6 +153,15 @@ function normalizeSettings(value: unknown, defaults: AlpsPiSettings): AlpsPiSett
 		},
 		shortcuts: normalizeShortcutSettings(raw.shortcuts, defaults.shortcuts),
 	};
+}
+
+function writeStandaloneSettings(settings: AlpsPiSettings, path: string): void {
+	try {
+		mkdirSync(dirname(path), { recursive: true });
+		writeFileSync(path, JSON.stringify(cloneSettings(settings), null, 2) + "\n", "utf-8");
+	} catch (error) {
+		console.debug?.(`[alps-pi] Failed to write settings to ${path}:`, error);
+	}
 }
 
 function normalizeShortcutSettings(parent: unknown, defaults: AlpsPiSettings["shortcuts"]): AlpsPiSettings["shortcuts"] {
