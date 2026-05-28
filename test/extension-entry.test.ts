@@ -270,3 +270,23 @@ test("命令层 fixed/bottom ops 使用入口创建的统一 runtime 并用命�
 	assert.equal(harness.runtimeCalls.includes("set:false"), true);
 	assert.equal(harness.runtimeCalls.includes("bottom:true"), true);
 });
+
+test("底部状态栏切换时若 fixed 设置仍开启但 runtime 未安装，会重新安装 fixed", async () => {
+	const harness = createHarness();
+	const ctx = {
+		id: "command-ctx",
+		hasUI: true,
+		ui: {
+			custom(factory: any) {
+				const component = factory({}, undefined, {}, () => {});
+				for (let i = 0; i < 5; i++) component.handleInput("\x1b[B");
+				component.handleInput(" ");
+				return Promise.resolve();
+			},
+			notify() {},
+		},
+	};
+
+	await harness.commands.get("alps-pi").handler("", ctx);
+	assert.deepEqual(harness.runtimeCalls, ["shortcuts", "bind:command-ctx", "set:true", "bottom:true"]);
+});

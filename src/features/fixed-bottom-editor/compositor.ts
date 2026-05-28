@@ -62,11 +62,19 @@ type SelectionLocation = {
 	point: SelectionPoint;
 };
 
+type ScrollMetrics = {
+	width: number;
+	rawRows: number;
+	cluster: FixedEditorCluster;
+	scrollableRows: number;
+};
+
 const COMPOSITOR_OWNER = Symbol("alps.pi.fixedBottomEditor.compositorOwner.v1");
 const DEFAULT_COLUMNS = 80;
 const DEFAULT_ROWS = 24;
 const DOUBLE_CLICK_MS = 500;
 const CONTEXT_MENU_MOUSE_REPORTING_PAUSE_MS = 1200;
+const WHEEL_REPAINT_COALESCE_MS = 8;
 
 /** 进入 alternate screen，让固定输入框拥有可控视口并避免污染主屏滚动历史。 */
 export function enterAlternateScreen(): string {
@@ -163,6 +171,24 @@ export function buildFixedEditorClusterPaint(
 		buffer += sanitizeLine(cluster.lines[index] ?? "", safeWidth);
 	}
 
+	buffer += buildFixedEditorCursorRestore(cluster, terminalRows, width, showHardwareCursor);
+	return buffer;
+}
+
+/** 普通聊天区滚动时只恢复 scroll region 与硬件光标，不重绘底部 cluster。 */
+export function buildFixedEditorCursorRestore(
+	cluster: FixedEditorCluster,
+	terminalRows: number,
+	width: number,
+	showHardwareCursor: boolean,
+): string {
+	if (cluster.lines.length === 0) return resetScrollRegion() + hideCursor();
+
+	const safeRows = Math.max(1, Math.floor(terminalRows));
+	const safeWidth = Math.max(1, Math.floor(width));
+	const startRow = Math.max(1, safeRows - cluster.lines.length + 1);
+	let buffer = resetScrollRegion();
+
 	if (cluster.cursor && showHardwareCursor) {
 		const cursorRow = Math.max(0, Math.min(cluster.cursor.row, cluster.lines.length - 1));
 		const cursorCol = Math.max(0, Math.min(cluster.cursor.col, safeWidth - 1));
@@ -196,6 +222,8 @@ export class FixedBottomEditorCompositor {
 	private rowsGetter: (() => number) | null = null;
 	private removeInputListener: (() => void) | null = null;
 	private mouseReportingResumeTimer: ReturnType<typeof setTimeout> | null = null;
+	private wheelFlushTimer: ReturnType<typeof setTimeout> | null = null;
+	private pendingWheelDelta = 0;
 	private readonly ownerToken = Symbol("alps.pi.fixedBottomEditor.compositor.instance");
 	private installed = false;
 	private disposed = false;
@@ -318,7 +346,6 @@ export class FixedBottomEditorCompositor {
 		const width = this.getTerminalWidth();
 		const cluster = this.getCluster(width, rawRows);
 		if (cluster.lines.length === 0) return;
-		this.refreshRootWindow(width);
 
 		this.writeOriginal(
 			beginSynchronizedOutput()
@@ -363,6 +390,7 @@ export class FixedBottomEditorCompositor {
 			clearTimeout(this.mouseReportingResumeTimer);
 			this.mouseReportingResumeTimer = null;
 		}
+		this.clearPendingWheelScroll();
 		this.clearSelection();
 		if (this.originalRender && this.tui.render === this.renderWrapper) {
 			this.tui.render = this.originalRender;
@@ -388,7 +416,6 @@ export class FixedBottomEditorCompositor {
 		}
 
 		const result = this.originalDoRender.apply(this.tui, args);
-		this.refreshRootWindow(this.getTerminalWidth());
 		this.requestRepaint();
 		return result;
 	}
@@ -447,12 +474,11 @@ export class FixedBottomEditorCompositor {
 
 		const mousePackets = parseSgrMousePackets(data);
 		if (mousePackets) {
-			for (const packet of mousePackets) {
-				this.handleMousePacket(packet);
-			}
+			this.handleMousePackets(mousePackets);
 			return { consume: true };
 		}
 
+		this.flushWheelScroll();
 		const keyboardDelta = parseKeyboardScrollDelta(data, this.keyboardScrollShortcuts);
 		if (keyboardDelta === 0) return undefined;
 
@@ -462,6 +488,7 @@ export class FixedBottomEditorCompositor {
 
 	/** 读取给 TUI 暴露的可滚动行数；overlay 或内部渲染期间返回真实行数。 */
 	private getScrollableRows(): number {
+		this.flushWheelScroll();
 		const rawRows = this.getRawRows();
 		if (
 			this.disposed
@@ -510,37 +537,67 @@ export class FixedBottomEditorCompositor {
 		return start;
 	}
 
-	/** 原版语义：正数向上看历史，负数回到底部；滚动后只重绘上方 viewport 与底部 cluster。 */
-	private scrollBy(delta: number): void {
-		const width = this.getTerminalWidth();
-		this.refreshRootWindow(width);
+	/** 原版语义：正数向上看历史，负数回到底部；滚动只使用最近一次 TUI render 缓存，避免消息越多越卡。 */
+	private scrollBy(delta: number, options: { paintCluster?: boolean } = {}): void {
+		const metrics = this.prepareScrollMetrics(this.getTerminalWidth());
 		const nextOffset = Math.max(0, Math.min(this.scrollOffset + delta, this.maxScrollOffset));
 		if (nextOffset === this.scrollOffset) return;
 
+		const hadClusterSelection = this.selectionArea === "cluster";
 		this.clearSelection();
 		this.lastLeftPress = null;
 		this.scrollOffset = nextOffset;
-		// 滚轮/快捷键滚动已经同步重绘 viewport；避免再排队完整 TUI render，降低滚动延迟。
-		this.repaintScrollableViewport(width);
+		// 滚轮/快捷键滚动已经同步重绘 viewport；仅在清理 cluster 选区时补绘底部，避免残留反色高亮。
+		this.repaintScrollableViewport(metrics, { paintCluster: options.paintCluster === true || hadClusterSelection });
+	}
+
+	/** 生成一次滚动共享的 cluster/行数指标，避免 scrollBy 内重复 render bottom cluster。 */
+	private prepareScrollMetrics(width: number): ScrollMetrics {
+		const safeWidth = coercePositiveInteger(width, DEFAULT_COLUMNS);
+		if (this.rootLines.length === 0 || this.visibleScrollableRows <= 0) {
+			this.refreshRootWindow(safeWidth);
+		}
+
+		const metrics = this.getScrollMetrics(safeWidth);
+		this.updateScrollBoundsFromMetrics(metrics);
+		return metrics;
+	}
+
+	private getScrollMetrics(width: number): ScrollMetrics {
+		const rawRows = this.getRawRows();
+		const cluster = this.getCluster(width, rawRows);
+		return {
+			width,
+			rawRows,
+			cluster,
+			scrollableRows: Math.max(1, rawRows - cluster.lines.length),
+		};
+	}
+
+	/** 用缓存 rootLines 更新滚动边界。 */
+	private updateScrollBoundsFromMetrics(metrics: ScrollMetrics): void {
+		this.maxScrollOffset = Math.max(0, this.rootLines.length - metrics.scrollableRows);
+		this.scrollOffset = Math.max(0, Math.min(this.scrollOffset, this.maxScrollOffset));
+		this.updateVisibleRootWindow(metrics.scrollableRows);
 	}
 
 	/** 只重绘上方聊天区，避免滚动操作影响底部 fixed editor。 */
-	private repaintScrollableViewport(width: number): void {
+	private repaintScrollableViewport(metrics: ScrollMetrics, options: { paintCluster?: boolean } = {}): void {
 		if (this.disposed || this.writing || this.hasVisibleOverlay() || !this.installed) return;
 
-		const rawRows = this.getRawRows();
-		const cluster = this.getCluster(width, rawRows);
-		const scrollableRows = Math.max(1, rawRows - cluster.lines.length);
-		const start = this.updateVisibleRootWindow(scrollableRows);
-		let buffer = beginSynchronizedOutput() + setScrollRegion(1, scrollableRows) + moveCursor(1, 1);
+		const cluster = this.decorateCluster(metrics.cluster);
+		const start = this.updateVisibleRootWindow(metrics.scrollableRows);
+		let buffer = beginSynchronizedOutput() + setScrollRegion(1, metrics.scrollableRows) + moveCursor(1, 1);
 
-		for (let row = 0; row < scrollableRows; row++) {
+		for (let row = 0; row < metrics.scrollableRows; row++) {
 			if (row > 0) buffer += "\r\n";
 			buffer += clearLine();
-			buffer += sanitizeLine(this.renderSelectionHighlight(this.visibleRootLines[row] ?? "", start + row, "root"), width);
+			buffer += sanitizeLine(this.renderSelectionHighlight(this.visibleRootLines[row] ?? "", start + row, "root"), metrics.width);
 		}
 
-		buffer += buildFixedEditorClusterPaint(this.decorateCluster(cluster), rawRows, width, this.getShowHardwareCursor());
+		buffer += options.paintCluster === true
+			? buildFixedEditorClusterPaint(cluster, metrics.rawRows, metrics.width, this.getShowHardwareCursor())
+			: buildFixedEditorCursorRestore(cluster, metrics.rawRows, metrics.width, this.getShowHardwareCursor());
 		buffer += endSynchronizedOutput();
 		this.writeOriginal(buffer);
 	}
@@ -571,17 +628,23 @@ export class FixedBottomEditorCompositor {
 
 	/** 回到聊天底部。 */
 	jumpToRootBottom(): boolean {
+		this.flushWheelScroll();
 		if (this.disposed || this.hasVisibleOverlay() || this.scrollOffset === 0) return false;
+		const metrics = this.prepareScrollMetrics(this.getTerminalWidth());
+		const hadClusterSelection = this.selectionArea === "cluster";
 		this.clearSelection();
 		this.lastLeftPress = null;
 		this.scrollOffset = 0;
-		this.repaintScrollableViewport(this.getTerminalWidth());
+		this.repaintScrollableViewport(metrics, { paintCluster: hadClusterSelection });
 		return true;
 	}
 
 	private jumpToRootTarget(targetLines: readonly number[], direction: "previous" | "next"): boolean {
+		this.flushWheelScroll();
 		if (this.disposed || targetLines.length === 0 || this.hasVisibleOverlay()) return false;
-		this.refreshRootWindow(this.getTerminalWidth());
+		const width = this.getTerminalWidth();
+		this.refreshRootWindow(width);
+		const metrics = this.prepareScrollMetrics(width);
 		const start = this.visibleRootStart;
 		const candidates = direction === "previous"
 			? targetLines.filter((line) => line < start).sort((a, b) => b - a)
@@ -589,10 +652,11 @@ export class FixedBottomEditorCompositor {
 		for (const target of candidates) {
 			const nextOffset = Math.max(0, Math.min(this.lastRootLineCount - Math.max(1, this.visibleScrollableRows) - target, this.maxScrollOffset));
 			if (nextOffset === this.scrollOffset) continue;
+			const hadClusterSelection = this.selectionArea === "cluster";
 			this.clearSelection();
 			this.lastLeftPress = null;
 			this.scrollOffset = nextOffset;
-			this.repaintScrollableViewport(this.getTerminalWidth());
+			this.repaintScrollableViewport(metrics, { paintCluster: hadClusterSelection });
 			return true;
 		}
 		return false;
@@ -626,14 +690,56 @@ export class FixedBottomEditorCompositor {
 		return Math.max(1, Math.min(scrollBottom, cursorRow - viewportTop + 1));
 	}
 
-	private handleMousePacket(packet: SgrMousePacket): void {
-		const delta = mouseScrollDelta(packet);
-		if (delta !== 0) {
-			this.selectionDragging = false;
-			this.scrollBy(delta);
-			return;
+	private handleMousePackets(packets: SgrMousePacket[]): void {
+		let wheelDelta = 0;
+		for (const packet of packets) {
+			const delta = mouseScrollDelta(packet);
+			if (delta !== 0) {
+				wheelDelta += delta;
+				continue;
+			}
+
+			if (wheelDelta !== 0) {
+				this.queueWheelScroll(wheelDelta);
+				wheelDelta = 0;
+			}
+			this.flushWheelScroll();
+			this.handleMousePacket(packet);
 		}
 
+		if (wheelDelta !== 0) {
+			this.queueWheelScroll(wheelDelta);
+		}
+	}
+
+	private queueWheelScroll(delta: number): void {
+		this.selectionDragging = false;
+		this.pendingWheelDelta += delta;
+		if (this.wheelFlushTimer) return;
+
+		this.wheelFlushTimer = setTimeout(() => this.flushWheelScroll(), WHEEL_REPAINT_COALESCE_MS);
+		this.wheelFlushTimer.unref?.();
+	}
+
+	private flushWheelScroll(): void {
+		if (this.wheelFlushTimer) {
+			clearTimeout(this.wheelFlushTimer);
+			this.wheelFlushTimer = null;
+		}
+		const delta = this.pendingWheelDelta;
+		this.pendingWheelDelta = 0;
+		if (delta !== 0) this.scrollBy(delta);
+	}
+
+	private clearPendingWheelScroll(): void {
+		if (this.wheelFlushTimer) {
+			clearTimeout(this.wheelFlushTimer);
+			this.wheelFlushTimer = null;
+		}
+		this.pendingWheelDelta = 0;
+	}
+
+	private handleMousePacket(packet: SgrMousePacket): void {
 		const location = this.selectionLocationForPacket(packet);
 		if (isRightPress(packet)) {
 			this.selectionDragging = false;
@@ -644,8 +750,12 @@ export class FixedBottomEditorCompositor {
 				this.pauseMouseReportingForContextMenu();
 				return;
 			}
+			const hadClusterSelection = this.selectionArea === "cluster";
 			this.clearSelection();
 			this.lastLeftPress = null;
+			if (hadClusterSelection) {
+				this.repaintScrollableViewport(this.getScrollMetrics(this.getTerminalWidth()), { paintCluster: true });
+			}
 			this.pauseMouseReportingForContextMenu();
 			return;
 		}
@@ -664,7 +774,7 @@ export class FixedBottomEditorCompositor {
 			this.lastLeftPress = null;
 			this.preserveSelectionFocusOnRelease = false;
 			this.selectionFocus = location.point;
-			this.repaintScrollableViewport(this.getTerminalWidth());
+			this.repaintScrollableViewport(this.getScrollMetrics(this.getTerminalWidth()), { paintCluster: true });
 		}
 	}
 
@@ -678,7 +788,7 @@ export class FixedBottomEditorCompositor {
 			this.selectionDragging = true;
 			this.preserveSelectionFocusOnRelease = true;
 			this.lastLeftPress = null;
-			this.repaintScrollableViewport(this.getTerminalWidth());
+			this.repaintScrollableViewport(this.getScrollMetrics(this.getTerminalWidth()), { paintCluster: true });
 			return;
 		}
 
@@ -688,7 +798,7 @@ export class FixedBottomEditorCompositor {
 		this.selectionDragging = true;
 		this.preserveSelectionFocusOnRelease = false;
 		this.lastLeftPress = { area: location.area, line, at: now };
-		this.repaintScrollableViewport(this.getTerminalWidth());
+		this.repaintScrollableViewport(this.getScrollMetrics(this.getTerminalWidth()), { paintCluster: true });
 	}
 
 	private finishSelection(packet: SgrMousePacket, location: SelectionLocation | null): void {
@@ -706,7 +816,7 @@ export class FixedBottomEditorCompositor {
 		} else {
 			this.clearSelection();
 		}
-		this.repaintScrollableViewport(this.getTerminalWidth());
+		this.repaintScrollableViewport(this.getScrollMetrics(this.getTerminalWidth()), { paintCluster: true });
 	}
 
 	private selectionLocationForPacket(packet: SgrMousePacket): SelectionLocation | null {
@@ -724,15 +834,16 @@ export class FixedBottomEditorCompositor {
 		if (!this.selectionDragging || this.selectionArea !== "root" || !isLeftDrag(packet)) return false;
 		const delta = packet.row <= 1 ? 1 : packet.row >= this.visibleScrollableRows ? -1 : 0;
 		if (delta === 0) return false;
+		const metrics = this.prepareScrollMetrics(this.getTerminalWidth());
 		const nextOffset = Math.max(0, Math.min(this.scrollOffset + delta, this.maxScrollOffset));
 		if (nextOffset === this.scrollOffset) return false;
 		this.lastLeftPress = null;
 		this.preserveSelectionFocusOnRelease = true;
 		this.scrollOffset = nextOffset;
-		const start = this.updateVisibleRootWindow();
-		const edgeLine = delta > 0 ? start : start + Math.max(0, this.visibleScrollableRows - 1);
+		const start = this.updateVisibleRootWindow(metrics.scrollableRows);
+		const edgeLine = delta > 0 ? start : start + Math.max(0, metrics.scrollableRows - 1);
 		this.selectionFocus = { line: edgeLine, col: Math.max(0, packet.col - 1) };
-		this.repaintScrollableViewport(this.getTerminalWidth());
+		this.repaintScrollableViewport(metrics, { paintCluster: true });
 		return true;
 	}
 

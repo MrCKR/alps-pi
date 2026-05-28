@@ -7,10 +7,11 @@ import { createBottomInputRuntime, renderBottomInputStatus } from "../src/featur
 import { isStashShortcutInput } from "../src/features/bottom-status/index.ts";
 import { createFakeTheme, stripAnsi } from "./helpers.test.ts";
 
-function createCtx() {
+function createCtx(options: { footerData?: any } = {}) {
 	const notifications: Array<{ message: string; level: string }> = [];
 	const statuses: Array<{ key: string; value: string | undefined }> = [];
 	const inputHandlers: Array<(data: string) => { consume?: boolean; data?: string } | undefined> = [];
+	let footerFactory: any;
 	let editorText = "";
 	const ctx: any = {
 		hasUI: true,
@@ -24,7 +25,9 @@ function createCtx() {
 		},
 		ui: {
 			setEditorComponent() {},
-			setFooter() {},
+			setFooter(factory: any) {
+				footerFactory = factory;
+			},
 			notify(message: string, level: string) {
 				notifications.push({ message, level });
 			},
@@ -57,6 +60,9 @@ function createCtx() {
 		getInputHandlerCount: () => inputHandlers.length,
 		setEditorText(text: string) {
 			editorText = text;
+		},
+		instantiateFooter(tui: any = { terminal: { columns: 40, rows: 12, write() {} } }, theme: any = createFakeTheme()) {
+			return footerFactory?.(tui, theme, options.footerData ?? {});
 		},
 	};
 }
@@ -271,4 +277,49 @@ test("dispose 移除 input listener 并清理 stash 状态", () => {
 
 	assert.equal(harness.getInputHandlerCount(), 0);
 	assert.deepEqual(harness.statuses.at(-1), { key: "alps-pi-stash", value: undefined });
+});
+
+test("bottomStatus OFF 时 runtime 渲染 cluster 不读取 context usage 或 extension statuses", () => {
+	const footerData = {
+		getExtensionStatuses() {
+			throw new Error("should not read extension statuses");
+		},
+	};
+	const harness = createCtx({ footerData });
+	harness.ctx.getContextUsage = () => {
+		throw new Error("should not read context usage");
+	};
+	let capturedRenderCluster: ((width: number, terminalRows: number) => unknown) | undefined;
+	const runtime = createBottomInputRuntime({
+		startClock: false,
+		createCompositor(options) {
+			capturedRenderCluster = options.renderCluster;
+			return {
+				install() {},
+				dispose() {},
+				hideRenderable() {},
+				renderHidden() {
+					return ["editor"];
+				},
+				requestRepaint() {},
+				setKeyboardScrollShortcuts() {},
+				jumpToPreviousRootTarget() {
+					return false;
+				},
+				jumpToNextRootTarget() {
+					return false;
+				},
+				jumpToRootBottom() {
+					return false;
+				},
+			};
+		},
+	});
+
+	runtime.bindSession(harness.ctx);
+	runtime.setEnabled(true);
+	harness.instantiateFooter();
+	runtime.setBottomStatusEnabled(false);
+
+	assert.doesNotThrow(() => capturedRenderCluster?.(40, 12));
 });

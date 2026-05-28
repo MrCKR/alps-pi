@@ -5,6 +5,7 @@ import test from "node:test";
 import {
 	FixedBottomEditorCompositor,
 	beginSynchronizedOutput,
+	buildFixedEditorClusterPaint,
 	clearLine,
 	disableAlternateScrollMode,
 	enableAlternateScrollMode,
@@ -27,7 +28,7 @@ function resetSequence(): string {
 	return beginSynchronizedOutput() + resetScrollRegion() + "\x1b[?1006l\x1b[?1002l\x1b[?1000l" + enableAlternateScrollMode() + exitAlternateScreen() + showCursor() + endSynchronizedOutput();
 }
 
-function createHarness(options: { overlay?: boolean; overlayStack?: unknown[]; rootLines?: string[] } = {}) {
+function createHarness(options: { overlay?: boolean; overlayStack?: unknown[]; rootLines?: string[]; cluster?: FixedEditorCluster } = {}) {
 	const writes: string[] = [];
 	const renderCalls: number[] = [];
 	const doRenderCalls: string[] = [];
@@ -67,7 +68,7 @@ function createHarness(options: { overlay?: boolean; overlayStack?: unknown[]; r
 			doRenderCalls.push("doRender");
 		},
 	};
-	const cluster: FixedEditorCluster = {
+	const cluster: FixedEditorCluster = options.cluster ?? {
 		lines: ["editor", "footer"],
 		cursor: { row: 0, col: 2 },
 	};
@@ -144,6 +145,7 @@ test("install 后进入 alternate screen、替换 terminal.write，并在 dispos
 		+ moveCursor(10, 1)
 		+ clearLine()
 		+ "footer"
+		+ resetScrollRegion()
 		+ moveCursor(9, 3)
 		+ showCursor()
 		+ endSynchronizedOutput());
@@ -284,6 +286,151 @@ test("render 内容不足可滚动区域时补空行撑满 viewport", () => {
 	assert.deepEqual(harness.tui.render(20), ["root-1", "root-2", "", "", "", "", "", ""]);
 });
 
+test("滚动路径复用 rootLines 缓存，不随历史消息数量重复整树 render", () => {
+	const rootLines = Array.from({ length: 1000 }, (_, index) => `root-${index + 1}`);
+	const harness = createHarness({ rootLines });
+	harness.compositor.install();
+	harness.tui.render(20);
+	const renderCount = harness.renderCalls.length;
+
+	harness.input("\x1b[5~");
+	harness.input("\x1b[5~");
+	harness.input("\x1b[6~");
+
+	assert.equal(harness.renderCalls.length, renderCount);
+});
+
+test("一次键盘滚动只计算一次 cluster，普通滚动不重绘底部 cluster", () => {
+	const rootLines = Array.from({ length: 30 }, (_, index) => `root-${index + 1}`);
+	const harness = createHarness({ rootLines });
+	harness.compositor.install();
+	harness.tui.render(20);
+	const clusterCalls = harness.getRenderClusterCalls();
+	const writeCount = harness.writes.length;
+
+	harness.input("\x1b[5~");
+
+	assert.equal(harness.getRenderClusterCalls() - clusterCalls, 1);
+	assert.equal(harness.writes.length, writeCount + 1);
+	assert.doesNotMatch(harness.writes.at(-1) ?? "", /editor|footer/);
+});
+
+test("wheel burst 合并为一次滚动 repaint，并显著减少 cluster render", async () => {
+	const rootLines = Array.from({ length: 60 }, (_, index) => `root-${index + 1}`);
+	const harness = createHarness({ rootLines });
+	harness.compositor.install();
+	harness.tui.render(20);
+	const clusterCalls = harness.getRenderClusterCalls();
+	const writeCount = harness.writes.length;
+
+	for (let index = 0; index < 10; index++) {
+		assert.deepEqual(harness.input("\x1b[<64;1;1M"), [{ consume: true }]);
+	}
+	assert.equal(harness.writes.length, writeCount);
+
+	await new Promise((resolve) => setTimeout(resolve, 20));
+
+	assert.equal(harness.writes.length, writeCount + 1);
+	assert.equal(harness.getRenderClusterCalls() - clusterCalls, 1);
+	assert.doesNotMatch(harness.writes.at(-1) ?? "", /editor|footer/);
+});
+
+test("非 wheel 鼠标事件前会 flush pending wheel，保证事件顺序", () => {
+	const rootLines = Array.from({ length: 40 }, (_, index) => `root-${index + 1}`);
+	const harness = createHarness({ rootLines });
+	harness.compositor.install();
+	harness.tui.render(20);
+	const writeCount = harness.writes.length;
+
+	harness.input("\x1b[<64;1;1M");
+	assert.equal(harness.writes.length, writeCount);
+	harness.input("\x1b[<0;1;1M");
+
+	assert.equal(harness.writes.length, writeCount + 2);
+	assert.doesNotMatch(harness.writes.at(writeCount) ?? "", /editor|footer/);
+});
+
+test("cluster 区选中高亮后普通滚动会重绘底部，避免残留反色选区", () => {
+	const rootLines = Array.from({ length: 40 }, (_, index) => `root-${index + 1}`);
+	const harness = createHarness({ rootLines });
+	harness.compositor.install();
+	harness.tui.render(20);
+	harness.input("\x1b[<0;3;9M\x1b[<0;6;9m");
+	assert.match(harness.writes.at(-1) ?? "", /\x1b\[7m/);
+	const writeCount = harness.writes.length;
+
+	harness.input("\x1b[5~");
+
+	assert.equal(harness.writes.length, writeCount + 1);
+	assert.match(harness.writes.at(-1) ?? "", /editor|footer/);
+	assert.doesNotMatch(harness.writes.at(-1) ?? "", /\x1b\[7m/);
+});
+
+test("cluster 区选中高亮后回到底部会重绘底部，避免残留反色选区", () => {
+	const rootLines = Array.from({ length: 40 }, (_, index) => `root-${index + 1}`);
+	const harness = createHarness({ rootLines });
+	harness.compositor.install();
+	harness.tui.render(20);
+	harness.input("\x1b[5~");
+	harness.input("\x1b[<0;3;9M\x1b[<0;6;9m");
+	assert.match(harness.writes.at(-1) ?? "", /\x1b\[7m/);
+	const writeCount = harness.writes.length;
+
+	assert.equal(harness.compositor.jumpToRootBottom(), true);
+
+	assert.equal(harness.writes.length, writeCount + 1);
+	assert.match(harness.writes.at(-1) ?? "", /editor|footer/);
+	assert.doesNotMatch(harness.writes.at(-1) ?? "", /\x1b\[7m/);
+});
+
+test("cluster 区选中高亮后 message jump 会重绘底部，避免残留反色选区", () => {
+	const rootLines = Array.from({ length: 40 }, (_, index) => `root-${index + 1}`);
+	const harness = createHarness({ rootLines });
+	harness.compositor.install();
+	harness.tui.render(20);
+	harness.input("\x1b[5~");
+	harness.input("\x1b[<0;3;9M\x1b[<0;6;9m");
+	assert.match(harness.writes.at(-1) ?? "", /\x1b\[7m/);
+	const writeCount = harness.writes.length;
+
+	assert.equal(harness.compositor.jumpToPreviousRootTarget([10, 20, 30]), true);
+
+	assert.equal(harness.writes.length, writeCount + 1);
+	assert.match(harness.writes.at(-1) ?? "", /editor|footer/);
+	assert.doesNotMatch(harness.writes.at(-1) ?? "", /\x1b\[7m/);
+});
+
+test("cluster 区选中高亮后右键点选区外会重绘底部，避免残留反色选区", () => {
+	const rootLines = Array.from({ length: 40 }, (_, index) => `root-${index + 1}`);
+	const harness = createHarness({ rootLines });
+	harness.compositor.install();
+	harness.tui.render(20);
+	harness.input("\x1b[<0;3;9M\x1b[<0;6;9m");
+	assert.match(harness.writes.at(-1) ?? "", /\x1b\[7m/);
+	const writeCount = harness.writes.length;
+
+	harness.input("\x1b[<2;1;9M");
+
+	assert.equal(harness.writes.length, writeCount + 2);
+	assert.match(harness.writes.at(writeCount) ?? "", /editor|footer/);
+	assert.doesNotMatch(harness.writes.at(writeCount) ?? "", /\x1b\[7m/);
+});
+
+test("dispose 会清理 pending wheel timer，避免卸载后继续写入", async () => {
+	const rootLines = Array.from({ length: 40 }, (_, index) => `root-${index + 1}`);
+	const harness = createHarness({ rootLines });
+	harness.compositor.install();
+	harness.tui.render(20);
+	harness.input("\x1b[<64;1;1M");
+	const beforeDisposeWrites = harness.writes.length;
+
+	harness.compositor.dispose();
+	await new Promise((resolve) => setTimeout(resolve, 20));
+
+	assert.equal(harness.writes.length, beforeDisposeWrites + 1);
+	assert.ok(harness.writes.at(-1)?.includes(exitAlternateScreen()));
+});
+
 test("原版 PageUp/PageDown 快捷键驱动内部聊天区滚动", () => {
 	const rootLines = Array.from({ length: 20 }, (_, index) => `root-${index + 1}`);
 	const harness = createHarness({ rootLines });
@@ -301,7 +448,7 @@ test("原版 PageUp/PageDown 快捷键驱动内部聊天区滚动", () => {
 	assert.equal(harness.tui.requestRenderCalls, 0);
 });
 
-test("原版 Super/Ctrl+Shift 方向键快捷键与鼠标滚轮共享滚动窗口", () => {
+test("原版 Super/Ctrl+Shift 方向键快捷键与鼠标滚轮共享滚动窗口", async () => {
 	const rootLines = Array.from({ length: 20 }, (_, index) => `root-${index + 1}`);
 	const harness = createHarness({ rootLines });
 	harness.compositor.install();
@@ -309,10 +456,12 @@ test("原版 Super/Ctrl+Shift 方向键快捷键与鼠标滚轮共享滚动窗�
 
 	assert.deepEqual(harness.input("\x1b[1;6A"), [{ consume: true }]);
 	assert.deepEqual(harness.input("\x1b[<65;1;1M"), [{ consume: true }]);
+	await new Promise((resolve) => setTimeout(resolve, 12));
 	assert.deepEqual(harness.tui.render(20), ["root-6", "root-7", "root-8", "root-9", "root-10", "root-11", "root-12", "root-13"]);
 
 	assert.deepEqual(harness.input("\x1b[1;6B"), [{ consume: true }]);
 	assert.deepEqual(harness.input("\x1b[<64;1;1M"), [{ consume: true }]);
+	await new Promise((resolve) => setTimeout(resolve, 12));
 	assert.deepEqual(harness.tui.render(20), ["root-10", "root-11", "root-12", "root-13", "root-14", "root-15", "root-16", "root-17"]);
 });
 
@@ -340,6 +489,18 @@ test("overlay 可见时滚动快捷键不消费，dispose 后移除 input listen
 	assert.deepEqual(harness.input("\x1b[5~"), [undefined]);
 	harness.compositor.dispose();
 	assert.equal(harness.getInputListenerCount(), 0);
+});
+
+test("requestRepaint 只重绘底部 cluster，不重复渲染上方聊天区", () => {
+	const harness = createHarness();
+	harness.compositor.install();
+	harness.tui.render(20);
+	const renderCount = harness.renderCalls.length;
+
+	harness.compositor.requestRepaint();
+
+	assert.equal(harness.renderCalls.length, renderCount);
+	assert.ok(harness.writes.at(-1)?.includes("editor"));
 });
 
 test("install 后替换 tui.render 和 tui.doRender，并在 dispose 后恢复", () => {

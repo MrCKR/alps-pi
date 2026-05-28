@@ -54,8 +54,8 @@ export type BottomInputRuntime = {
 	setLiveUsage(usage: unknown): void;
 	/** message_end/turn_end：退出 streaming 并清理 live usage。 */
 	clearLiveUsage(): void;
-	/** 请求 fixed cluster 重绘。 */
-	requestRender(): void;
+	/** 请求 fixed cluster 重绘；默认只重绘底部区域，避免整屏卡顿。 */
+	requestRender(options?: { full?: boolean }): void;
 	/** Alt+S 暂存/恢复当前 editor 文本。 */
 	stashOrRestoreEditorText(ctx?: any): void;
 	/** 复制当前 editor 文本。 */
@@ -139,6 +139,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	private timer: ReturnType<typeof setInterval> | null = null;
 	private renderTimer: ReturnType<typeof setTimeout> | null = null;
 	private renderPending = false;
+	private renderPendingFull = false;
 	private cachedLayout: { key: string; expiresAt: number; result: { topLines: string[]; secondaryLines: string[]; lastPromptLines: string[] } } | null = null;
 	private stashedEditorText: string | null = null;
 	private liveUsage: AssistantUsage | null = null;
@@ -160,7 +161,8 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 
 	/** 保存当前 session context；若之前已有安装，先清理旧 session 资源。 */
 	bindSession(ctx: any): void {
-		if (this.ctx && this.ctx !== ctx && (this.installed || this.layoutInstalled)) {
+		const sameUiSession = this.ctx?.ui && ctx?.ui && this.ctx.ui === ctx.ui;
+		if (this.ctx && this.ctx !== ctx && !sameUiSession && (this.installed || this.layoutInstalled)) {
 			this.disable();
 		}
 		if (!this.ctx && ctx) {
@@ -198,7 +200,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	setBottomStatusEnabled(enabled: boolean): void {
 		this.bottomStatusEnabled = enabled;
 		this.resetLayoutCache();
-		this.requestRender();
+		this.requestRender({ full: true });
 	}
 
 	setEnabledStatus(enabled: boolean): void {
@@ -246,17 +248,21 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		this.requestRender();
 	}
 
-	requestRender(): void {
+	requestRender(options: { full?: boolean } = {}): void {
 		if (!this.enabled || (!this.installed && !this.layoutInstalled)) return;
+		if (options.full) this.renderPendingFull = true;
 		if (this.renderPending) return;
 		this.renderPending = true;
 		this.renderTimer = setTimeout(() => {
+			const shouldRenderFull = this.renderPendingFull;
 			this.renderPending = false;
+			this.renderPendingFull = false;
 			this.renderTimer = null;
-			this.compositor?.requestRepaint();
-			if (typeof this.tui?.requestRender === "function") {
+			if (shouldRenderFull && typeof this.tui?.requestRender === "function") {
 				this.tui.requestRender();
+				return;
 			}
+			this.compositor?.requestRepaint();
 		}, STATUS_RENDER_DEBOUNCE_MS);
 		this.renderTimer.unref?.();
 	}
@@ -425,7 +431,10 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 			}
 
 			const unsubscribeBranch = typeof footerData?.onBranchChange === "function"
-				? footerData.onBranchChange(() => this.requestRender())
+				? footerData.onBranchChange(() => {
+					this.resetLayoutCache();
+					this.requestRender();
+				})
 				: undefined;
 			const footer = {
 				dispose: () => {
@@ -504,8 +513,16 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	}
 
 	private getStatusLayout(width: number): { topLines: string[]; secondaryLines: string[]; lastPromptLines: string[] } {
-		const theme = this.theme ?? this.ctx?.ui?.theme ?? FALLBACK_EDITOR_THEME;
+		if (!this.bottomStatusEnabled) {
+			return createEmptyStatusLayout();
+		}
+
 		const now = this.now();
+		if (this.cachedLayout && this.cachedLayout.expiresAt > now) {
+			return cloneStatusLayout(this.cachedLayout.result);
+		}
+
+		const theme = this.theme ?? this.ctx?.ui?.theme ?? FALLBACK_EDITOR_THEME;
 		const result = renderBottomInputStatus({
 			ctx: this.ctx,
 			footerData: this.footerData,
@@ -522,16 +539,13 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 			icons: getBottomInputIcons(),
 		});
 		const ttl = this.isStreaming ? STREAMING_LAYOUT_CACHE_TTL_MS : LAYOUT_CACHE_TTL_MS;
-		if (this.cachedLayout && this.cachedLayout.key === result.cacheKey && this.cachedLayout.expiresAt > now) {
-			return this.cachedLayout.result;
-		}
 		const layout = {
-			topLines: result.topLines,
-			secondaryLines: result.secondaryLines,
-			lastPromptLines: result.lastPromptLines,
+			topLines: [...result.topLines],
+			secondaryLines: [...result.secondaryLines],
+			lastPromptLines: [...result.lastPromptLines],
 		};
 		this.cachedLayout = { key: result.cacheKey, expiresAt: now + ttl, result: layout };
-		return layout;
+		return cloneStatusLayout(layout);
 	}
 
 	private getTerminal(tui: any): FixedEditorTerminal {
@@ -704,6 +718,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		clearTimeout(this.renderTimer);
 		this.renderTimer = null;
 		this.renderPending = false;
+		this.renderPendingFull = false;
 	}
 
 	private resetLayoutCache(): void {
@@ -720,6 +735,20 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 type JumpAction =
 	| { kind: "message"; role: "user" | "assistant"; direction: "previous" | "next" }
 	| { kind: "bottom" };
+
+type StatusLayout = { topLines: string[]; secondaryLines: string[]; lastPromptLines: string[] };
+
+function createEmptyStatusLayout(): StatusLayout {
+	return { topLines: [], secondaryLines: [], lastPromptLines: [] };
+}
+
+function cloneStatusLayout(layout: StatusLayout): StatusLayout {
+	return {
+		topLines: [...layout.topLines],
+		secondaryLines: [...layout.secondaryLines],
+		lastPromptLines: [...layout.lastPromptLines],
+	};
+}
 
 /** 创建 Pi 编辑器实例，CustomEditor 不可用时使用 pi-tui Editor 作为最小回退。 */
 function createEditor(tui: any, theme: any, keybindings: any): any {

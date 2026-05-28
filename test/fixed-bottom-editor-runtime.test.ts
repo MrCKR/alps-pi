@@ -422,3 +422,43 @@ test("dispose 幂等并清理 session 引用", () => {
 	assert.equal(status.installed, false);
 	assert.match(status.failure ?? "", /bound UI session/);
 });
+
+test("full render 请求会升级已排队的普通 repaint", async () => {
+	const harness = createCtx({ autoInstantiate: true });
+	let repaintCalls = 0;
+	const runtime = createFixedBottomEditorRuntime({
+		createCompositor() {
+			return {
+				install() {},
+				dispose() {},
+				hideRenderable() {},
+				renderHidden() {
+					return [];
+				},
+				requestRepaint() {
+					repaintCalls += 1;
+				},
+				setKeyboardScrollShortcuts() {},
+				jumpToPreviousRootTarget() {
+					return false;
+				},
+				jumpToNextRootTarget() {
+					return false;
+				},
+				jumpToRootBottom() {
+					return false;
+				},
+			};
+		},
+	});
+	runtime.bindSession(harness.ctx);
+	runtime.setEnabled(true);
+	harness.tui.requestRenderCalls.length = 0;
+
+	runtime.requestRender();
+	runtime.setBottomStatusEnabled(true);
+	await new Promise((resolve) => setTimeout(resolve, 40));
+
+	assert.deepEqual(harness.tui.requestRenderCalls, [false]);
+	assert.equal(repaintCalls, 0);
+});
