@@ -316,6 +316,22 @@ test("原版 Super/Ctrl+Shift 方向键快捷键与鼠标滚轮共享滚动窗�
 	assert.deepEqual(harness.tui.render(20), ["root-10", "root-11", "root-12", "root-13", "root-14", "root-15", "root-16", "root-17"]);
 });
 
+test("安装后更新滚动快捷键立即生效", () => {
+	const rootLines = Array.from({ length: 20 }, (_, index) => `root-${index + 1}`);
+	const harness = createHarness({ rootLines });
+	harness.compositor.install();
+	harness.tui.render(20);
+
+	assert.deepEqual(harness.input("\x1b[1;9A"), [{ consume: true }]);
+	assert.deepEqual(harness.tui.render(20), ["root-3", "root-4", "root-5", "root-6", "root-7", "root-8", "root-9", "root-10"]);
+
+	harness.compositor.jumpToRootBottom();
+	harness.compositor.setKeyboardScrollShortcuts({ up: "ctrl+alt+u", down: "ctrl+alt+j" });
+	assert.deepEqual(harness.input("\x1b[1;9A"), [undefined]);
+	assert.deepEqual(harness.input("\x1b[117;7u"), [{ consume: true }]);
+	assert.deepEqual(harness.tui.render(20), ["root-3", "root-4", "root-5", "root-6", "root-7", "root-8", "root-9", "root-10"]);
+});
+
 test("overlay 可见时滚动快捷键不消费，dispose 后移除 input listener", () => {
 	const harness = createHarness({ overlay: true, rootLines: Array.from({ length: 20 }, (_, index) => `root-${index + 1}`) });
 	harness.compositor.install();

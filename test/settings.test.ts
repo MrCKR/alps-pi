@@ -23,6 +23,7 @@ test("cloneDefaultSettings 返回包含固定输入框和底部状态栏的新�
 	assert.notEqual(cloned.chromeFrame, DEFAULT_SETTINGS.chromeFrame);
 	assert.notEqual(cloned.fixedBottomEditor, DEFAULT_SETTINGS.fixedBottomEditor);
 	assert.notEqual(cloned.bottomStatus, DEFAULT_SETTINGS.bottomStatus);
+	assert.notEqual(cloned.shortcuts, DEFAULT_SETTINGS.shortcuts);
 	assert.deepEqual(cloned, {
 		chromeFrame: {
 			enabled: false,
@@ -35,6 +36,20 @@ test("cloneDefaultSettings 返回包含固定输入框和底部状态栏的新�
 		},
 		bottomStatus: {
 			enabled: false,
+		},
+		shortcuts: {
+			stashEditor: "alt+s",
+			copyEditor: "ctrl+alt+c",
+			cutEditor: "ctrl+alt+x",
+			scrollChatUp: "super+up",
+			scrollChatDown: "super+down",
+			editorStart: "super+shift+up",
+			editorEnd: "super+shift+down",
+			jumpPreviousUserMessage: "ctrl+shift+u",
+			jumpNextUserMessage: "ctrl+shift+i",
+			jumpPreviousAssistantMessage: "ctrl+alt+,",
+			jumpNextAssistantMessage: "ctrl+alt+.",
+			jumpChatBottom: "ctrl+shift+g",
 		},
 	});
 });
