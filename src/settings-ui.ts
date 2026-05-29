@@ -28,6 +28,21 @@ const ON = "ON";
 const OFF = "OFF";
 const CONFIGURE = "configure";
 
+const SHORTCUT_DESCRIPTIONS: Record<BottomInputShortcutKey, string> = {
+	stashEditor: "暂存或恢复当前输入框内容",
+	copyEditor: "复制当前输入框文本",
+	cutEditor: "剪切当前输入框文本",
+	scrollChatUp: "聊天区向上滚动",
+	scrollChatDown: "聊天区向下滚动",
+	editorStart: "移动光标到输入框开头",
+	editorEnd: "移动光标到输入框末尾",
+	jumpPreviousUserMessage: "跳到上一条用户消息",
+	jumpNextUserMessage: "跳到下一条用户消息",
+	jumpPreviousAssistantMessage: "跳到上一条助手消息",
+	jumpNextAssistantMessage: "跳到下一条助手消息",
+	jumpChatBottom: "回到聊天底部",
+};
+
 type MainSettingId =
 	| "chromeFrame.enabled"
 	| "chromeFrame.assistantFrame"
@@ -58,6 +73,18 @@ function createNativeSettingsListTheme(theme: ThemeLike): SettingsListTheme {
 		cursor: theme.fg("accent", "→ "),
 		hint: (text) => theme.fg("dim", text),
 	};
+}
+
+function withSettingsListHint(base: SettingsListTheme, hint: string): SettingsListTheme {
+	return {
+		...base,
+		// SettingsList 内置 hint 固定英文；这里统一为当前页面需要的一行英文操作说明。
+		hint: (text) => base.hint(text.includes("Enter") || text.includes("Type to search") ? `  ${hint}` : text),
+	};
+}
+
+function createSettingsListTheme(theme: ThemeLike, hint: string): SettingsListTheme {
+	return withSettingsListHint(createNativeSettingsListTheme(theme), hint);
 }
 
 function safeFg(theme: ThemeLike, token: string, text: string, fallback = "text"): string {
@@ -148,7 +175,7 @@ export class AlpsPiSettingsComponent extends Container {
 
 	constructor(theme: ThemeLike, done?: () => void, ops: SettingsPanelOps = {}) {
 		super();
-		this.listTheme = createNativeSettingsListTheme(theme);
+		this.listTheme = createSettingsListTheme(theme, "↑/↓ select · Enter/Space toggle · Esc/q close");
 		this.done = done;
 		this.ops = {
 			getState: ops.getState ?? getGlobalPatchState,
@@ -192,49 +219,49 @@ export class AlpsPiSettingsComponent extends Container {
 		return [
 			{
 				id: "chromeFrame.enabled",
-				label: "线框美化",
+				label: "Message Frame",
 				description: "控制消息、工具与 bash 外框",
 				currentValue: booleanLabel(settings.chromeFrame.enabled),
 				values: [ON, OFF],
 			},
 			{
 				id: "chromeFrame.assistantFrame",
-				label: "Assistant 正文线框",
+				label: "Assistant Frame",
 				description: "控制 assistant 正文回复是否包线框",
 				currentValue: booleanLabel(settings.chromeFrame.assistantFrame),
 				values: [ON, OFF],
 			},
 			{
 				id: "chromeFrame.toolCompactMode",
-				label: "Tool 极简模式",
+				label: "Compact Tools",
 				description: "未展开 tool 只显示第一条有效文本行",
 				currentValue: booleanLabel(settings.chromeFrame.toolCompactMode),
 				values: [ON, OFF],
 			},
 			{
 				id: "chromeFrame.compactEditTool",
-				label: "极简下收起 edit",
+				label: "Compact Edit",
 				description: "允许 edit tool 也按极简模式展示",
 				currentValue: booleanLabel(settings.chromeFrame.compactEditTool),
 				values: [ON, OFF],
 			},
 			{
 				id: "fixedBottomEditor.enabled",
-				label: "固定输入框",
+				label: "Fixed Input",
 				description: "控制底部固定编辑器 runtime",
 				currentValue: booleanLabel(settings.fixedBottomEditor.enabled),
 				values: [ON, OFF],
 			},
 			{
 				id: "beautifiedInput.enabled",
-				label: "美化输入框",
+				label: "Beautified Input",
 				description: "控制输入框线框与嵌入边框状态",
 				currentValue: booleanLabel(settings.beautifiedInput.enabled),
 				values: [ON, OFF],
 			},
 			{
 				id: "shortcuts",
-				label: "快捷键设置",
+				label: "Shortcuts",
 				description: "管理底部输入框快捷键",
 				currentValue: CONFIGURE,
 				submenu: (_currentValue, done) => new ShortcutSettingsSubmenu(this.ops, () => done(), this.listTheme),
@@ -336,13 +363,12 @@ class ShortcutSettingsSubmenu extends Container {
 		this.settingsList = new SettingsList(
 			this.createShortcutItems(),
 			SHORTCUT_MAX_VISIBLE,
-			listTheme,
+			withSettingsListHint(listTheme, "↑/↓ select · Enter capture · Backspace default · Esc back"),
 			(id) => this.startCapture(id as BottomInputShortcutKey),
 			onCancel,
 		);
 		this.addChild(this.settingsList);
 		this.addChild(this.message);
-		this.showHint();
 	}
 
 	handleInput(data: string): void {
@@ -360,10 +386,10 @@ class ShortcutSettingsSubmenu extends Container {
 			const key = this.getActiveCaptureKey();
 			const shortcut = shortcutFromRawInput(data);
 			if (!key || !shortcut) {
-				this.showMessage("无法识别这个快捷键");
+				this.showMessage("Unrecognized shortcut");
 				return;
 			}
-			if (this.applyShortcut(key, shortcut, "已保存")) {
+			if (this.applyShortcut(key, shortcut, "Saved")) {
 				this.closeActiveCapture();
 			}
 			return;
@@ -384,7 +410,7 @@ class ShortcutSettingsSubmenu extends Container {
 		return SHORTCUT_KEYS.map((key) => ({
 			id: key,
 			label: SHORTCUT_LABELS[key],
-			description: "Enter 捕获 · Backspace 默认 · Esc 返回",
+			description: SHORTCUT_DESCRIPTIONS[key],
 			currentValue: shortcuts[key],
 			submenu: (_currentValue, done) => {
 				this.startCapture(key);
@@ -394,7 +420,7 @@ class ShortcutSettingsSubmenu extends Container {
 	}
 
 	private startCapture(key: BottomInputShortcutKey): void {
-		this.showMessage(`正在设置：${SHORTCUT_LABELS[key]} · Esc 取消 · Backspace 默认`);
+		this.showMessage(`Editing: ${SHORTCUT_LABELS[key]} · Esc cancel · Backspace default`);
 	}
 
 	private restoreSelectedShortcutDefault(): boolean {
@@ -404,7 +430,7 @@ class ShortcutSettingsSubmenu extends Container {
 	}
 
 	private restoreShortcutDefault(key: BottomInputShortcutKey): boolean {
-		return this.applyShortcut(key, DEFAULT_BOTTOM_INPUT_SHORTCUTS[key], "已恢复默认");
+		return this.applyShortcut(key, DEFAULT_BOTTOM_INPUT_SHORTCUTS[key], "Restored default");
 	}
 
 	private applyShortcut(key: BottomInputShortcutKey, shortcut: string, successMessage: string): boolean {
@@ -438,10 +464,6 @@ class ShortcutSettingsSubmenu extends Container {
 		return isShortcutKey(item?.id) ? item.id : undefined;
 	}
 
-	private showHint(): void {
-		this.message.setText("Enter 捕获 · Backspace 默认 · Esc 返回");
-	}
-
 	private showMessage(text: string): void {
 		this.message.setText(text);
 	}
@@ -461,10 +483,9 @@ class ShortcutCaptureComponent implements Component {
 
 	render(_width: number): string[] {
 		return [
-			`正在设置：${SHORTCUT_LABELS[this.shortcutKey]}`,
+			`Editing: ${SHORTCUT_LABELS[this.shortcutKey]}`,
 			"",
-			"请按新的快捷键",
-			"Esc 取消 · Backspace 恢复默认",
+			"Press a new shortcut",
 		];
 	}
 
@@ -472,7 +493,7 @@ class ShortcutCaptureComponent implements Component {
 
 	handleInput(data: string): void {
 		if (matchesKey(data, Key.escape)) {
-			this.onMessage("已取消");
+			this.onMessage("Cancelled");
 			this.onDone();
 		}
 	}

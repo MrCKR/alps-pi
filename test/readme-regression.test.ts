@@ -14,20 +14,29 @@ test("README 说明固定输入框默认开启且设置持久化", async () => {
 	const readme = await readReadme();
 
 	assert.match(readme, /固定底部输入框默认开启/);
-	assert.match(readme, /固定输入框.*默认 ON/);
+	assert.match(readme, /Fixed Input\s+控制实验性底部固定编辑器 runtime，默认 ON/);
 	assert.match(readme, /设置会持久化/);
+});
+
+test("README 说明内置 alps 主题", async () => {
+	const readme = await readReadme();
+
+	assert.match(readme, /内置 `alps` 主题/);
+	assert.match(readme, /"theme": "alps"/);
+	assert.match(readme, /themes\/alps\.json/);
+	assert.match(readme, /themes\/LICENSE\.synthwave-84/);
 });
 
 test("README 说明设置面板项目", async () => {
 	const readme = await readReadme();
 
-	assert.match(readme, /线框美化\s+控制消息、工具与 bash 外框/);
-	assert.match(readme, /Assistant 正文线框\s+控制 assistant 正文回复是否包线框/);
-	assert.match(readme, /Tool 极简模式\s+未展开 tool 只显示第一条有效文本行，默认 ON/);
-	assert.match(readme, /极简下收起 edit\s+允许 edit tool 也按极简模式展示，默认 OFF/);
-	assert.match(readme, /固定输入框\s+控制实验性底部固定编辑器 runtime，默认 ON/);
-	assert.match(readme, /美化输入框\s+控制输入框线框与嵌入边框状态，默认 ON/);
-	assert.match(readme, /快捷键设置\s+管理底部输入框快捷键/);
+	assert.match(readme, /Message Frame\s+控制消息、工具与 bash 外框，默认 ON/);
+	assert.match(readme, /Assistant Frame\s+控制 assistant 正文回复是否包线框，默认 ON/);
+	assert.match(readme, /Compact Tools\s+未展开 tool 只显示第一条有效文本行，默认 ON/);
+	assert.match(readme, /Compact Edit\s+允许 edit tool 也按极简模式展示，默认 OFF/);
+	assert.match(readme, /Fixed Input\s+控制实验性底部固定编辑器 runtime，默认 ON/);
+	assert.match(readme, /Beautified Input\s+控制输入框线框与嵌入边框状态，默认 ON/);
+	assert.match(readme, /Shortcuts\s+管理底部输入框快捷键/);
 	assert.doesNotMatch(readme, /底部状态栏\s+显示模型/);
 });
 

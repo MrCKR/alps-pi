@@ -375,7 +375,7 @@ test("renderBottomInputEditorLines 美化普通 editor 且不保留原生上下�
 	assert.equal(lines.filter((line) => line === "────────────────────").length, 0);
 });
 
-test("美化输入框外框使用主题 borderAccent 纯色", () => {
+test("美化输入框外框使用主题 mdCode 纯色", () => {
 	const theme = createFakeTheme();
 	const lines = renderBeautifiedEditorFrame({
 		editorLines: ["> hello"],
@@ -384,10 +384,10 @@ test("美化输入框外框使用主题 borderAccent 纯色", () => {
 		status: { model: null, thinking: null, context: null, elapsed: null },
 	});
 
-	assert.match(lines[0], /\x1b\[38;5;12m╭/);
-	assert.match(lines[1], /\x1b\[38;5;12m│/);
-	assert.match(lines[2], /\x1b\[38;5;12m╰/);
-	assert.ok(theme.calls.some((call) => call.kind === "fg" && call.token === "borderAccent"));
+	assert.match(lines[0], /\x1b\[38;5;6m╭/);
+	assert.match(lines[1], /\x1b\[38;5;6m│/);
+	assert.match(lines[2], /\x1b\[38;5;6m╰/);
+	assert.ok(theme.calls.some((call) => call.kind === "fg" && call.token === "mdCode"));
 	assert.ok(lines.every((line) => visibleWidth(line) <= 24));
 });
 
@@ -409,8 +409,8 @@ test("美化 editor 使用 footer 捕获的完整主题渲染边框", () => {
 	harness.instantiateFooter({ terminal: { columns: 40, rows: 12, write() {} } }, footerTheme);
 	const lines = editor.render(24);
 
-	assert.match(lines[0], /\x1b\[38;5;12m╭/);
-	assert.ok(footerTheme.calls.some((call) => call.kind === "fg" && call.token === "borderAccent"));
+	assert.match(lines[0], /\x1b\[38;5;6m╭/);
+	assert.ok(footerTheme.calls.some((call) => call.kind === "fg" && call.token === "mdCode"));
 	assert.doesNotMatch(lines[0], /\x1b\[31m╭/);
 });
 
@@ -476,7 +476,7 @@ test("线框内容裁剪会重置未闭合 SGR，避免输入颜色污染右边�
 		status: { model: null, thinking: null, context: null, elapsed: null },
 	});
 
-	assert.match(framed[1], /\x1b\[31m[\s\S]*\x1b\[0m[\s\S]*\x1b\[38;5;12m│/);
+	assert.match(framed[1], /\x1b\[31m[\s\S]*\x1b\[0m[\s\S]*\x1b\[38;5;6m│/);
 	assert.ok(visibleWidth(framed[1]) <= 12);
 });
 

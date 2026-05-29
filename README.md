@@ -27,7 +27,7 @@ pi install git:https://github.com/MrCKR/alps-pi
 
 ## 这是什么
 
-`alps-pi` 是我的 pi 美化扩展。目前它会给 pi 内置的主要消息块加统一外框，让对话、工具调用和执行结果在终端里更容易区分；也提供默认开启的固定底部输入框和输入框线框美化。
+`alps-pi` 是我的 pi 美化扩展。目前它会给 pi 内置的主要消息块加统一外框，让对话、工具调用和执行结果在终端里更容易区分；也提供默认开启的固定底部输入框、输入框线框美化和内置 `alps` 主题。
 
 扩展特点：
 
@@ -36,6 +36,7 @@ pi install git:https://github.com/MrCKR/alps-pi
 - 美化输入框默认开启，会显示完整输入框线框，并把模型、thinking、上下文进度和耗时嵌入边框。
 - `/alps-pi` 设置会持久化到 Pi 原生 `~/.pi/agent/settings.json` 的 `"alps-pi"` 字段，`/reload` 或新会话后会按上次设置恢复。
 - `/alps-pi` 提供设置界面。
+- 内置 `alps` theme，基于 Synthwave '84 配色整理进本包。
 - 运行期 monkey patch 和固定输入框 runtime 可回滚。
 - 普通空消息不会渲染成空白框。
 - 消息正文不铺大面积背景色，只渲染边框、标题和正文颜色。
@@ -51,13 +52,13 @@ pi install git:https://github.com/MrCKR/alps-pi
 `/alps-pi` 设置界面目前保留六个开关和一个快捷键配置项：
 
 ```text
-线框美化              控制消息、工具与 bash 外框
-Assistant 正文线框    控制 assistant 正文回复是否包线框
-Tool 极简模式         未展开 tool 只显示第一条有效文本行，默认 ON
-极简下收起 edit       允许 edit tool 也按极简模式展示，默认 OFF
-固定输入框            控制实验性底部固定编辑器 runtime，默认 ON
-美化输入框            控制输入框线框与嵌入边框状态，默认 ON
-快捷键设置            管理底部输入框快捷键
+Message Frame       控制消息、工具与 bash 外框，默认 ON
+Assistant Frame     控制 assistant 正文回复是否包线框，默认 ON
+Compact Tools       未展开 tool 只显示第一条有效文本行，默认 ON
+Compact Edit        允许 edit tool 也按极简模式展示，默认 OFF
+Fixed Input         控制实验性底部固定编辑器 runtime，默认 ON
+Beautified Input    控制输入框线框与嵌入边框状态，默认 ON
+Shortcuts           管理底部输入框快捷键
 ```
 
 操作方式：
@@ -92,6 +93,24 @@ Esc/q 关闭
 开启 `固定输入框` 后，扩展会临时接管 editor/footer 和 terminal 绘制，以实现“聊天区在上方滚动、输入框固定在底部”。这属于实验性绘制接管。关闭开关或 `session_shutdown` 时会恢复 Pi 默认 editor/footer，并重置终端滚动区域和光标状态。
 
 开启 `美化输入框` 后，扩展会把 editor 包装成完整线框：顶部左侧显示模型与 thinking，顶部右侧显示 10 字符上下文进度和百分比/窗口，底部右侧显示本次对话耗时。extension statuses 与上一个问题保持在线框下方，不塞进边框。缺失的数据不会显示占位。`Alt+S` 对齐原版行为：有输入时暂存并清空输入框，输入框为空时恢复暂存内容。
+
+## 主题
+
+本包内置 `alps` 主题，随 `pi install git:https://github.com/MrCKR/alps-pi` 一起加载。安装并 `/reload` 后，可在 `/settings` 里选择 `alps`，或写入 Pi 设置：
+
+```json
+{
+  "theme": "alps"
+}
+```
+
+`alps` 主题位于：
+
+```text
+themes/alps.json
+```
+
+该主题基于 `pi-theme-synthwave-84` 的 MIT 授权配色整理并改名，授权文本保留在 `themes/LICENSE.synthwave-84`。
 
 ## 颜色控制
 

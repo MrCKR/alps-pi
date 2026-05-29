@@ -39,6 +39,48 @@ function isStaleCtxError(error: unknown): boolean {
 	return message.includes("extension ctx is stale") || message.includes("stale ctx");
 }
 
+function isEditorLike(component: any): boolean {
+	return Boolean(component)
+		&& typeof component.handleInput === "function"
+		&& typeof component.getText === "function"
+		&& typeof component.setText === "function";
+}
+
+function findCurrentEditorInTree(root: any, seen = new Set<any>()): any | undefined {
+	if (!root || typeof root !== "object" || seen.has(root)) return undefined;
+	seen.add(root);
+	if (isEditorLike(root)) return root;
+	const children = Array.isArray(root.children) ? root.children : [];
+	for (const child of children) {
+		const editor = findCurrentEditorInTree(child, seen);
+		if (editor) return editor;
+	}
+	return undefined;
+}
+
+function hasVisibleOverlay(tui: any): boolean {
+	try {
+		if (typeof tui?.hasOverlay === "function") return Boolean(tui.hasOverlay());
+		const stack = Array.isArray(tui?.overlayStack) ? tui.overlayStack : [];
+		return stack.some((entry: any) => entry?.hidden !== true && entry?.visible !== false);
+	} catch {
+		return false;
+	}
+}
+
+function restoreEditorFocusAfterSettings(tui: any): void {
+	try {
+		if (!tui || hasVisibleOverlay(tui)) return;
+		const editor = findCurrentEditorInTree(tui.editorContainer) ?? findCurrentEditorInTree({ children: tui.children });
+		if (!editor || typeof tui.setFocus !== "function") return;
+		// 设置页打开期间可能替换 editor；overlay 自带的 preFocus 会指向已移除的实例，这里显式拉回当前 editor。
+		tui.setFocus(editor);
+		if (typeof tui.requestRender === "function") tui.requestRender(true);
+	} catch {
+		// 焦点恢复是收尾动作，失败不能影响设置保存。
+	}
+}
+
 export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): void {
 	pi.registerCommand("alps-pi", {
 		description: "打开 Alps Pi 美化设置",
@@ -83,6 +125,7 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 					};
 					try {
 						const fallbackTheme = ui.theme ?? getRuntimeTheme();
+						let settingsTui: any;
 						let overlayHandle: { focus?: () => void } | undefined;
 						const refocusSettingsOverlay = () => {
 							if (!overlayHandle) return;
@@ -94,39 +137,43 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 								}
 							});
 						};
-						await ui.custom((_tui: any, theme: any, _keybindings: any, done: () => void) => createSettingsComponent(theme ?? fallbackTheme, done, {
-							getState: getGlobalPatchState,
-							disableChromeFrame: () => runIfActive(() => {
-								const result = disableFn();
-								onSettingsChanged(result.config.settings, ctx);
-								return result;
-							}) ?? getGlobalPatchState(),
-							enableChromeFrame: () => runIfActive(() => {
-								const result = enableFn();
-								onSettingsChanged(result.config.settings, ctx);
-								return result;
-							}) ?? getGlobalPatchState(),
-							setFixedBottomEditorEnabled: (enabled) => {
-								// 固定输入框依赖当前 interactive session；ctx stale 时当前设置面板回调失效。
-								const result = runIfActive(() => setFixedEnabled(enabled, ctx));
-								refocusSettingsOverlay();
-								return result;
-							},
-							setBeautifiedInputEnabled: (enabled) => {
-								runIfActive(() => setBeautifiedInputEnabled(enabled, ctx));
-								refocusSettingsOverlay();
-							},
-							onSettingsChanged: (settings) => {
-								runIfActive(() => onSettingsChanged(settings, ctx));
-								refocusSettingsOverlay();
-							},
-						}), {
+						await ui.custom((tui: any, theme: any, _keybindings: any, done: () => void) => {
+							settingsTui = tui;
+							return createSettingsComponent(theme ?? fallbackTheme, done, {
+								getState: getGlobalPatchState,
+								disableChromeFrame: () => runIfActive(() => {
+									const result = disableFn();
+									onSettingsChanged(result.config.settings, ctx);
+									return result;
+								}) ?? getGlobalPatchState(),
+								enableChromeFrame: () => runIfActive(() => {
+									const result = enableFn();
+									onSettingsChanged(result.config.settings, ctx);
+									return result;
+								}) ?? getGlobalPatchState(),
+								setFixedBottomEditorEnabled: (enabled) => {
+									// 固定输入框依赖当前 interactive session；ctx stale 时当前设置面板回调失效。
+									const result = runIfActive(() => setFixedEnabled(enabled, ctx));
+									refocusSettingsOverlay();
+									return result;
+								},
+								setBeautifiedInputEnabled: (enabled) => {
+									runIfActive(() => setBeautifiedInputEnabled(enabled, ctx));
+									refocusSettingsOverlay();
+								},
+								onSettingsChanged: (settings) => {
+									runIfActive(() => onSettingsChanged(settings, ctx));
+									refocusSettingsOverlay();
+								},
+							});
+						}, {
 							overlay: true,
 							overlayOptions: { anchor: "center", width: "90%", minWidth: 56, maxHeight: "80%", margin: 1 },
 							onHandle: (handle: { focus?: () => void }) => {
 								overlayHandle = handle;
 							},
 						});
+						restoreEditorFocusAfterSettings(settingsTui);
 					} catch (error) {
 						const message = error instanceof Error ? error.message : String(error);
 						notify(ctx, `Settings failed: ${message}`, "error");

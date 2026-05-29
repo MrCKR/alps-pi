@@ -38,18 +38,18 @@ export const DEFAULT_BOTTOM_INPUT_SHORTCUTS: BottomInputShortcuts = {
 };
 
 export const SHORTCUT_LABELS: Record<BottomInputShortcutKey, string> = {
-	stashEditor: "Alt+S 暂存/恢复",
-	copyEditor: "复制输入框",
-	cutEditor: "剪切输入框",
-	scrollChatUp: "聊天上滚",
-	scrollChatDown: "聊天下滚",
-	editorStart: "编辑器到开头",
-	editorEnd: "编辑器到末尾",
-	jumpPreviousUserMessage: "上一条用户消息",
-	jumpNextUserMessage: "下一条用户消息",
-	jumpPreviousAssistantMessage: "上一条助手消息",
-	jumpNextAssistantMessage: "下一条助手消息",
-	jumpChatBottom: "回到底部",
+	stashEditor: "Stash Editor",
+	copyEditor: "Copy Editor",
+	cutEditor: "Cut Editor",
+	scrollChatUp: "Scroll Chat Up",
+	scrollChatDown: "Scroll Chat Down",
+	editorStart: "Move Cursor Start",
+	editorEnd: "Move Cursor End",
+	jumpPreviousUserMessage: "Previous User Message",
+	jumpNextUserMessage: "Next User Message",
+	jumpPreviousAssistantMessage: "Previous Assistant Msg",
+	jumpNextAssistantMessage: "Next Assistant Msg",
+	jumpChatBottom: "Chat Bottom",
 };
 
 export const SHORTCUT_KEYS = Object.keys(DEFAULT_BOTTOM_INPUT_SHORTCUTS) as BottomInputShortcutKey[];
@@ -200,18 +200,18 @@ export function validateShortcutChange(
 	candidate: string,
 ): ShortcutValidationResult {
 	const normalized = normalizeShortcut(candidate);
-	if (!normalized) return { ok: false, reason: "无法识别这个快捷键" };
+	if (!normalized) return { ok: false, reason: "Unrecognized shortcut" };
 	if (RESERVED_BOTTOM_INPUT_SHORTCUTS.has(shortcutConflictKey(normalized))) {
-		return { ok: false, reason: "这是 Pi 保留快捷键" };
+		return { ok: false, reason: "Reserved by Pi" };
 	}
 	if (shortcutUsesSuper(normalized) && !isSupportedSuperShortcut(normalized)) {
-		return { ok: false, reason: "当前只支持 Super/Command 方向键类快捷键" };
+		return { ok: false, reason: "Only Super/Command arrow shortcuts are supported" };
 	}
 	const conflictKey = shortcutConflictKey(normalized);
 	for (const otherKey of SHORTCUT_KEYS) {
 		if (otherKey === key) continue;
 		if (shortcutConflictKey(shortcuts[otherKey]) === conflictKey) {
-			return { ok: false, reason: `与「${SHORTCUT_LABELS[otherKey]}」冲突` };
+			return { ok: false, reason: `Conflicts with ${SHORTCUT_LABELS[otherKey]}` };
 		}
 	}
 	return { ok: true, shortcut: normalized };

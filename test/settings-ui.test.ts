@@ -42,28 +42,31 @@ function createPanel(options: { fixedResult?: { enabled: boolean; installed: boo
 	return { state, calls, fixedCalls, beautifiedInputCalls, component, isClosed: () => closed };
 }
 
-test("设置界面展示线框美化、正文线框、Tool 极简模式、edit 收起、固定输入框和美化输入框，并使用主题线框", () => {
+test("设置界面展示英文设置名、中文描述和主题线框", () => {
 	const { component } = createPanel();
 	const lines = component.render(80);
 	const plain = stripAnsi(lines.join("\n"));
-	assert.match(plain, /线框美化/);
-	assert.match(plain, /正文线框/);
-	assert.match(plain, /Tool 极简模式/);
-	assert.match(plain, /极简下收起 edit/);
-	assert.match(plain, /固定输入框/);
-	assert.match(plain, /美化输入框/);
+	assert.match(plain, /Message Frame/);
+	assert.match(plain, /Assistant Frame/);
+	assert.match(plain, /Compact Tools/);
+	assert.match(plain, /Compact Edit/);
+	assert.match(plain, /Fixed Input/);
+	assert.match(plain, /Beautified Input/);
+	assert.match(plain, /Shortcuts/);
+	assert.match(plain, /控制消息、工具与 bash 外框/);
 	assert.doesNotMatch(plain, /底部状态栏/);
-	assert.match(plain, /Tool 极简模式\s+ON/);
-	assert.match(plain, /极简下收起 edit\s+OFF/);
-	assert.match(plain, /固定输入框\s+ON/);
-	assert.match(plain, /美化输入框\s+ON/);
+	assert.match(plain, /Message Frame\s+ON/);
+	assert.match(plain, /Compact Tools\s+ON/);
+	assert.match(plain, /Compact Edit\s+OFF/);
+	assert.match(plain, /Fixed Input\s+ON/);
+	assert.match(plain, /Beautified Input\s+ON/);
 	assert.doesNotMatch(plain, /preview/i);
 	assert.doesNotMatch(plain, /Alps Pi 美化设置/);
 	assert.equal(stripAnsi(lines[0]!), `╭${"─".repeat(78)}╮`);
 	assert.equal(stripAnsi(lines.at(-1)!), `╰${"─".repeat(78)}╯`);
 	assert.ok(stripAnsi(lines.slice(1, -1).join("\n")).split("\n").every((line) => line.startsWith("│ ") && line.endsWith(" │")));
 	assert.match(plain, />/);
-	assert.match(plain, /Type to search · Enter\/Space to change · Esc to cancel/);
+	assert.match(plain, /↑\/↓ select · Enter\/Space toggle · Esc\/q close/);
 	assert.ok(lines.every((line) => visibleWidth(line) <= 80));
 	assert.match(lines[0]!, /\x1b\[38;5;12m╭/);
 	assert.match(lines.at(-1)!, /\x1b\[38;5;12m╰/);
@@ -71,13 +74,13 @@ test("设置界面展示线框美化、正文线框、Tool 极简模式、edit �
 
 test("设置界面可切换线框美化", () => {
 	const { state, calls, component } = createPanel();
+	assert.equal(state.config.settings.chromeFrame.enabled, true);
+	component.handleInput(" ");
 	assert.equal(state.config.settings.chromeFrame.enabled, false);
+	assert.deepEqual(calls, ["disable"]);
 	component.handleInput(" ");
 	assert.equal(state.config.settings.chromeFrame.enabled, true);
-	assert.deepEqual(calls, ["enable"]);
-	component.handleInput(" ");
-	assert.equal(state.config.settings.chromeFrame.enabled, false);
-	assert.deepEqual(calls, ["enable", "disable"]);
+	assert.deepEqual(calls, ["disable", "enable"]);
 });
 
 test("设置界面可切换正文线框并关闭", () => {
@@ -153,14 +156,14 @@ test("设置界面固定输入框启用失败时回滚 OFF", () => {
 
 	assert.equal(state.config.settings.fixedBottomEditor.enabled, false);
 	assert.deepEqual(fixedCalls, [true]);
-	assert.match(stripAnsi(component.render(80).join("\n")), /固定输入框\s+OFF/);
+	assert.match(stripAnsi(component.render(80).join("\n")), /Fixed Input\s+OFF/);
 });
 
 test("快捷键校验拒绝归一化后的 Pi 保留键", () => {
 	for (const shortcut of ["ctrl+shift+p", "shift+ctrl+p", "ctrl+shift+o", "shift+ctrl+o"]) {
 		const result = validateShortcutChange(DEFAULT_SETTINGS.shortcuts, "copyEditor", shortcut);
 		assert.equal(result.ok, false, shortcut);
-		if (!result.ok) assert.match(result.reason, /保留/);
+		if (!result.ok) assert.match(result.reason, /Reserved/);
 	}
 });
 
@@ -174,7 +177,7 @@ test("快捷键设置 Backspace 恢复默认会拒绝冲突", () => {
 	component.handleInput("\x7f");
 
 	assert.equal(state.config.settings.shortcuts.copyEditor, "ctrl+alt+g");
-	assert.match(stripAnsi(component.render(80).join("\n")), /冲突/);
+	assert.match(stripAnsi(component.render(80).join("\n")), /Conflicts/);
 });
 
 test("快捷键设置 Enter 捕获并保存新快捷键", () => {
@@ -185,7 +188,7 @@ test("快捷键设置 Enter 捕获并保存新快捷键", () => {
 
 	assert.equal(state.config.settings.shortcuts.stashEditor, "alt+g");
 	assert.match(stripAnsi(component.render(80).join("\n")), /alt\+g/);
-	assert.match(stripAnsi(component.render(80).join("\n")), /已保存/);
+	assert.match(stripAnsi(component.render(80).join("\n")), /Saved/);
 });
 
 test("快捷键设置捕获中 Esc 取消且不修改", () => {
@@ -195,7 +198,7 @@ test("快捷键设置捕获中 Esc 取消且不修改", () => {
 	component.handleInput("\x1b");
 
 	assert.equal(state.config.settings.shortcuts.stashEditor, DEFAULT_SETTINGS.shortcuts.stashEditor);
-	assert.match(stripAnsi(component.render(80).join("\n")), /已取消/);
+	assert.match(stripAnsi(component.render(80).join("\n")), /Cancelled/);
 });
 
 test("快捷键设置捕获中 Backspace 恢复默认", () => {
@@ -206,7 +209,7 @@ test("快捷键设置捕获中 Backspace 恢复默认", () => {
 	component.handleInput("\x7f");
 
 	assert.equal(state.config.settings.shortcuts.stashEditor, DEFAULT_SETTINGS.shortcuts.stashEditor);
-	assert.match(stripAnsi(component.render(80).join("\n")), /已恢复默认/);
+	assert.match(stripAnsi(component.render(80).join("\n")), /Restored default/);
 });
 
 test("快捷键设置捕获中拒绝保留键和冲突键", () => {
@@ -215,11 +218,11 @@ test("快捷键设置捕获中拒绝保留键和冲突键", () => {
 	component.handleInput("\r");
 	component.handleInput("\x1b[80;6u");
 	assert.equal(state.config.settings.shortcuts.stashEditor, DEFAULT_SETTINGS.shortcuts.stashEditor);
-	assert.match(stripAnsi(component.render(80).join("\n")), /保留/);
+	assert.match(stripAnsi(component.render(80).join("\n")), /Reserved/);
 
 	component.handleInput("\x1b[67;7u");
 	assert.equal(state.config.settings.shortcuts.stashEditor, DEFAULT_SETTINGS.shortcuts.stashEditor);
-	assert.match(stripAnsi(component.render(80).join("\n")), /冲突/);
+	assert.match(stripAnsi(component.render(80).join("\n")), /Conflicts/);
 });
 
 test("快捷键设置保存后关闭捕获并返回快捷键页", () => {
@@ -230,8 +233,8 @@ test("快捷键设置保存后关闭捕获并返回快捷键页", () => {
 	component.handleInput("\x1b");
 
 	assert.equal(state.config.settings.shortcuts.stashEditor, "alt+g");
-	assert.doesNotMatch(stripAnsi(component.render(80).join("\n")), /正在设置/);
-	assert.match(stripAnsi(component.render(80).join("\n")), /线框美化/);
+	assert.doesNotMatch(stripAnsi(component.render(80).join("\n")), /Editing:/);
+	assert.match(stripAnsi(component.render(80).join("\n")), /Message Frame/);
 });
 
 function openShortcutSettings(component: AlpsPiSettingsComponent): void {

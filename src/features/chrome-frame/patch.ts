@@ -170,13 +170,13 @@ function createTrackedObject<T extends object>(value: T, onChange: () => void): 
 	}) as T;
 }
 
-function normalizeSettings(settings: AlpsPiSettings | any, enabled: boolean): AlpsPiSettings {
+function normalizeSettings(settings: AlpsPiSettings | any, enabled?: boolean): AlpsPiSettings {
 	if (settings?.chromeFrame) {
 		return {
 			chromeFrame: {
 				...DEFAULT_CONFIG.settings.chromeFrame,
 				...settings.chromeFrame,
-				enabled,
+				enabled: typeof enabled === "boolean" ? enabled : Boolean(settings.chromeFrame.enabled ?? DEFAULT_CONFIG.settings.chromeFrame.enabled),
 			},
 			fixedBottomEditor: {
 				...DEFAULT_CONFIG.settings.fixedBottomEditor,
@@ -194,7 +194,7 @@ function normalizeSettings(settings: AlpsPiSettings | any, enabled: boolean): Al
 	}
 	return {
 		chromeFrame: {
-			enabled,
+			enabled: typeof enabled === "boolean" ? enabled : Boolean(settings?.enabled ?? DEFAULT_CONFIG.settings.chromeFrame.enabled),
 			assistantFrame: Boolean(settings?.assistantFrame ?? DEFAULT_CONFIG.settings.chromeFrame.assistantFrame),
 			toolCompactMode: Boolean(settings?.toolCompactMode ?? DEFAULT_CONFIG.settings.chromeFrame.toolCompactMode),
 			compactEditTool: Boolean(settings?.compactEditTool ?? DEFAULT_CONFIG.settings.chromeFrame.compactEditTool),
@@ -216,7 +216,7 @@ function syncChromeFrameEnabled(state: PatchState): void {
 	state.config.settings.chromeFrame.enabled = state.enabled;
 }
 
-function createTrackedSettings(settings: AlpsPiSettings, enabled: boolean, onChange: () => void): AlpsPiSettings {
+function createTrackedSettings(settings: AlpsPiSettings, onChange: () => void, enabled?: boolean): AlpsPiSettings {
 	const normalized = normalizeSettings(settings, enabled);
 	normalized.chromeFrame = createTrackedObject(normalized.chromeFrame, onChange);
 	normalized.fixedBottomEditor = createTrackedObject(normalized.fixedBottomEditor, onChange);
@@ -227,7 +227,7 @@ function createTrackedSettings(settings: AlpsPiSettings, enabled: boolean, onCha
 
 function ensurePatchStateConfigTracking(state: PatchState): PatchState {
 	if (typeof state.configVersion !== "number") state.configVersion = 0;
-	state.config.settings = createTrackedSettings(state.config.settings, state.enabled, () => {
+	state.config.settings = createTrackedSettings(state.config.settings, () => {
 		state.configVersion += 1;
 	});
 	return state;
@@ -236,7 +236,7 @@ function ensurePatchStateConfigTracking(state: PatchState): PatchState {
 function createPatchConfig(state: Pick<PatchState, "configVersion" | "enabled">): ChromeConfig {
 	return {
 		...DEFAULT_CONFIG,
-		settings: createTrackedSettings(cloneDefaultSettings(), state.enabled, () => {
+		settings: createTrackedSettings(cloneDefaultSettings(), () => {
 			state.configVersion += 1;
 		}),
 		styles: DEFAULT_CONFIG.styles,

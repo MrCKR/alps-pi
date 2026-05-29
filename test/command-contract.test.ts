@@ -11,7 +11,9 @@ function createHarness(options: { fixedFailure?: string } = {}) {
 	const customCalls: any[] = [];
 	const customErrors: Error[] = [];
 	const overlayHandles: any[] = [];
-	let focusedComponent: any;
+	const currentEditor = { handleInput() {}, getText: () => "", setText() {} };
+	const previousEditor = { handleInput() {}, getText: () => "", setText() {} };
+	let focusedComponent: any = previousEditor;
 	let customResult: Promise<any> = Promise.resolve(undefined);
 	const patchCalls: string[] = [];
 	const fixedCalls: boolean[] = [];
@@ -45,8 +47,20 @@ function createHarness(options: { fixedFailure?: string } = {}) {
 				try {
 					const fakeTui: any = {
 						overlayStack: [],
+						editorContainer: { children: [currentEditor] },
+						children: [{ children: [currentEditor] }],
+						requestRenderCalls: [] as boolean[],
 						get focusedComponent() {
 							return focusedComponent;
+						},
+						setFocus(component: any) {
+							focusedComponent = component;
+						},
+						requestRender(force?: boolean) {
+							this.requestRenderCalls.push(Boolean(force));
+						},
+						hasOverlay() {
+							return this.overlayStack.some((entry: any) => entry?.hidden !== true);
 						},
 					};
 					const component = await factory(fakeTui, ctx.ui.theme, {}, done);
@@ -59,12 +73,18 @@ function createHarness(options: { fixedFailure?: string } = {}) {
 						},
 					};
 					if (options?.overlay) {
-						fakeTui.overlayStack.push({ component, preFocus: undefined });
+						fakeTui.overlayStack.push({ component, preFocus: previousEditor });
 						options?.onHandle?.(handle);
 						overlayHandles.push(handle);
 					}
 					customCalls.push({ factory, options, component, done, fakeTui });
-					return await customResult;
+					const result = await customResult;
+					if (options?.overlay) {
+						fakeTui.overlayStack.pop();
+						fakeTui.setFocus(previousEditor);
+						fakeTui.requestRender();
+					}
+					return result;
 				} catch (error) {
 					customErrors.push(error as Error);
 					throw error;
@@ -124,6 +144,9 @@ function createHarness(options: { fixedFailure?: string } = {}) {
 		fixedCalls,
 		beautifiedInputCalls,
 		settingsChangedCalls,
+		currentEditor,
+		previousEditor,
+		getFocusedComponent: () => focusedComponent,
 	};
 }
 
@@ -137,7 +160,7 @@ test("注册 /alps-pi 命令且描述为中文", () => {
 	assert.match(harness.commands.get("alps-pi").description, /打开 Alps Pi 美化设置/);
 });
 
-test("无参数打开 overlay 设置界面，可切换线框美化与正文线框", async () => {
+test("无参数打开 overlay 设置界面，可切换 Message Frame 与 Assistant Frame", async () => {
 	const harness = createHarness();
 	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
 	await Promise.resolve();
@@ -145,9 +168,9 @@ test("无参数打开 overlay 设置界面，可切换线框美化与正文线�
 	assert.equal(harness.customCalls[0].options.overlay, true);
 	assert.equal(harness.customCalls[0].options.overlayOptions.anchor, "center");
 	const component = harness.customCalls[0].component;
-	assert.match(component.render(80).join("\n"), /线框美化/);
+	assert.match(component.render(80).join("\n"), /Message Frame/);
 	component.handleInput(" ");
-	assert.deepEqual(harness.patchCalls, ["enable"]);
+	assert.deepEqual(harness.patchCalls, ["disable"]);
 	component.handleInput("\x1b[B");
 	component.handleInput(" ");
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.chromeFrame.assistantFrame, false);
@@ -209,6 +232,27 @@ test("设置界面使用 overlay custom 并在切换后恢复 overlay 焦点", a
 	await pending;
 });
 
+test("设置页关闭后显式恢复当前 editor 焦点，避免回到已替换实例", async () => {
+	const harness = createHarness();
+	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
+	await Promise.resolve();
+	const component = harness.customCalls[0].component;
+
+	component.handleInput("\x1b[B");
+	component.handleInput("\x1b[B");
+	component.handleInput("\x1b[B");
+	component.handleInput("\x1b[B");
+	component.handleInput(" ");
+	component.handleInput("\x1b[B");
+	component.handleInput(" ");
+	component.handleInput("q");
+	await pending;
+
+	assert.equal(harness.getFocusedComponent(), harness.currentEditor);
+	assert.deepEqual(harness.customCalls[0].fakeTui.requestRenderCalls.at(-2), false);
+	assert.deepEqual(harness.customCalls[0].fakeTui.requestRenderCalls.at(-1), true);
+});
+
 test("设置界面 fixed op 返回 failure 时回滚为 OFF", async () => {
 	const harness = createHarness({ fixedFailure: "boom" });
 	(globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled = false;
@@ -223,7 +267,7 @@ test("设置界面 fixed op 返回 failure 时回滚为 OFF", async () => {
 
 	assert.deepEqual(harness.fixedCalls, [true]);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, false);
-	assert.match(component.render(80).join("\n"), /固定输入框\s+OFF/);
+	assert.match(component.render(80).join("\n"), /Fixed Input\s+OFF/);
 	component.handleInput("q");
 	await pending;
 });

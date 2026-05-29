@@ -70,7 +70,7 @@ export type AlpsPiSettings = {
 
 export const DEFAULT_SETTINGS: AlpsPiSettings = {
 	chromeFrame: {
-		enabled: false,
+		enabled: true,
 		assistantFrame: true,
 		toolCompactMode: true,
 		compactEditTool: false,

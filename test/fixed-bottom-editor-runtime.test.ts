@@ -39,7 +39,7 @@ function createStaticContainer(prefix: string) {
 	};
 }
 
-function createCtx(options: { terminal?: any; autoInstantiate?: boolean; hasUI?: boolean; attachEditorContainer?: boolean; attachAdjacentContainers?: boolean } = {}) {
+function createCtx(options: { terminal?: any; autoInstantiate?: boolean; hasUI?: boolean; attachEditorContainer?: boolean; attachAdjacentContainers?: boolean; copySelection?: (text: string) => void; footerData?: any } = {}) {
 	const { tui, writes } = createTui({ terminal: options.terminal });
 	const calls: Array<{ type: "editor" | "footer"; value: any }> = [];
 	let editorFactory: any;
@@ -102,7 +102,7 @@ function createCtx(options: { terminal?: any; autoInstantiate?: boolean; hasUI?:
 					footerInstance.dispose();
 				}
 				footerFactory = factory;
-				footerInstance = factory && options.autoInstantiate ? factory(tui, undefined, {}) : undefined;
+				footerInstance = factory && options.autoInstantiate ? factory(tui, undefined, options.footerData ?? {}) : undefined;
 			},
 		},
 	};
@@ -129,8 +129,8 @@ function createCtx(options: { terminal?: any; autoInstantiate?: boolean; hasUI?:
 			editorContainer.addChild(editorInstance);
 			return editorInstance;
 		},
-		instantiateFooter() {
-			footerInstance = footerFactory(tui, undefined, {});
+		instantiateFooter(footerData: any = options.footerData ?? {}) {
+			footerInstance = footerFactory(tui, undefined, footerData);
 			return footerInstance;
 		},
 	};
@@ -297,6 +297,69 @@ test("fixed 模式下程序化写入 editor 也会主动请求底部重绘", asy
 
 	assert.equal(harness.getEditorInstance().getText(), "hello world");
 	assert.equal(getRepaintCalls(), 1);
+});
+
+test("copy/cut 异步完成晚于 dispose 时不会通知或改写旧 UI", async () => {
+	let resolveCopy: (() => void) | undefined;
+	const harness = createCtx({ autoInstantiate: true });
+	const runtime = createBottomInputRuntime({
+		copyToClipboard: () => new Promise<void>((resolve) => {
+			resolveCopy = resolve;
+		}),
+	});
+	runtime.bindSession(harness.ctx);
+	runtime.setBeautifiedInputEnabled?.(true);
+	harness.getEditorInstance().setText("hello");
+	runtime.copyEditorText?.(harness.ctx);
+	runtime.cutEditorText?.(harness.ctx);
+	runtime.dispose();
+
+	resolveCopy?.();
+	await Promise.resolve();
+
+	assert.deepEqual(harness.statusCalls, [{ key: "alps-pi-stash", value: undefined }]);
+	assert.equal(harness.getEditorInstance(), undefined);
+});
+
+test("cut 异步完成晚于 session 切换时不会清空新 editor", async () => {
+	let resolveCopy: (() => void) | undefined;
+	const oldHarness = createCtx({ autoInstantiate: true });
+	const newHarness = createCtx({ autoInstantiate: true });
+	const runtime = createBottomInputRuntime({
+		copyToClipboard: () => new Promise<void>((resolve) => {
+			resolveCopy = resolve;
+		}),
+	});
+	runtime.bindSession(oldHarness.ctx);
+	runtime.setBeautifiedInputEnabled?.(true);
+	oldHarness.getEditorInstance().setText("old text");
+	runtime.cutEditorText?.(oldHarness.ctx);
+	runtime.bindSession(newHarness.ctx);
+	runtime.setBeautifiedInputEnabled?.(true);
+	newHarness.getEditorInstance().setText("new text");
+
+	resolveCopy?.();
+	await Promise.resolve();
+
+	assert.equal(newHarness.getEditorInstance().getText(), "new text");
+});
+
+test("selection copy 异步完成晚于 session 切换时不会通知旧 ctx", async () => {
+	let resolveCopy: (() => void) | undefined;
+	const oldHarness = createCtx({ autoInstantiate: true });
+	const newHarness = createCtx({ autoInstantiate: true });
+	const { runtime, copySelection } = createCountingRuntimeWithClipboard(() => new Promise<void>((resolve) => {
+		resolveCopy = resolve;
+	}));
+	runtime.bindSession(oldHarness.ctx);
+	runtime.setEnabled(true);
+	copySelection("selected text");
+	runtime.bindSession(newHarness.ctx);
+
+	resolveCopy?.();
+	await Promise.resolve();
+
+	assert.deepEqual(oldHarness.statusCalls, [{ key: "alps-pi-stash", value: undefined }]);
 });
 
 test("beautified OFF 且 fixed OFF 时恢复原生 editor/footer", () => {
@@ -530,9 +593,16 @@ test("dispose 幂等并清理 session 引用", () => {
 });
 
 function createCountingRuntime() {
+	return createCountingRuntimeWithClipboard();
+}
+
+function createCountingRuntimeWithClipboard(copyToClipboard?: (text: string) => Promise<void> | void) {
 	let repaintCalls = 0;
+	let copySelection: ((text: string) => void) | undefined;
 	const runtime = createBottomInputRuntime({
-		createCompositor() {
+		copyToClipboard,
+		createCompositor(options) {
+			copySelection = options.onCopySelection;
 			return {
 				install() {},
 				dispose() {},
@@ -556,7 +626,7 @@ function createCountingRuntime() {
 			};
 		},
 	});
-	return { runtime, getRepaintCalls: () => repaintCalls };
+	return { runtime, getRepaintCalls: () => repaintCalls, copySelection: (text: string) => copySelection?.(text) };
 }
 
 
@@ -604,6 +674,23 @@ test("美化输入框切换只请求 bottom cluster repaint，不触发 full ren
 	await new Promise((resolve) => setTimeout(resolve, 40));
 
 	assert.deepEqual(harness.tui.requestRenderCalls, []);
+	assert.equal(getRepaintCalls(), 1);
+});
+
+test("同一 UI 的命令 ctx 切换设置后不会吞掉下一次输入 repaint", async () => {
+	const harness = createCtx({ autoInstantiate: true });
+	const { runtime, getRepaintCalls } = createCountingRuntime();
+	runtime.bindSession(harness.ctx);
+	runtime.setEnabled(true);
+	harness.tui.requestRenderCalls.length = 0;
+
+	const commandCtx = { hasUI: true, ui: harness.ctx.ui };
+	runtime.bindSession(commandCtx);
+	runtime.setBeautifiedInputEnabled?.(false);
+	harness.getEditorInstance().handleInput("a");
+	await new Promise((resolve) => setTimeout(resolve, 40));
+
+	assert.equal(harness.getEditorInstance().getText(), "a");
 	assert.equal(getRepaintCalls(), 1);
 });
 
@@ -667,4 +754,69 @@ test("失效 input listener 在重新 bind session 后不会消费输入", () =>
 
 	assert.equal(oldHarness.getRemovedInputListeners(), 1);
 	assert.equal(oldHandler?.("\u001bs"), undefined);
+});
+
+test("stale ctx 晚到不会覆盖当前 runtime session", () => {
+	const activeHarness = createCtx({ autoInstantiate: true });
+	const staleCtx: any = { hasUI: true };
+	Object.defineProperty(staleCtx, "ui", {
+		get() {
+			throw new Error("This extension ctx is stale after session replacement or reload");
+		},
+	});
+	const runtime = createBottomInputRuntime();
+	runtime.bindSession(activeHarness.ctx);
+	runtime.setBeautifiedInputEnabled?.(true);
+
+	runtime.bindSession(staleCtx);
+	runtime.setLastPrompt("仍应写入当前 session");
+	const footer = activeHarness.getFooterInstance();
+
+	assert.equal(runtime.getStatus().failure, undefined);
+	assert.deepEqual(footer.render(40).map(stripAnsi), [" ↳ 仍应写入当前 session"]);
+});
+
+test("restoreDefaultLayout 遇到 stale UI 清理错误不污染 failure", () => {
+	const harness = createCtx({ autoInstantiate: true });
+	const runtime = createBottomInputRuntime();
+	runtime.bindSession(harness.ctx);
+	runtime.setBeautifiedInputEnabled?.(true);
+	harness.ctx.ui.setEditorComponent = () => {
+		throw new Error("This extension ctx is stale after session replacement or reload");
+	};
+	harness.ctx.ui.setFooter = () => {
+		throw new Error("stale ctx");
+	};
+	harness.ctx.ui.setStatus = () => {
+		throw new Error("stale ctx");
+	};
+
+	runtime.setBeautifiedInputEnabled?.(false);
+
+	assert.equal(runtime.getStatus().failure, undefined);
+	assert.equal(runtime.getStatus().enabled, false);
+	assert.equal(runtime.getStatus().installed, false);
+});
+
+test("footer branch callback 在 session 切换后不会触发旧 runtime repaint", () => {
+	let branchHandler: (() => void) | undefined;
+	const oldHarness = createCtx({
+		autoInstantiate: true,
+		footerData: {
+			onBranchChange(handler: () => void) {
+				branchHandler = handler;
+				return () => {};
+			},
+		},
+	});
+	const newHarness = createCtx({ autoInstantiate: true });
+	const runtime = createBottomInputRuntime();
+	runtime.bindSession(oldHarness.ctx);
+	runtime.setBeautifiedInputEnabled?.(true);
+	oldHarness.tui.requestRenderCalls.length = 0;
+
+	runtime.bindSession(newHarness.ctx);
+	branchHandler?.();
+
+	assert.deepEqual(oldHarness.tui.requestRenderCalls, []);
 });

@@ -207,7 +207,7 @@ function joinStyledSegments(segments: Array<string | null>, separator: string): 
 }
 
 function styleBorder(theme: ThemeLike, text: string): string {
-	return safeFg(theme, "borderAccent", text, "border");
+	return safeFg(theme, "mdCode", text, "border");
 }
 
 function safeFg(theme: ThemeLike, token: string, text: string, fallback = "text"): string {
