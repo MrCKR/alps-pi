@@ -173,7 +173,6 @@ function createTrackedObject<T extends object>(value: T, onChange: () => void): 
 function normalizeSettings(settings: AlpsPiSettings | any, enabled: boolean): AlpsPiSettings {
 	if (settings?.chromeFrame) {
 		return {
-			...settings,
 			chromeFrame: {
 				...DEFAULT_CONFIG.settings.chromeFrame,
 				...settings.chromeFrame,
@@ -183,9 +182,10 @@ function normalizeSettings(settings: AlpsPiSettings | any, enabled: boolean): Al
 				...DEFAULT_CONFIG.settings.fixedBottomEditor,
 				...(settings.fixedBottomEditor ?? {}),
 			},
-			bottomStatus: {
-				...DEFAULT_CONFIG.settings.bottomStatus,
-				...(settings.bottomStatus ?? {}),
+			// bottomStatus 是旧字段，运行时配置只保留 beautifiedInput。
+			beautifiedInput: {
+				...DEFAULT_CONFIG.settings.beautifiedInput,
+				...(settings.beautifiedInput ?? {}),
 			},
 			shortcuts: {
 				...DEFAULT_CONFIG.settings.shortcuts,
@@ -203,8 +203,8 @@ function normalizeSettings(settings: AlpsPiSettings | any, enabled: boolean): Al
 		fixedBottomEditor: {
 			enabled: Boolean(settings?.fixedBottomEditor?.enabled ?? DEFAULT_CONFIG.settings.fixedBottomEditor.enabled),
 		},
-		bottomStatus: {
-			enabled: Boolean(settings?.bottomStatus?.enabled ?? DEFAULT_CONFIG.settings.bottomStatus.enabled),
+		beautifiedInput: {
+			enabled: Boolean(settings?.beautifiedInput?.enabled ?? DEFAULT_CONFIG.settings.beautifiedInput.enabled),
 		},
 		shortcuts: {
 			...DEFAULT_CONFIG.settings.shortcuts,
@@ -221,7 +221,7 @@ function createTrackedSettings(settings: AlpsPiSettings, enabled: boolean, onCha
 	const normalized = normalizeSettings(settings, enabled);
 	normalized.chromeFrame = createTrackedObject(normalized.chromeFrame, onChange);
 	normalized.fixedBottomEditor = createTrackedObject(normalized.fixedBottomEditor, onChange);
-	normalized.bottomStatus = createTrackedObject(normalized.bottomStatus, onChange);
+	normalized.beautifiedInput = createTrackedObject(normalized.beautifiedInput, onChange);
 	normalized.shortcuts = createTrackedObject(normalized.shortcuts, onChange);
 	return createTrackedObject(normalized, onChange);
 }

@@ -1,6 +1,6 @@
 /** 功能：提供 /alps-pi 官方 SettingsList 设置界面，集中管理功能开关与底部输入框快捷键 实现者：alps 实现日期：2026-05-28 */
 
-import { Container, Key, matchesKey, SettingsList, type Component, type SettingItem, type SettingsListTheme } from "@earendil-works/pi-tui";
+import { Container, Key, matchesKey, SettingsList, truncateToWidth, visibleWidth, type Component, type SettingItem, type SettingsListTheme } from "@earendil-works/pi-tui";
 import { type PatchState, disablePatch, enablePatch, getGlobalPatchState } from "./features/chrome-frame/index.ts";
 import type { AlpsPiSettings, FixedBottomEditorStatus } from "./settings.ts";
 import type { ThemeLike } from "./features/chrome-frame/styles.ts";
@@ -18,7 +18,7 @@ export type SettingsPanelOps = {
 	enableChromeFrame?: () => PatchState;
 	disableChromeFrame?: () => PatchState;
 	setFixedBottomEditorEnabled?: (enabled: boolean) => FixedBottomEditorStatus | void;
-	setBottomStatusEnabled?: (enabled: boolean) => void;
+	setBeautifiedInputEnabled?: (enabled: boolean) => void;
 	onSettingsChanged?: (settings: AlpsPiSettings) => void;
 };
 
@@ -34,7 +34,7 @@ type MainSettingId =
 	| "chromeFrame.toolCompactMode"
 	| "chromeFrame.compactEditTool"
 	| "fixedBottomEditor.enabled"
-	| "bottomStatus.enabled"
+	| "beautifiedInput.enabled"
 	| "shortcuts";
 
 function booleanLabel(value: boolean): string {
@@ -60,6 +60,18 @@ function createNativeSettingsListTheme(theme: ThemeLike): SettingsListTheme {
 	};
 }
 
+function safeFg(theme: ThemeLike, token: string, text: string, fallback = "text"): string {
+	try {
+		return theme.fg(token, text);
+	} catch {
+		try {
+			return theme.fg(fallback, text);
+		} catch {
+			return text;
+		}
+	}
+}
+
 function getSettingsListInternals(list: SettingsList): { items?: SettingItem[]; filteredItems?: SettingItem[]; selectedIndex?: number; submenuComponent?: Component | null; closeSubmenu?: () => void } {
 	// SettingsList 当前没有暴露 selected item/submenu 控制 API；所有内部访问集中在这里，避免散落到业务逻辑。
 	return list as any;
@@ -69,10 +81,6 @@ function resetSettingsListSelection(list: SettingsList): void {
 	const internals = getSettingsListInternals(list);
 	internals.selectedIndex = 0;
 	if (Array.isArray(internals.items)) internals.filteredItems = internals.items;
-}
-
-function findSettingsListItem(list: SettingsList, id: string): SettingItem | undefined {
-	return getSettingsListInternals(list).items?.find((candidate) => candidate.id === id);
 }
 
 function getSelectedSettingsListItem(list: SettingsList): SettingItem | undefined {
@@ -88,19 +96,46 @@ function closeSettingsListSubmenu(list: SettingsList): void {
 	getSettingsListInternals(list).closeSubmenu?.();
 }
 
-class DynamicSettingsBorder implements Component {
+class FramedSettingsPanel implements Component {
+	private readonly content: Component;
 	private readonly theme: ThemeLike;
 
-	constructor(theme: ThemeLike) {
+	constructor(content: Component, theme: ThemeLike) {
+		this.content = content;
 		this.theme = theme;
 	}
 
-	/** 按 Pi 原生 DynamicBorder 只渲染整宽横线，不绘制左右边框。 */
+	/** 将设置页包成完整线框，颜色跟随主题 borderAccent。 */
 	render(width: number): string[] {
-		return [this.theme.fg("border", "─".repeat(Math.max(1, width)))];
+		const safeWidth = Math.max(1, Math.floor(width));
+		if (safeWidth < 8) return this.content.render(safeWidth);
+		const innerWidth = Math.max(1, safeWidth - 4);
+		const contentLines = this.content.render(innerWidth);
+		return [
+			this.border("╭" + "─".repeat(Math.max(0, safeWidth - 2)) + "╮"),
+			...contentLines.map((line) => this.contentLine(line, safeWidth)),
+			this.border("╰" + "─".repeat(Math.max(0, safeWidth - 2)) + "╯"),
+		];
 	}
 
-	invalidate(): void {}
+	invalidate(): void {
+		this.content.invalidate?.();
+	}
+
+	handleInput(data: string): void {
+		this.content.handleInput?.(data);
+	}
+
+	private contentLine(line: string, width: number): string {
+		const innerWidth = Math.max(0, width - 4);
+		const clipped = truncateToWidth(line, innerWidth, "", false);
+		const padding = " ".repeat(Math.max(0, innerWidth - visibleWidth(clipped)));
+		return this.border("│") + " " + clipped + padding + " " + this.border("│");
+	}
+
+	private border(text: string): string {
+		return safeFg(this.theme, "borderAccent", text, "border");
+	}
 }
 
 /** 统一设置面板：使用 Pi 官方 SettingsList，避免 overlay 合成与手写列表输入处理。 */
@@ -120,7 +155,7 @@ export class AlpsPiSettingsComponent extends Container {
 			enableChromeFrame: ops.enableChromeFrame ?? (() => enablePatch()),
 			disableChromeFrame: ops.disableChromeFrame ?? (() => disablePatch()),
 			setFixedBottomEditorEnabled: ops.setFixedBottomEditorEnabled ?? (() => undefined),
-			setBottomStatusEnabled: ops.setBottomStatusEnabled ?? (() => undefined),
+			setBeautifiedInputEnabled: ops.setBeautifiedInputEnabled ?? (() => undefined),
 			onSettingsChanged: ops.onSettingsChanged ?? (() => undefined),
 		};
 
@@ -134,11 +169,8 @@ export class AlpsPiSettingsComponent extends Container {
 		);
 		// 官方 SettingsList 只在内部维护 item 状态；这里按当前运行时状态同步一次，避免测试或外部回调先改 state 后再打开 UI 时出现陈旧 currentValue。
 		this.syncAllMainValues();
-		this.refreshBottomStatusDescription();
 		resetSettingsListSelection(this.settingsList);
-		this.addChild(new DynamicSettingsBorder(theme));
-		this.addChild(this.settingsList);
-		this.addChild(new DynamicSettingsBorder(theme));
+		this.addChild(new FramedSettingsPanel(this.settingsList, theme));
 	}
 
 	/** 暴露内部列表，方便测试或未来接入更细粒度 focus。 */
@@ -194,10 +226,10 @@ export class AlpsPiSettingsComponent extends Container {
 				values: [ON, OFF],
 			},
 			{
-				id: "bottomStatus.enabled",
-				label: "底部状态栏",
-				description: settings.fixedBottomEditor.enabled ? "显示模型、thinking、上下文和耗时" : "需要先开启固定输入框",
-				currentValue: booleanLabel(settings.bottomStatus.enabled),
+				id: "beautifiedInput.enabled",
+				label: "美化输入框",
+				description: "控制输入框线框与嵌入边框状态",
+				currentValue: booleanLabel(settings.beautifiedInput.enabled),
 				values: [ON, OFF],
 			},
 			{
@@ -239,12 +271,12 @@ export class AlpsPiSettingsComponent extends Container {
 				const status = this.ops.setFixedBottomEditorEnabled(nextEnabled);
 				if (status) state.config.settings.fixedBottomEditor.enabled = status.enabled;
 				this.syncMainValue(id, state.config.settings.fixedBottomEditor.enabled);
-				this.refreshBottomStatusDescription();
 				return;
 			}
-			case "bottomStatus.enabled":
-				state.config.settings.bottomStatus.enabled = booleanValue(newValue);
-				this.ops.setBottomStatusEnabled(state.config.settings.bottomStatus.enabled);
+			case "beautifiedInput.enabled":
+				state.config.settings.beautifiedInput.enabled = booleanValue(newValue);
+				this.ops.setBeautifiedInputEnabled(state.config.settings.beautifiedInput.enabled);
+				this.syncMainValue(id, state.config.settings.beautifiedInput.enabled);
 				return;
 		}
 	}
@@ -256,18 +288,11 @@ export class AlpsPiSettingsComponent extends Container {
 		this.syncMainValue("chromeFrame.toolCompactMode", settings.chromeFrame.toolCompactMode);
 		this.syncMainValue("chromeFrame.compactEditTool", settings.chromeFrame.compactEditTool);
 		this.syncMainValue("fixedBottomEditor.enabled", settings.fixedBottomEditor.enabled);
-		this.syncMainValue("bottomStatus.enabled", settings.bottomStatus.enabled);
+		this.syncMainValue("beautifiedInput.enabled", settings.beautifiedInput.enabled);
 	}
 
 	private syncMainValue(id: MainSettingId, value: boolean): void {
 		this.settingsList.updateValue(id, booleanLabel(value));
-	}
-
-	private refreshBottomStatusDescription(): void {
-		const item = findSettingsListItem(this.settingsList, "bottomStatus.enabled");
-		if (item) {
-			item.description = this.ops.getState().config.settings.fixedBottomEditor.enabled ? "显示模型、thinking、上下文和耗时" : "需要先开启固定输入框";
-		}
 	}
 
 	private hasActiveSubmenu(): boolean {

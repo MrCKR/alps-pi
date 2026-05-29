@@ -29,11 +29,12 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 	state.config.settings.chromeFrame.toolCompactMode = persistedSettings.chromeFrame.toolCompactMode;
 	state.config.settings.chromeFrame.compactEditTool = persistedSettings.chromeFrame.compactEditTool;
 	state.config.settings.fixedBottomEditor.enabled = persistedSettings.fixedBottomEditor.enabled;
-	state.config.settings.bottomStatus.enabled = persistedSettings.bottomStatus.enabled;
+	state.config.settings.beautifiedInput.enabled = persistedSettings.beautifiedInput.enabled;
 	state.config.settings.shortcuts = { ...persistedSettings.shortcuts };
 	bottomInputRuntime.setShortcuts?.(state.config.settings.shortcuts);
+	bottomInputRuntime.setBeautifiedInputEnabled?.(state.config.settings.beautifiedInput.enabled);
 
-	// 消息线框按持久化设置启停；固定输入框和底部状态栏由 session_start 在 UI 可用后安装。
+	// 消息线框按持久化设置启停；固定输入框由 session_start 在 UI 可用后安装，美化输入框独立控制视觉。
 	if (state.config.settings.chromeFrame.enabled) {
 		enablePatch();
 	} else {
@@ -45,21 +46,25 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 			state.config.settings.fixedBottomEditor.enabled = enabled;
 			// 某些 /reload 路径不会重新触发 session_start；命令 ctx 是当前可交互 session 的最新来源。
 			bottomInputRuntime.bindSession(ctx);
-			const status = bottomInputRuntime.setEnabled(enabled);
+			const status = bottomInputRuntime.configure
+				? bottomInputRuntime.configure({
+					fixedEnabled: enabled,
+					beautifiedInputEnabled: state.config.settings.beautifiedInput.enabled,
+				})
+				: bottomInputRuntime.setEnabled(enabled);
+			if (!bottomInputRuntime.configure) bottomInputRuntime.setBeautifiedInputEnabled?.(state.config.settings.beautifiedInput.enabled);
 			state.config.settings.fixedBottomEditor.enabled = status.enabled;
-			bottomInputRuntime.setBottomStatusEnabled?.(state.config.settings.bottomStatus.enabled);
 			writePersistedSettings(state.config.settings);
 			return status;
 		},
-		setBottomStatusEnabled: (enabled, ctx) => {
+		setBeautifiedInputEnabled: (enabled, ctx) => {
 			const state = getGlobalPatchState();
-			state.config.settings.bottomStatus.enabled = enabled;
+			state.config.settings.beautifiedInput.enabled = enabled;
 			bottomInputRuntime.bindSession(ctx);
-			if (state.config.settings.fixedBottomEditor.enabled && !bottomInputRuntime.getStatus().installed) {
-				const status = bottomInputRuntime.setEnabled(true);
-				state.config.settings.fixedBottomEditor.enabled = status.enabled;
-			}
-			bottomInputRuntime.setBottomStatusEnabled?.(enabled);
+			bottomInputRuntime.configure?.({
+				fixedEnabled: state.config.settings.fixedBottomEditor.enabled,
+				beautifiedInputEnabled: enabled,
+			}) ?? bottomInputRuntime.setBeautifiedInputEnabled?.(enabled);
 			writePersistedSettings(state.config.settings);
 		},
 		onSettingsChanged: (settings) => {
@@ -76,13 +81,14 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 		bottomInputRuntime.setLastPrompt("");
 		bottomInputRuntime.setShortcuts?.(getGlobalPatchState().config.settings.shortcuts);
 		const state = getGlobalPatchState();
-		if (state.config.settings.fixedBottomEditor.enabled) {
-			const status = bottomInputRuntime.setEnabled(true);
-			state.config.settings.fixedBottomEditor.enabled = status.enabled;
-		} else {
-			bottomInputRuntime.setEnabled(false);
-		}
-		bottomInputRuntime.setBottomStatusEnabled?.(state.config.settings.bottomStatus.enabled);
+		const status = bottomInputRuntime.configure
+			? bottomInputRuntime.configure({
+				fixedEnabled: state.config.settings.fixedBottomEditor.enabled,
+				beautifiedInputEnabled: state.config.settings.beautifiedInput.enabled,
+			})
+			: bottomInputRuntime.setEnabled(state.config.settings.fixedBottomEditor.enabled);
+		if (!bottomInputRuntime.configure) bottomInputRuntime.setBeautifiedInputEnabled?.(state.config.settings.beautifiedInput.enabled);
+		state.config.settings.fixedBottomEditor.enabled = status.enabled;
 	});
 
 	pi.on("model_select", (_event: any, ctx: any) => {
@@ -130,7 +136,7 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 			state.config.settings.chromeFrame.toolCompactMode = persisted.chromeFrame.toolCompactMode;
 			state.config.settings.chromeFrame.compactEditTool = persisted.chromeFrame.compactEditTool;
 			state.config.settings.fixedBottomEditor.enabled = persisted.fixedBottomEditor.enabled;
-			state.config.settings.bottomStatus.enabled = persisted.bottomStatus.enabled;
+			state.config.settings.beautifiedInput.enabled = persisted.beautifiedInput.enabled;
 			state.config.settings.shortcuts = { ...persisted.shortcuts };
 			writePersistedSettings(state.config.settings);
 			disablePatch();

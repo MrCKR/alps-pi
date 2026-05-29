@@ -1,7 +1,6 @@
 /** 功能：统一 bottom-input runtime，独占 editor/footer 并组装 fixed cluster 实现者：alps 实现日期：2026-05-28 */
 
 import * as PiAgent from "@earendil-works/pi-coding-agent";
-import { Editor } from "@earendil-works/pi-tui";
 import type { FixedBottomEditorStatus } from "../../settings.ts";
 import { renderFixedEditorCluster } from "./cluster.ts";
 import {
@@ -24,7 +23,9 @@ import {
 	normalizePromptText,
 	renderBottomInputStatus,
 	type AssistantUsage,
+	type BottomInputFrameStatus,
 } from "./status.ts";
+import { createBottomInputEditor } from "./editor.ts";
 import { getBottomInputIcons } from "./icons.ts";
 
 export type { FixedBottomEditorStatus } from "../../settings.ts";
@@ -34,11 +35,15 @@ export type BottomInputRuntime = {
 	bindSession(ctx: any): void;
 	/** 启用或禁用 fixed editor 总开关。 */
 	setEnabled(enabled: boolean): FixedBottomEditorStatus;
+	/** 同步美化输入框与 fixed editor 两个独立开关。 */
+	configure?(settings: { fixedEnabled?: boolean; beautifiedInputEnabled?: boolean }): FixedBottomEditorStatus;
 	/** 释放所有运行时资源；重复调用安全。 */
 	dispose(): void;
 	/** 读取 fixed editor 状态快照。 */
 	getStatus(): FixedBottomEditorStatus;
-	/** 兼容旧 bottom status API；实际只切换内部状态行。 */
+	/** 切换输入框线框美化；兼容旧 bottom status API。 */
+	setBeautifiedInputEnabled?(enabled: boolean): void;
+	/** 兼容旧 bottom status API；映射到输入框线框美化。 */
 	setBottomStatusEnabled?(enabled: boolean): void;
 	/** 兼容旧 bottom status API。 */
 	setEnabledStatus?(enabled: boolean): void;
@@ -128,7 +133,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	private ui: RuntimeUI | undefined;
 	private generation = 0;
 	private enabled = false;
-	private bottomStatusEnabled = false;
+	private beautifiedInputEnabled = true;
 	private installed = false;
 	private failure: string | undefined;
 	private layoutInstalled = false;
@@ -139,13 +144,14 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	private footerData: any;
 	private footerDataRestore: (() => void) | null = null;
 	private theme: any;
+	private editorTheme: any;
 	private tui: any;
 	private removeInputListener: (() => void) | null = null;
 	private timer: ReturnType<typeof setInterval> | null = null;
 	private renderTimer: ReturnType<typeof setTimeout> | null = null;
 	private renderPending = false;
 	private renderPendingFull = false;
-	private cachedLayout: { key: string; expiresAt: number; result: { topLines: string[]; secondaryLines: string[]; lastPromptLines: string[] } } | null = null;
+	private cachedLayout: { key: string; expiresAt: number; result: { topLines: string[]; secondaryLines: string[]; lastPromptLines: string[]; frameStatus: BottomInputFrameStatus } } | null = null;
 	private stashedEditorText: string | null = null;
 	private liveUsage: AssistantUsage | null = null;
 	private latestAssistantUsage: AssistantUsage | null = null;
@@ -185,7 +191,15 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	}
 
 	setEnabled(enabled: boolean): FixedBottomEditorStatus {
-		return enabled ? this.enable() : this.disable();
+		return this.configure({ fixedEnabled: enabled });
+	}
+
+	configure(settings: { fixedEnabled?: boolean; beautifiedInputEnabled?: boolean }): FixedBottomEditorStatus {
+		if (typeof settings.beautifiedInputEnabled === "boolean") {
+			this.beautifiedInputEnabled = settings.beautifiedInputEnabled;
+		}
+		const fixedEnabled = settings.fixedEnabled ?? this.enabled;
+		return this.syncLayout(fixedEnabled, this.beautifiedInputEnabled);
 	}
 
 	dispose(): void {
@@ -199,6 +213,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		this.footerData = undefined;
 		this.tui = undefined;
 		this.theme = undefined;
+		this.editorTheme = undefined;
 		this.stashedEditorText = null;
 		this.liveUsage = null;
 		this.latestAssistantUsage = null;
@@ -211,14 +226,16 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		return this.toStatus();
 	}
 
+	setBeautifiedInputEnabled(enabled: boolean): void {
+		this.configure({ beautifiedInputEnabled: enabled });
+	}
+
 	setBottomStatusEnabled(enabled: boolean): void {
-		this.bottomStatusEnabled = enabled;
-		this.resetLayoutCache();
-		this.requestRender({ full: true });
+		this.setBeautifiedInputEnabled(enabled);
 	}
 
 	setEnabledStatus(enabled: boolean): void {
-		this.setBottomStatusEnabled(enabled);
+		this.setBeautifiedInputEnabled(enabled);
 	}
 
 	resetSessionStartTime(): void {
@@ -263,13 +280,13 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	}
 
 	requestRender(options: { full?: boolean } = {}): void {
-		if (!this.enabled || (!this.installed && !this.layoutInstalled)) return;
+		if (!this.layoutInstalled) return;
 		if (options.full) this.renderPendingFull = true;
 		if (this.renderPending) return;
 		const generation = this.generation;
 		this.renderPending = true;
 		this.renderTimer = setTimeout(() => {
-			if (generation !== this.generation || !this.enabled) {
+			if (generation !== this.generation || !this.layoutInstalled) {
 				this.renderPending = false;
 				this.renderPendingFull = false;
 				this.renderTimer = null;
@@ -279,11 +296,15 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 			this.renderPending = false;
 			this.renderPendingFull = false;
 			this.renderTimer = null;
-			if (shouldRenderFull && typeof this.tui?.requestRender === "function") {
-				this.tui.requestRender();
+			if (this.enabled && this.compositor) {
+				if (shouldRenderFull && typeof this.tui?.requestRender === "function") {
+					this.tui.requestRender();
+					return;
+				}
+				this.compositor.requestRepaint();
 				return;
 			}
-			this.compositor?.requestRepaint();
+			if (typeof this.tui?.requestRender === "function") this.tui.requestRender();
 		}, STATUS_RENDER_DEBOUNCE_MS);
 		this.renderTimer.unref?.();
 	}
@@ -347,47 +368,74 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		});
 	}
 
-	/** 启用 fixed editor layout；footer factory 拿到 tui/footerData 后才真正安装 compositor。 */
-	private enable(): FixedBottomEditorStatus {
-		if (this.installed || (this.enabled && this.layoutInstalled && !this.failure)) {
-			return this.toStatus();
-		}
+	/** 同步 editor layer 与 fixed compositor layer；两个开关互不隐式改写。 */
+	private syncLayout(fixedEnabled: boolean, beautifiedInputEnabled: boolean): FixedBottomEditorStatus {
+		this.enabled = fixedEnabled;
+		this.beautifiedInputEnabled = beautifiedInputEnabled;
+		this.resetLayoutCache();
+
+		const needsLayout = fixedEnabled || beautifiedInputEnabled;
+		if (!needsLayout) return this.disable();
 
 		const ui = this.getBoundUI();
 		if (!ui) {
-			return this.failClosed("bottom input requires a bound UI session");
+			if (fixedEnabled) return this.failClosed("bottom input requires a bound UI session");
+			this.enabled = false;
+			return this.toStatus();
 		}
 
 		try {
 			this.validateUI(ui);
-			this.enabled = true;
-			this.installed = false;
 			this.failure = undefined;
-			this.editorInstance = undefined;
-			this.footerComponent = undefined;
-			this.restoreFooterDataHook();
-			this.footerData = undefined;
-			this.resetLayoutCache();
+			if (!this.layoutInstalled) {
+				this.editorInstance = undefined;
+				this.footerComponent = undefined;
+				this.restoreFooterDataHook();
+				this.footerData = undefined;
+				ui.setEditorComponent!(this.createEditorFactory());
+				this.layoutInstalled = true;
+				this.installInputListener();
+				this.startClockTimer();
 
-			ui.setEditorComponent!(this.createEditorFactory());
-			this.layoutInstalled = true;
-			this.installInputListener();
-			this.startClockTimer();
-
-			this.creatingFooter = true;
-			try {
-				ui.setFooter!(this.createFooterFactory());
-			} finally {
-				this.creatingFooter = false;
+				this.creatingFooter = true;
+				try {
+					ui.setFooter!(this.createFooterFactory());
+				} finally {
+					this.creatingFooter = false;
+				}
+			} else if (fixedEnabled && this.tui && !this.installed) {
+				this.installCompositor(this.tui);
+			} else if (!fixedEnabled && this.installed) {
+				this.teardownCompositor();
+				this.installed = false;
+				revealFixedEditorContainers(this.tui);
+				if (!beautifiedInputEnabled) {
+					this.stopClockTimer();
+					this.stopRenderTimer();
+					this.removeInputListener?.();
+					this.removeInputListener = null;
+					this.restoreDefaultLayout();
+					this.layoutInstalled = false;
+					this.editorInstance = undefined;
+					this.footerComponent = undefined;
+					this.restoreFooterDataHook();
+					this.footerData = undefined;
+					this.tui = undefined;
+					this.theme = undefined;
+					this.editorTheme = undefined;
+				} else {
+					this.tui?.requestRender?.(true);
+				}
 			}
+			this.requestRender();
 			return this.toStatus();
 		} catch (error) {
 			this.creatingFooter = false;
-			return this.failClosed(formatFailure(error));
+			return fixedEnabled ? this.failClosed(formatFailure(error)) : this.disableWithFailure(formatFailure(error));
 		}
 	}
 
-	/** 禁用 fixed editor，恢复 Pi 默认 editor/footer 布局。 */
+	/** 禁用 fixed/editor layer，恢复 Pi 默认 editor/footer 布局。 */
 	private disable(): FixedBottomEditorStatus {
 		if (!this.enabled && !this.installed && !this.layoutInstalled && !this.failure) {
 			return this.toStatus();
@@ -409,6 +457,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		this.footerData = undefined;
 		this.tui = undefined;
 		this.theme = undefined;
+		this.editorTheme = undefined;
 		this.resetLayoutCache();
 		return this.toStatus();
 	}
@@ -428,7 +477,16 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 
 	private createEditorFactory(): (tui: any, theme: any, keybindings: any) => any {
 		return (tui: any, theme: any, keybindings: any) => {
-			const editor = createEditor(tui, theme, keybindings);
+			this.tui = tui;
+			this.editorTheme = theme ?? FALLBACK_EDITOR_THEME;
+			const editorStateOwner = this;
+			const editor = createBottomInputEditor(tui, this.editorTheme, keybindings, {
+				get beautifiedInputEnabled() {
+					return editorStateOwner.beautifiedInputEnabled;
+				},
+				getTheme: () => editorStateOwner.getRenderTheme(),
+				getFrameStatus: (width) => editorStateOwner.getStatusLayout(width).frameStatus,
+			});
 			this.editorInstance = editor;
 			this.patchEditorInput(editor);
 			return editor;
@@ -443,11 +501,13 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 			this.restoreFooterDataHook();
 			this.footerData = footerData;
 			this.installFooterStatusRepaintHook(footerData);
-			try {
-				this.installCompositor(tui);
-			} catch (error) {
-				if (this.creatingFooter) throw error;
-				this.failClosed(formatFailure(error));
+			if (this.enabled) {
+				try {
+					this.installCompositor(tui);
+				} catch (error) {
+					if (this.creatingFooter) throw error;
+					this.failClosed(formatFailure(error));
+				}
 			}
 
 			const unsubscribeBranch = typeof footerData?.onBranchChange === "function"
@@ -466,7 +526,12 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 					}
 				},
 				invalidate: () => this.requestRender(),
-				render: () => [],
+				/** fixed 关闭时，footer owner 负责保留下方 extension statuses 与 last prompt；fixed 开启时交给 cluster 渲染，避免双显。 */
+				render: (width: number) => {
+					if (this.enabled) return [];
+					const rendered = this.getStatusLayout(width);
+					return [...rendered.secondaryLines, ...rendered.lastPromptLines];
+				},
 			};
 			this.footerComponent = footer;
 			return footer;
@@ -523,8 +588,8 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		return renderFixedEditorCluster({
 			// 原生 working/status 始终位于主状态栏上方，避免插在 top 与 editor 之间。
 			statusLines: hiddenStatusLines,
-			topLines: [...hiddenAboveWidgetLines, ...rendered.topLines],
-			editorLines,
+			topLines: hiddenAboveWidgetLines,
+			editorLines: editorLines,
 			secondaryLines: [...hiddenBelowWidgetLines, ...rendered.secondaryLines],
 			lastPromptLines: rendered.lastPromptLines,
 			width,
@@ -532,23 +597,24 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		});
 	}
 
-	private getStatusLayout(width: number): { topLines: string[]; secondaryLines: string[]; lastPromptLines: string[] } {
-		if (!this.bottomStatusEnabled) {
-			return createEmptyStatusLayout();
-		}
+	private getRenderTheme(): any {
+		return this.theme ?? this.ui?.theme ?? this.ctx?.ui?.theme ?? FALLBACK_EDITOR_THEME;
+	}
 
+	private getStatusLayout(width: number): { topLines: string[]; secondaryLines: string[]; lastPromptLines: string[]; frameStatus: BottomInputFrameStatus } {
 		const now = this.now();
 		if (this.cachedLayout && this.cachedLayout.expiresAt > now) {
 			return cloneStatusLayout(this.cachedLayout.result);
 		}
 
-		const theme = this.theme ?? this.ui?.theme ?? FALLBACK_EDITOR_THEME;
-		const result = renderBottomInputStatus({
+		const theme = this.getRenderTheme();
+		const result = this.beautifiedInputEnabled ? renderBottomInputStatus({
 			ctx: this.ctx,
 			footerData: this.footerData,
 			theme,
 			width,
-			bottomStatusEnabled: this.bottomStatusEnabled,
+			bottomStatusEnabled: this.beautifiedInputEnabled,
+			beautifiedInputEnabled: this.beautifiedInputEnabled,
 			isStreaming: this.isStreaming,
 			liveUsage: this.liveUsage,
 			latestAssistantUsage: this.latestAssistantUsage,
@@ -557,12 +623,28 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 			now,
 			lastPrompt: this.lastPrompt,
 			icons: getBottomInputIcons(),
+		}) : renderBottomInputStatus({
+			ctx: undefined,
+			footerData: this.footerData,
+			theme,
+			width,
+			bottomStatusEnabled: false,
+			beautifiedInputEnabled: false,
+			isStreaming: false,
+			liveUsage: null,
+			latestAssistantUsage: null,
+			currentThinkingLevel: null,
+			sessionStartTime: this.sessionStartTime,
+			now,
+			lastPrompt: this.lastPrompt,
+			icons: { model: "", time: "◷" },
 		});
 		const ttl = this.isStreaming ? STREAMING_LAYOUT_CACHE_TTL_MS : LAYOUT_CACHE_TTL_MS;
 		const layout = {
 			topLines: [...result.topLines],
 			secondaryLines: [...result.secondaryLines],
 			lastPromptLines: [...result.lastPromptLines],
+			frameStatus: { ...result.frameStatus },
 		};
 		this.cachedLayout = { key: result.cacheKey, expiresAt: now + ttl, result: layout };
 		return cloneStatusLayout(layout);
@@ -578,11 +660,30 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 
 	private patchEditorInput(editor: any): void {
 		if (!editor || typeof editor.handleInput !== "function" || editor.__alpsBottomInputPatched) return;
+		const requestEditorRender = () => this.requestRender();
 		const originalHandleInput = editor.handleInput.bind(editor);
 		editor.handleInput = (data: string) => {
 			if (this.handleShortcutInput(data)) return;
 			originalHandleInput(data);
+			// fixed 模式下原 editor 容器被隐藏，外层 TUI 偶发不重绘时也要主动刷新底部 cluster。
+			requestEditorRender();
 		};
+		if (typeof editor.setText === "function") {
+			const originalSetText = editor.setText.bind(editor);
+			editor.setText = (text: string) => {
+				const result = originalSetText(text);
+				requestEditorRender();
+				return result;
+			};
+		}
+		if (typeof editor.insertTextAtCursor === "function") {
+			const originalInsertTextAtCursor = editor.insertTextAtCursor.bind(editor);
+			editor.insertTextAtCursor = (text: string) => {
+				const result = originalInsertTextAtCursor(text);
+				requestEditorRender();
+				return result;
+			};
+		}
 		editor.__alpsBottomInputPatched = true;
 	}
 
@@ -596,7 +697,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	}
 
 	private handleShortcutInput(data: string): boolean {
-		if (!this.enabled || hasOverlay(this.ctx, this.tui)) return false;
+		if ((!this.enabled && !this.beautifiedInputEnabled) || hasOverlay(this.ctx, this.tui)) return false;
 		if (isStashShortcutInput(data, this.shortcuts.stashEditor)) {
 			this.stashOrRestoreEditorText(this.ctx);
 			return true;
@@ -728,6 +829,12 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		return this.toStatus();
 	}
 
+	private disableWithFailure(reason: string): FixedBottomEditorStatus {
+		this.disable();
+		this.failure = reason;
+		return this.toStatus();
+	}
+
 	private startClockTimer(): void {
 		if (!this.startClock || this.timer) return;
 		const generation = this.generation;
@@ -767,10 +874,10 @@ type JumpAction =
 	| { kind: "message"; role: "user" | "assistant"; direction: "previous" | "next" }
 	| { kind: "bottom" };
 
-type StatusLayout = { topLines: string[]; secondaryLines: string[]; lastPromptLines: string[] };
+type StatusLayout = { topLines: string[]; secondaryLines: string[]; lastPromptLines: string[]; frameStatus: BottomInputFrameStatus };
 
 function createEmptyStatusLayout(): StatusLayout {
-	return { topLines: [], secondaryLines: [], lastPromptLines: [] };
+	return { topLines: [], secondaryLines: [], lastPromptLines: [], frameStatus: { model: null, thinking: null, context: null, elapsed: null } };
 }
 
 function cloneStatusLayout(layout: StatusLayout): StatusLayout {
@@ -778,15 +885,8 @@ function cloneStatusLayout(layout: StatusLayout): StatusLayout {
 		topLines: [...layout.topLines],
 		secondaryLines: [...layout.secondaryLines],
 		lastPromptLines: [...layout.lastPromptLines],
+		frameStatus: { ...layout.frameStatus },
 	};
-}
-
-/** 创建 Pi 编辑器实例，CustomEditor 不可用时使用 pi-tui Editor 作为最小回退。 */
-function createEditor(tui: any, theme: any, keybindings: any): any {
-	const CustomEditor = (PiAgent as { CustomEditor?: new (tui: any, theme: any, keybindings: any, options?: any) => any }).CustomEditor;
-	const editorTheme = theme ?? FALLBACK_EDITOR_THEME;
-	if (typeof CustomEditor === "function") return new CustomEditor(tui, editorTheme, keybindings, { paddingX: 0 });
-	return new Editor(tui, editorTheme, { paddingX: 0 });
 }
 
 /** 在 TUI 树中查找 editor 与其周边原生容器；这些容器都由唯一 footer owner 纳入 fixed cluster。 */
@@ -831,6 +931,16 @@ function renderHiddenLines(compositor: CompositorLike, containers: Array<FixedEd
 
 function hideRenderableIfPresent(compositor: CompositorLike, container: FixedEditorRenderable | null): void {
 	if (container) compositor.hideRenderable(container);
+}
+
+function revealFixedEditorContainers(tui: any): void {
+	for (const container of [tui?.statusContainer, tui?.widgetContainerAbove, tui?.editorContainer, tui?.widgetContainerBelow]) {
+		try {
+			if (container && typeof container.render === "function") delete container.render;
+		} catch {
+			// 容器可能来自第三方组件；恢复失败时交给后续 full render 自愈。
+		}
+	}
 }
 
 function asRenderable(value: unknown): FixedEditorRenderable | null {

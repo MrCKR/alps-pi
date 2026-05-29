@@ -15,7 +15,7 @@ function createHarness(options: { fixedFailure?: string } = {}) {
 	let customResult: Promise<any> = Promise.resolve(undefined);
 	const patchCalls: string[] = [];
 	const fixedCalls: boolean[] = [];
-	const bottomStatusCalls: boolean[] = [];
+	const beautifiedInputCalls: boolean[] = [];
 	const settingsChangedCalls: any[] = [];
 	let fixedInstalled = false;
 	const pi = {
@@ -101,15 +101,15 @@ function createHarness(options: { fixedFailure?: string } = {}) {
 			state.config.settings.fixedBottomEditor.enabled = enabled;
 			return { enabled, installed: fixedInstalled };
 		},
-		setBottomStatusEnabled: (enabled: boolean) => {
-			bottomStatusCalls.push(enabled);
-			(globalThis as any)[PATCH_KEY].config.settings.bottomStatus.enabled = enabled;
+		setBeautifiedInputEnabled: (enabled: boolean) => {
+			beautifiedInputCalls.push(enabled);
+			(globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled = enabled;
 		},
 		onSettingsChanged: (settings: any) => {
 			settingsChangedCalls.push({
 				chromeFrame: { ...settings.chromeFrame },
 				fixedBottomEditor: { ...settings.fixedBottomEditor },
-				bottomStatus: { ...settings.bottomStatus },
+				beautifiedInput: { ...settings.beautifiedInput },
 			});
 		},
 	});
@@ -122,7 +122,7 @@ function createHarness(options: { fixedFailure?: string } = {}) {
 		overlayHandles,
 		patchCalls,
 		fixedCalls,
-		bottomStatusCalls,
+		beautifiedInputCalls,
 		settingsChangedCalls,
 	};
 }
@@ -137,12 +137,13 @@ test("注册 /alps-pi 命令且描述为中文", () => {
 	assert.match(harness.commands.get("alps-pi").description, /打开 Alps Pi 美化设置/);
 });
 
-test("无参数打开设置界面，可切换线框美化与正文线框", async () => {
+test("无参数打开 overlay 设置界面，可切换线框美化与正文线框", async () => {
 	const harness = createHarness();
 	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
 	await Promise.resolve();
 	assert.equal(harness.customCalls.length, 1);
-	assert.equal(harness.customCalls[0].options, undefined);
+	assert.equal(harness.customCalls[0].options.overlay, true);
+	assert.equal(harness.customCalls[0].options.overlayOptions.anchor, "center");
 	const component = harness.customCalls[0].component;
 	assert.match(component.render(80).join("\n"), /线框美化/);
 	component.handleInput(" ");
@@ -172,7 +173,7 @@ test("设置界面切换固定输入框调用 fixed op 且不调用 message patc
 	await pending;
 });
 
-test("设置界面切换底部状态栏调用 bottom status op", async () => {
+test("设置界面切换美化输入框调用 beautified input op", async () => {
 	const harness = createHarness();
 	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
 	await Promise.resolve();
@@ -183,13 +184,13 @@ test("设置界面切换底部状态栏调用 bottom status op", async () => {
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput(" ");
-	assert.deepEqual(harness.bottomStatusCalls, [true]);
-	assert.equal((globalThis as any)[PATCH_KEY].config.settings.bottomStatus.enabled, true);
+	assert.deepEqual(harness.beautifiedInputCalls, [false]);
+	assert.equal((globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled, false);
 	component.handleInput("q");
 	await pending;
 });
 
-test("设置界面使用 non-overlay custom，不再注册 overlay handle 或焦点恢复 hack", async () => {
+test("设置界面使用 overlay custom 并在切换后恢复 overlay 焦点", async () => {
 	const harness = createHarness();
 	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
 	await Promise.resolve();
@@ -200,8 +201,10 @@ test("设置界面使用 non-overlay custom，不再注册 overlay handle 或焦
 	component.handleInput("\x1b[B");
 	component.handleInput(" ");
 
-	assert.equal(harness.customCalls[0].options, undefined);
-	assert.deepEqual(harness.overlayHandles, []);
+	assert.equal(harness.customCalls[0].options.overlay, true);
+	assert.equal(harness.overlayHandles.length, 1);
+	await Promise.resolve();
+	assert.equal(harness.overlayHandles[0].focusCalls, 1);
 	component.handleInput("q");
 	await pending;
 });
@@ -255,7 +258,7 @@ test("enable/disable/config/config-ui/settings/status 已移除并返回帮助",
 		await harness.commands.get("alps-pi").handler(action, harness.ctx);
 		assert.deepEqual(harness.patchCalls, []);
 		assert.deepEqual(harness.fixedCalls, []);
-		assert.deepEqual(harness.bottomStatusCalls, []);
+		assert.deepEqual(harness.beautifiedInputCalls, []);
 		assert.ok(harness.notifications.some((n) => /用法/.test(n.message) && /可选参数 preview/.test(n.message)), action);
 	}
 });

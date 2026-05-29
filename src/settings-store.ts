@@ -9,12 +9,12 @@ import { normalizeShortcut, shortcutConflictKey, shortcutUsesSuper, isSupportedS
 const SETTINGS_ENV = "ALPS_PI_SETTINGS_PATH";
 export const PI_SETTINGS_NAMESPACE = "alps-pi";
 
-/** 返回启动默认设置；消息线框与固定输入框默认开启，底部状态栏仍默认关闭。 */
+/** 返回启动默认设置；消息线框、固定输入框与美化输入框默认开启。 */
 export function cloneStartupSettings(): AlpsPiSettings {
 	const settings = cloneDefaultSettings();
 	settings.chromeFrame.enabled = true;
 	settings.fixedBottomEditor.enabled = true;
-	settings.bottomStatus.enabled = false;
+	settings.beautifiedInput.enabled = true;
 	return settings;
 }
 
@@ -84,7 +84,7 @@ export function cloneSettings(settings: AlpsPiSettings): AlpsPiSettings {
 	return {
 		chromeFrame: { ...settings.chromeFrame },
 		fixedBottomEditor: { ...settings.fixedBottomEditor },
-		bottomStatus: { ...settings.bottomStatus },
+		beautifiedInput: { ...settings.beautifiedInput },
 		shortcuts: { ...settings.shortcuts },
 	};
 }
@@ -148,8 +148,9 @@ function normalizeSettings(value: unknown, defaults: AlpsPiSettings): AlpsPiSett
 		fixedBottomEditor: {
 			enabled: readBoolean(raw.fixedBottomEditor, "enabled", defaults.fixedBottomEditor.enabled),
 		},
-		bottomStatus: {
-			enabled: readBoolean(raw.bottomStatus, "enabled", defaults.bottomStatus.enabled),
+		// 旧 bottomStatus 持久化字段在读取时直接忽略，写回时也不会输出。
+		beautifiedInput: {
+			enabled: readBoolean(raw.beautifiedInput, "enabled", defaults.beautifiedInput.enabled),
 		},
 		shortcuts: normalizeShortcutSettings(raw.shortcuts, defaults.shortcuts),
 	};

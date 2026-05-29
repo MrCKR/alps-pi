@@ -37,8 +37,11 @@ function createHarness(options: { failEnable?: boolean } = {}) {
 		getStatus() {
 			return { enabled, installed: enabled };
 		},
+		setBeautifiedInputEnabled(nextEnabled: boolean) {
+			runtimeCalls.push(`beautified:${nextEnabled}`);
+		},
 		setBottomStatusEnabled(nextEnabled: boolean) {
-			runtimeCalls.push(`bottom:${nextEnabled}`);
+			runtimeCalls.push(`beautified:${nextEnabled}`);
 		},
 		resetSessionStartTime() {
 			runtimeCalls.push("resetTime");
@@ -125,7 +128,7 @@ test("session_start 调用统一 runtime，并按默认设置安装 fixed editor
 	const harness = createHarness();
 	harness.emit("session_start", { id: "one" });
 
-	assert.deepEqual(harness.runtimeCalls, ["shortcuts", "bind:one", "resetTime", "prompt:", "shortcuts", "set:true", "bottom:false"]);
+	assert.deepEqual(harness.runtimeCalls, ["shortcuts", "beautified:true", "bind:one", "resetTime", "prompt:", "shortcuts", "set:true", "beautified:true"]);
 });
 
 test("若设置为 true，session_start 尝试安装 runtime", () => {
@@ -138,10 +141,10 @@ test("若设置为 true，session_start 尝试安装 runtime", () => {
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, true);
 });
 
-test("session_shutdown 先 dispose runtime、保留 fixedBottomEditor/bottomStatus 设置，再 disablePatch", () => {
+test("session_shutdown 先 dispose runtime、保留 fixedBottomEditor/beautifiedInput 设置，再 disablePatch", () => {
 	const harness = createHarness();
 	(globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled = true;
-	(globalThis as any)[PATCH_KEY].config.settings.bottomStatus.enabled = true;
+	(globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled = false;
 	assert.equal((globalThis as any)[PATCH_KEY].enabled, true);
 
 	harness.emit("session_shutdown");
@@ -149,30 +152,31 @@ test("session_shutdown 先 dispose runtime、保留 fixedBottomEditor/bottomStat
 	assert.equal(harness.runtimeCalls.includes("dispose"), true);
 	assert.deepEqual(harness.disposePatchEnabledSnapshots, [true]);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, true);
-	assert.equal((globalThis as any)[PATCH_KEY].config.settings.bottomStatus.enabled, true);
+	assert.equal((globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled, false);
+	assert.equal("bottomStatus" in (globalThis as any)[PATCH_KEY].config.settings, false);
 	assert.equal((globalThis as any)[PATCH_KEY].enabled, false);
 });
 
-test("shutdown 后下一次 session_start 会按持久化设置恢复 fixed editor 和 bottom status", () => {
+test("shutdown 后下一次 session_start 会按持久化设置恢复 fixed editor 和 beautified input", () => {
 	const harness = createHarness();
 	(globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled = true;
-	(globalThis as any)[PATCH_KEY].config.settings.bottomStatus.enabled = true;
+	(globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled = false;
 
 	harness.emit("session_shutdown");
 	harness.emit("session_start", { id: "next" });
 
-	assert.deepEqual(harness.runtimeCalls.slice(-6), ["bind:next", "resetTime", "prompt:", "shortcuts", "set:true", "bottom:true"]);
+	assert.deepEqual(harness.runtimeCalls.slice(-6), ["bind:next", "resetTime", "prompt:", "shortcuts", "set:true", "beautified:false"]);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, true);
-	assert.equal((globalThis as any)[PATCH_KEY].config.settings.bottomStatus.enabled, true);
+	assert.equal((globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled, false);
 });
 
-test("session_start 会按设置安装 bottom status", () => {
+test("session_start 会按设置切换 beautified input", () => {
 	const harness = createHarness();
-	(globalThis as any)[PATCH_KEY].config.settings.bottomStatus.enabled = true;
+	(globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled = false;
 
-	harness.emit("session_start", { id: "bottom" });
+	harness.emit("session_start", { id: "beautified" });
 
-	assert.equal(harness.runtimeCalls.includes("bottom:true"), true);
+	assert.equal(harness.runtimeCalls.includes("beautified:false"), true);
 });
 
 test("session_start 安装失败时回写 fixedBottomEditor=false", () => {
@@ -190,6 +194,7 @@ test("扩展启动时读取持久化设置", () => {
 	writeFileSync(file, JSON.stringify({
 		chromeFrame: { enabled: false, assistantFrame: false, toolCompactMode: false, compactEditTool: true },
 		fixedBottomEditor: { enabled: false },
+		beautifiedInput: { enabled: false },
 		bottomStatus: { enabled: true },
 	}), "utf-8");
 
@@ -202,10 +207,11 @@ test("扩展启动时读取持久化设置", () => {
 	assert.equal(settings.chromeFrame.toolCompactMode, false);
 	assert.equal(settings.chromeFrame.compactEditTool, true);
 	assert.equal(settings.fixedBottomEditor.enabled, false);
-	assert.equal(settings.bottomStatus.enabled, true);
+	assert.equal(settings.beautifiedInput.enabled, false);
+	assert.equal("bottomStatus" in settings, false);
 	assert.equal(harness.runtimeCalls.includes("bind:persisted"), true);
 	assert.equal(harness.runtimeCalls.includes("set:true"), false);
-	assert.equal(harness.runtimeCalls.includes("bottom:true"), true);
+	assert.equal(harness.runtimeCalls.includes("beautified:false"), true);
 });
 
 test("模型、thinking 与消息事件会刷新统一 runtime", () => {
@@ -219,7 +225,7 @@ test("模型、thinking 与消息事件会刷新统一 runtime", () => {
 	harness.emit("message_end", { id: "end" });
 	harness.emit("turn_end", { id: "turn" });
 
-	assert.deepEqual(harness.runtimeCalls.slice(1), [
+	assert.deepEqual(harness.runtimeCalls.slice(2), [
 		"bind:model",
 		"render",
 		"bind:think",
@@ -243,7 +249,7 @@ test("Alt+S shortcut 调用统一 runtime 暂存逻辑", async () => {
 	assert.equal(harness.runtimeCalls.includes("stash"), true);
 });
 
-test("命令层 fixed/bottom ops 使用入口创建的统一 runtime 并用命令 ctx 懒绑定 session", async () => {
+test("命令层 fixed/beautified ops 使用入口创建的统一 runtime 并用命令 ctx 懒绑定 session", async () => {
 	const harness = createHarness();
 	const ctx = {
 		id: "command-ctx",
@@ -268,10 +274,10 @@ test("命令层 fixed/bottom ops 使用入口创建的统一 runtime 并用命�
 	await harness.commands.get("alps-pi").handler("", ctx);
 	assert.equal(harness.runtimeCalls.includes("bind:command-ctx"), true);
 	assert.equal(harness.runtimeCalls.includes("set:false"), true);
-	assert.equal(harness.runtimeCalls.includes("bottom:true"), true);
+	assert.equal(harness.runtimeCalls.includes("beautified:false"), true);
 });
 
-test("底部状态栏切换时若 fixed 设置仍开启但 runtime 未安装，会重新安装 fixed", async () => {
+test("美化输入框切换不强行安装 fixed runtime", async () => {
 	const harness = createHarness();
 	const ctx = {
 		id: "command-ctx",
@@ -288,5 +294,5 @@ test("底部状态栏切换时若 fixed 设置仍开启但 runtime 未安装，�
 	};
 
 	await harness.commands.get("alps-pi").handler("", ctx);
-	assert.deepEqual(harness.runtimeCalls, ["shortcuts", "bind:command-ctx", "set:true", "bottom:true"]);
+	assert.deepEqual(harness.runtimeCalls, ["shortcuts", "beautified:true", "bind:command-ctx", "beautified:false"]);
 });

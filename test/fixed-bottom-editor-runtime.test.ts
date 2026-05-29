@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createFixedBottomEditorRuntime } from "../src/features/fixed-bottom-editor/runtime.ts";
 import type { FixedEditorTerminal } from "../src/features/fixed-bottom-editor/compositor.ts";
+import { stripAnsi } from "./helpers.test.ts";
 
 function createTui(options: { terminal?: any } = {}) {
 	const writes: string[] = [];
@@ -224,6 +225,93 @@ test("bind 后 setEnabled(true) 调用 setEditorComponent/setFooter", () => {
 	assert.equal(typeof harness.calls[1]?.value, "function");
 });
 
+
+
+test("beautified ON 且 fixed OFF 时安装 custom editor/footer 但不安装 compositor", () => {
+	const harness = createCtx({ autoInstantiate: true });
+	let compositorCreated = false;
+	const runtime = createFixedBottomEditorRuntime({
+		createCompositor() {
+			compositorCreated = true;
+			throw new Error("should not install fixed compositor");
+		},
+	});
+
+	runtime.bindSession(harness.ctx);
+	runtime.setBeautifiedInputEnabled?.(true);
+
+	assert.equal(runtime.getStatus().enabled, false);
+	assert.equal(runtime.getStatus().installed, false);
+	assert.equal(typeof harness.getEditorFactory(), "function");
+	assert.equal(typeof harness.getFooterFactory(), "function");
+	assert.equal(compositorCreated, false);
+	assert.ok(stripAnsi(harness.getEditorInstance().render(24).join("\n")).includes("╭"));
+});
+
+test("beautified ON 且 fixed OFF 时 footer 渲染下方附属信息", () => {
+	const harness = createCtx({ autoInstantiate: true });
+	let compositorCreated = false;
+	const runtime = createFixedBottomEditorRuntime({
+		startClock: false,
+		createCompositor() {
+			compositorCreated = true;
+			throw new Error("should not install fixed compositor");
+		},
+	});
+
+	runtime.bindSession(harness.ctx);
+	runtime.setLastPrompt("上一个问题");
+	runtime.setBeautifiedInputEnabled?.(true);
+	const footerData = { getExtensionStatuses: () => new Map([["watcher", "CodeGraph watcher active"]]) };
+	const footer = harness.getFooterFactory()({ terminal: { columns: 40, rows: 12, write() {} } }, { fg: (_token: string, text: string) => text }, footerData);
+	const lines = footer.render(40).map(stripAnsi);
+
+	assert.equal(compositorCreated, false);
+	assert.deepEqual(lines, [" CodeGraph watcher active ", " ↳ 上一个问题"]);
+});
+
+test("fixed 模式下 editor 输入会主动请求底部重绘", async () => {
+	const harness = createCtx({ autoInstantiate: true });
+	const { runtime, getRepaintCalls } = createCountingRuntime();
+	runtime.bindSession(harness.ctx);
+	runtime.setEnabled(true);
+	harness.tui.requestRenderCalls.length = 0;
+
+	harness.getEditorInstance().handleInput("a");
+	await new Promise((resolve) => setTimeout(resolve, 40));
+
+	assert.equal(harness.getEditorInstance().getText(), "a");
+	assert.equal(getRepaintCalls(), 1);
+	assert.deepEqual(harness.tui.requestRenderCalls, []);
+});
+
+test("fixed 模式下程序化写入 editor 也会主动请求底部重绘", async () => {
+	const harness = createCtx({ autoInstantiate: true });
+	const { runtime, getRepaintCalls } = createCountingRuntime();
+	runtime.bindSession(harness.ctx);
+	runtime.setEnabled(true);
+
+	harness.getEditorInstance().setText("hello");
+	harness.getEditorInstance().insertTextAtCursor(" world");
+	await new Promise((resolve) => setTimeout(resolve, 40));
+
+	assert.equal(harness.getEditorInstance().getText(), "hello world");
+	assert.equal(getRepaintCalls(), 1);
+});
+
+test("beautified OFF 且 fixed OFF 时恢复原生 editor/footer", () => {
+	const harness = createCtx({ autoInstantiate: true });
+	const runtime = createFixedBottomEditorRuntime();
+
+	runtime.bindSession(harness.ctx);
+	runtime.setBeautifiedInputEnabled?.(true);
+	runtime.setBeautifiedInputEnabled?.(false);
+
+	assertLayoutRestored(harness);
+	assert.equal(runtime.getStatus().enabled, false);
+	assert.equal(runtime.getStatus().installed, false);
+});
+
 test("footer factory 传入 fake tui 后安装 compositor", () => {
 	const harness = createCtx();
 	const runtime = createFixedBottomEditorRuntime();
@@ -402,7 +490,7 @@ test("重复启用不重复安装", () => {
 	assert.equal(harness.calls.length, callCount);
 });
 
-test("setEnabled(false) 幂等并恢复 editor/footer", () => {
+test("setEnabled(false) 只关闭 fixed layer 并保留美化 editor/footer", () => {
 	const harness = createCtx({ autoInstantiate: true });
 	const runtime = createFixedBottomEditorRuntime();
 
@@ -420,8 +508,10 @@ test("setEnabled(false) 幂等并恢复 editor/footer", () => {
 	assert.equal(disabledAgain.enabled, false);
 	assert.equal(disabledAgain.installed, false);
 	assert.notEqual(harness.tui.terminal.write, installedWrite);
-	assert.equal(harness.calls.some((call) => call.type === "editor" && call.value === undefined), true);
-	assert.equal(harness.calls.some((call) => call.type === "footer" && call.value === undefined), true);
+	assert.equal(typeof harness.getEditorFactory(), "function");
+	assert.equal(typeof harness.getFooterFactory(), "function");
+	assert.equal(harness.calls.some((call) => call.type === "editor" && call.value === undefined), false);
+	assert.equal(harness.calls.some((call) => call.type === "footer" && call.value === undefined), false);
 });
 
 test("dispose 幂等并清理 session 引用", () => {
@@ -469,6 +559,54 @@ function createCountingRuntime() {
 	return { runtime, getRepaintCalls: () => repaintCalls };
 }
 
+
+test("美化输入框开启时 fixed cluster 渲染已由 custom editor 按内框宽度处理的输出", () => {
+	const harness = createCtx({ autoInstantiate: true });
+	const renderWidths: number[] = [];
+	let capturedRenderCluster: ((width: number, terminalRows: number) => any) | undefined;
+	const runtime = createFixedBottomEditorRuntime({
+		createCompositor(options) {
+			capturedRenderCluster = options.renderCluster;
+			return {
+				install() {},
+				dispose() {},
+				hideRenderable() {},
+				renderHidden(_container: any, width: number) {
+					renderWidths.push(width);
+					return ["x".repeat(width)];
+				},
+				requestRepaint() {},
+				setKeyboardScrollShortcuts() {},
+				jumpToPreviousRootTarget() { return false; },
+				jumpToNextRootTarget() { return false; },
+				jumpToRootBottom() { return false; },
+			};
+		},
+	});
+	runtime.bindSession(harness.ctx);
+	runtime.setEnabled(true);
+	runtime.setBeautifiedInputEnabled?.(true);
+
+	const cluster = capturedRenderCluster?.(20, 10);
+
+	assert.equal(renderWidths[0], 20);
+	assert.ok(cluster?.lines.length);
+});
+
+test("美化输入框切换只请求 bottom cluster repaint，不触发 full render", async () => {
+	const harness = createCtx({ autoInstantiate: true });
+	const { runtime, getRepaintCalls } = createCountingRuntime();
+	runtime.bindSession(harness.ctx);
+	runtime.setEnabled(true);
+	harness.tui.requestRenderCalls.length = 0;
+
+	runtime.setBeautifiedInputEnabled?.(false);
+	await new Promise((resolve) => setTimeout(resolve, 40));
+
+	assert.deepEqual(harness.tui.requestRenderCalls, []);
+	assert.equal(getRepaintCalls(), 1);
+});
+
 test("full render 请求会升级已排队的普通 repaint", async () => {
 	const harness = createCtx({ autoInstantiate: true });
 	const { runtime, getRepaintCalls } = createCountingRuntime();
@@ -477,7 +615,7 @@ test("full render 请求会升级已排队的普通 repaint", async () => {
 	harness.tui.requestRenderCalls.length = 0;
 
 	runtime.requestRender();
-	runtime.setBottomStatusEnabled(true);
+	runtime.requestRender({ full: true });
 	await new Promise((resolve) => setTimeout(resolve, 40));
 
 	assert.deepEqual(harness.tui.requestRenderCalls, [false]);

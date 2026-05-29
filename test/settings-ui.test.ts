@@ -13,7 +13,7 @@ function createPanel(options: { fixedResult?: { enabled: boolean; installed: boo
 	const state = createInitialPatchState();
 	const calls: string[] = [];
 	const fixedCalls: boolean[] = [];
-	const bottomStatusCalls: boolean[] = [];
+	const beautifiedInputCalls: boolean[] = [];
 	let closed = false;
 	const component = new AlpsPiSettingsComponent(createFakeTheme(), () => {
 		closed = true;
@@ -35,14 +35,14 @@ function createPanel(options: { fixedResult?: { enabled: boolean; installed: boo
 			fixedCalls.push(enabled);
 			return options.fixedResult ?? { enabled, installed: false };
 		},
-		setBottomStatusEnabled: (enabled: boolean) => {
-			bottomStatusCalls.push(enabled);
+		setBeautifiedInputEnabled: (enabled: boolean) => {
+			beautifiedInputCalls.push(enabled);
 		},
 	});
-	return { state, calls, fixedCalls, bottomStatusCalls, component, isClosed: () => closed };
+	return { state, calls, fixedCalls, beautifiedInputCalls, component, isClosed: () => closed };
 }
 
-test("设置界面展示线框美化、正文线框、Tool 极简模式、edit 收起、固定输入框和底部状态栏，并使用原生上下横线", () => {
+test("设置界面展示线框美化、正文线框、Tool 极简模式、edit 收起、固定输入框和美化输入框，并使用主题线框", () => {
 	const { component } = createPanel();
 	const lines = component.render(80);
 	const plain = stripAnsi(lines.join("\n"));
@@ -51,18 +51,22 @@ test("设置界面展示线框美化、正文线框、Tool 极简模式、edit �
 	assert.match(plain, /Tool 极简模式/);
 	assert.match(plain, /极简下收起 edit/);
 	assert.match(plain, /固定输入框/);
-	assert.match(plain, /底部状态栏/);
+	assert.match(plain, /美化输入框/);
+	assert.doesNotMatch(plain, /底部状态栏/);
 	assert.match(plain, /Tool 极简模式\s+ON/);
 	assert.match(plain, /极简下收起 edit\s+OFF/);
 	assert.match(plain, /固定输入框\s+ON/);
-	assert.match(plain, /底部状态栏\s+OFF/);
+	assert.match(plain, /美化输入框\s+ON/);
 	assert.doesNotMatch(plain, /preview/i);
 	assert.doesNotMatch(plain, /Alps Pi 美化设置/);
-	assert.equal(stripAnsi(lines[0]!), "─".repeat(80));
-	assert.equal(stripAnsi(lines.at(-1)!), "─".repeat(80));
+	assert.equal(stripAnsi(lines[0]!), `╭${"─".repeat(78)}╮`);
+	assert.equal(stripAnsi(lines.at(-1)!), `╰${"─".repeat(78)}╯`);
+	assert.ok(stripAnsi(lines.slice(1, -1).join("\n")).split("\n").every((line) => line.startsWith("│ ") && line.endsWith(" │")));
 	assert.match(plain, />/);
 	assert.match(plain, /Type to search · Enter\/Space to change · Esc to cancel/);
 	assert.ok(lines.every((line) => visibleWidth(line) <= 80));
+	assert.match(lines[0]!, /\x1b\[38;5;12m╭/);
+	assert.match(lines.at(-1)!, /\x1b\[38;5;12m╰/);
 });
 
 test("设置界面可切换线框美化", () => {
@@ -100,28 +104,34 @@ test("设置界面可切换 Tool 极简模式与 edit 收起", () => {
 });
 
 test("设置界面第五项切换固定输入框并调用 runtime op", () => {
-	const { state, fixedCalls, component } = createPanel();
+	const { state, fixedCalls, beautifiedInputCalls, component } = createPanel();
 	assert.equal(state.config.settings.fixedBottomEditor.enabled, true);
+	assert.equal(state.config.settings.beautifiedInput.enabled, true);
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput(" ");
 	assert.equal(state.config.settings.fixedBottomEditor.enabled, false);
+	assert.equal(state.config.settings.beautifiedInput.enabled, true);
 	assert.deepEqual(fixedCalls, [false]);
+	assert.deepEqual(beautifiedInputCalls, []);
 });
 
-test("设置界面第六项切换底部状态栏并调用 runtime op", () => {
-	const { state, bottomStatusCalls, component } = createPanel();
-	assert.equal(state.config.settings.bottomStatus.enabled, false);
+test("设置界面第六项切换美化输入框并调用 runtime op", () => {
+	const { state, fixedCalls, beautifiedInputCalls, component } = createPanel();
+	assert.equal(state.config.settings.fixedBottomEditor.enabled, true);
+	assert.equal(state.config.settings.beautifiedInput.enabled, true);
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput(" ");
-	assert.equal(state.config.settings.bottomStatus.enabled, true);
-	assert.deepEqual(bottomStatusCalls, [true]);
+	assert.equal(state.config.settings.fixedBottomEditor.enabled, true);
+	assert.equal(state.config.settings.beautifiedInput.enabled, false);
+	assert.deepEqual(fixedCalls, []);
+	assert.deepEqual(beautifiedInputCalls, [false]);
 });
 
 test("设置界面固定输入框启用失败时回滚 OFF", () => {

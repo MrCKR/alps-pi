@@ -83,6 +83,19 @@ test("包含 CURSOR_MARKER 时能提取 cursor，并从输出行删除 marker", 
 	assertLinesWithin(cluster.lines, 20);
 });
 
+test("线框 editor 内容中的 CURSOR_MARKER 仍能提取正确坐标", () => {
+	const marker = FIXED_EDITOR_CURSOR_MARKER;
+	const cluster = renderFixedEditorCluster({
+		editorLines: ["╭────────╮", `│ > ${marker}hello │`, "╰────────╯"],
+		width: 12,
+		maxHeight: 4,
+	});
+
+	assert.deepEqual(cluster.cursor, { row: 1, col: 4 });
+	assert.equal(cluster.lines[1], "│ > hello │");
+	assert.equal(cluster.lines.some((line) => line.includes(marker)), false);
+});
+
 test("editor 行数超过可用高度时，优先保留 cursor 附近行", () => {
 	const marker = FIXED_EDITOR_CURSOR_MARKER;
 	const cluster = renderFixedEditorCluster({

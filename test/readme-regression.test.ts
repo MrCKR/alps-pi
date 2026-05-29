@@ -14,11 +14,11 @@ test("README 说明固定输入框默认开启且设置持久化", async () => {
 	const readme = await readReadme();
 
 	assert.match(readme, /固定底部输入框默认开启/);
-	assert.match(readme, /固定输入框默认开启/);
+	assert.match(readme, /固定输入框.*默认 ON/);
 	assert.match(readme, /设置会持久化/);
 });
 
-test("README 说明设置面板六项", async () => {
+test("README 说明设置面板项目", async () => {
 	const readme = await readReadme();
 
 	assert.match(readme, /线框美化\s+控制消息、工具与 bash 外框/);
@@ -26,15 +26,17 @@ test("README 说明设置面板六项", async () => {
 	assert.match(readme, /Tool 极简模式\s+未展开 tool 只显示第一条有效文本行，默认 ON/);
 	assert.match(readme, /极简下收起 edit\s+允许 edit tool 也按极简模式展示，默认 OFF/);
 	assert.match(readme, /固定输入框\s+控制实验性底部固定编辑器 runtime，默认 ON/);
-	assert.match(readme, /底部状态栏\s+显示模型、thinking、上下文、耗时和上个问题，默认 OFF/);
+	assert.match(readme, /美化输入框\s+控制输入框线框与嵌入边框状态，默认 ON/);
+	assert.match(readme, /快捷键设置\s+管理底部输入框快捷键/);
+	assert.doesNotMatch(readme, /底部状态栏\s+显示模型/);
 });
 
-test("README 说明底部状态栏默认关闭与 Alt+S 行为", async () => {
+test("README 说明美化输入框默认开启与 Alt+S 行为", async () => {
 	const readme = await readReadme();
 
-	assert.match(readme, /底部状态栏默认关闭/);
-	assert.match(readme, /细线上下文进度或已用量/);
-	assert.match(readme, /上一个问题/);
+	assert.match(readme, /美化输入框默认开启/);
+	assert.match(readme, /10 字符上下文进度/);
+	assert.match(readme, /extension statuses 与上一个问题保持在线框下方/);
 	assert.match(readme, /缺失的数据不会显示占位/);
 	assert.match(readme, /Alt\+S.*暂存并清空输入框/);
 });

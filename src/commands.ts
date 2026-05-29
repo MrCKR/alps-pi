@@ -9,7 +9,7 @@ export type CommandOps = {
 	enable?: () => PatchState;
 	disable?: () => PatchState;
 	setFixedBottomEditorEnabled?: (enabled: boolean, ctx: any) => FixedBottomEditorStatus | void;
-	setBottomStatusEnabled?: (enabled: boolean, ctx: any) => void;
+	setBeautifiedInputEnabled?: (enabled: boolean, ctx: any) => void;
 	onSettingsChanged?: (settings: AlpsPiSettings, ctx: any) => void;
 };
 
@@ -47,8 +47,8 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 			const action = trimmedArgs === "" ? "" : trimmedArgs.split(/\s+/)[0]!;
 			const enableFn = ops.enable ?? (() => enablePatch());
 			const disableFn = ops.disable ?? (() => disablePatch());
-			const setBottomStatusEnabled = ops.setBottomStatusEnabled ?? ((enabled: boolean) => {
-				getGlobalPatchState().config.settings.bottomStatus.enabled = enabled;
+			const setBeautifiedInputEnabled = ops.setBeautifiedInputEnabled ?? ((enabled: boolean) => {
+				getGlobalPatchState().config.settings.beautifiedInput.enabled = enabled;
 			});
 			const onSettingsChanged = ops.onSettingsChanged ?? ((settings: AlpsPiSettings) => {
 				getGlobalPatchState().config.settings.shortcuts = { ...settings.shortcuts };
@@ -83,6 +83,17 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 					};
 					try {
 						const fallbackTheme = ui.theme ?? getRuntimeTheme();
+						let overlayHandle: { focus?: () => void } | undefined;
+						const refocusSettingsOverlay = () => {
+							if (!overlayHandle) return;
+							queueMicrotask(() => {
+								try {
+									overlayHandle?.focus?.();
+								} catch {
+									// overlay 可能已经关闭；焦点恢复失败不能阻断设置保存。
+								}
+							});
+						};
 						await ui.custom((_tui: any, theme: any, _keybindings: any, done: () => void) => createSettingsComponent(theme ?? fallbackTheme, done, {
 							getState: getGlobalPatchState,
 							disableChromeFrame: () => runIfActive(() => {
@@ -97,15 +108,25 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 							}) ?? getGlobalPatchState(),
 							setFixedBottomEditorEnabled: (enabled) => {
 								// 固定输入框依赖当前 interactive session；ctx stale 时旧设置面板回调失效。
-								return runIfActive(() => setFixedEnabled(enabled, ctx));
+								const result = runIfActive(() => setFixedEnabled(enabled, ctx));
+								refocusSettingsOverlay();
+								return result;
 							},
-							setBottomStatusEnabled: (enabled) => {
-								runIfActive(() => setBottomStatusEnabled(enabled, ctx));
+							setBeautifiedInputEnabled: (enabled) => {
+								runIfActive(() => setBeautifiedInputEnabled(enabled, ctx));
+								refocusSettingsOverlay();
 							},
 							onSettingsChanged: (settings) => {
 								runIfActive(() => onSettingsChanged(settings, ctx));
+								refocusSettingsOverlay();
 							},
-						}));
+						}), {
+							overlay: true,
+							overlayOptions: { anchor: "center", width: "90%", minWidth: 56, maxHeight: "80%", margin: 1 },
+							onHandle: (handle: { focus?: () => void }) => {
+								overlayHandle = handle;
+							},
+						});
 					} catch (error) {
 						const message = error instanceof Error ? error.message : String(error);
 						notify(ctx, `Settings failed: ${message}`, "error");

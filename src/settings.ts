@@ -12,12 +12,12 @@ export type ChromeFrameSettings = {
 };
 
 export type FixedBottomEditorSettings = {
-	/** 固定输入框：控制是否启用底部固定编辑器运行时。 */
+	/** 固定输入框：只控制编辑器是否固定在底部。 */
 	enabled: boolean;
 };
 
-export type BottomStatusSettings = {
-	/** 底部状态栏：显示模型、thinking、总 token 和当前时间。 */
+export type BeautifiedInputSettings = {
+	/** 美化输入框：控制输入框线框与嵌入边框状态。 */
 	enabled: boolean;
 };
 
@@ -62,8 +62,8 @@ export type AlpsPiSettings = {
 	chromeFrame: ChromeFrameSettings;
 	/** 固定底部输入框功能配置。 */
 	fixedBottomEditor: FixedBottomEditorSettings;
-	/** 底部状态栏功能配置。 */
-	bottomStatus: BottomStatusSettings;
+	/** 输入框线框美化配置。 */
+	beautifiedInput: BeautifiedInputSettings;
 	/** 底部输入框快捷键配置。 */
 	shortcuts: BottomInputShortcutSettings;
 };
@@ -78,8 +78,8 @@ export const DEFAULT_SETTINGS: AlpsPiSettings = {
 	fixedBottomEditor: {
 		enabled: true,
 	},
-	bottomStatus: {
-		enabled: false,
+	beautifiedInput: {
+		enabled: true,
 	},
 	shortcuts: {
 		stashEditor: "alt+s",
@@ -101,7 +101,7 @@ export function cloneDefaultSettings(): AlpsPiSettings {
 	return {
 		chromeFrame: { ...DEFAULT_SETTINGS.chromeFrame },
 		fixedBottomEditor: { ...DEFAULT_SETTINGS.fixedBottomEditor },
-		bottomStatus: { ...DEFAULT_SETTINGS.bottomStatus },
+		beautifiedInput: { ...DEFAULT_SETTINGS.beautifiedInput },
 		shortcuts: { ...DEFAULT_SETTINGS.shortcuts },
 	};
 }

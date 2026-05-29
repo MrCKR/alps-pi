@@ -4,4 +4,6 @@ export { createBottomInputRuntime } from "./runtime.ts";
 export type { BottomInputRuntime, FixedBottomEditorStatus } from "./runtime.ts";
 export * from "./shortcuts.ts";
 export * from "./status.ts";
+export * from "./frame.ts";
+export * from "./editor.ts";
 export * from "./icons.ts";

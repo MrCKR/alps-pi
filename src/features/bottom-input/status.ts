@@ -1,4 +1,4 @@
-/** 功能：渲染 bottom-input 主状态栏、extension statuses 与 last prompt 实现者：alps 实现日期：2026-05-28 */
+/** 功能：渲染 bottom-input 边框状态、extension statuses 与 last prompt 实现者：alps 实现日期：2026-05-28 */
 
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { ThemeLike } from "../chrome-frame/styles.ts";
@@ -28,8 +28,10 @@ export type BottomInputStatusState = {
 	theme: ThemeLike;
 	/** 渲染宽度。 */
 	width: number;
-	/** 用户是否开启 bottom status 行。 */
+	/** 兼容旧字段：美化输入框关闭时为 false。 */
 	bottomStatusEnabled: boolean;
+	/** 美化输入框是否开启；未传时按旧 bottomStatusEnabled 处理。 */
+	beautifiedInputEnabled?: boolean;
 	/** streaming 标记；为 true 时 liveUsage 优先于旧 core usage。 */
 	isStreaming: boolean;
 	/** message_update 捕获到的 usage。 */
@@ -48,14 +50,24 @@ export type BottomInputStatusState = {
 	icons?: BottomInputIconSet;
 };
 
+export type BottomInputFrameStatus = {
+	model: string | null;
+	thinking: string | null;
+	context: string | null;
+	elapsed: string | null;
+};
+
 export type BottomInputStatusRender = {
+	/** 兼容旧主状态行；线框模式下为空。 */
 	topLines: string[];
 	secondaryLines: string[];
 	lastPromptLines: string[];
+	/** 线框边框内嵌状态。 */
+	frameStatus: BottomInputFrameStatus;
 	cacheKey: string;
 };
 
-const CONTEXT_BAR_WIDTH = 6;
+export const CONTEXT_BAR_WIDTH = 10;
 const CONTEXT_COLORS = {
 	normal: "#00afaf",
 	warning: "#febc38",
@@ -74,19 +86,31 @@ const RAINBOW_COLORS = [
 ];
 const INTERNAL_STATUS_KEYS = new Set(["alps-pi-bottom-input", "alps-pi-bottom-status", "alps-pi-last-prompt"]);
 
-/** 渲染所有 bottom status 行；关闭时只返回空行。 */
+/** 渲染输入框附属状态；美化关闭时不读取 model/thinking/context/elapsed，只保留下方附属信息。 */
 export function renderBottomInputStatus(input: BottomInputStatusState): BottomInputStatusRender {
 	const safeWidth = Math.max(1, Math.floor(input.width));
-	const icons = input.icons ?? getBottomInputIcons();
+	const enabled = input.beautifiedInputEnabled ?? input.bottomStatusEnabled;
 	const extensionStatuses = getVisibleExtensionStatuses(input.footerData);
+	if (!enabled) {
+		return {
+			topLines: [],
+			secondaryLines: renderExtensionStatusLines(extensionStatuses, safeWidth, input.theme),
+			lastPromptLines: renderLastPromptLines(input.lastPrompt, safeWidth, input.theme),
+			frameStatus: emptyFrameStatus(),
+			cacheKey: JSON.stringify({ width: safeWidth, enabled: false, lastPrompt: input.lastPrompt, extensionStatuses }),
+		};
+	}
+
+	const icons = input.icons ?? getBottomInputIcons();
 	const elapsedSeconds = Math.floor(Math.max(0, input.now - input.sessionStartTime) / 1000);
 	const usage = readContextUsageSnapshot(input.ctx, input.isStreaming, input.liveUsage, input.latestAssistantUsage);
 	const modelName = readModelName(input.ctx);
+	const thinking = readThinkingLevel(input.ctx) ?? input.currentThinkingLevel ?? readThinkingLevelFromSession(input.ctx);
 	const cacheKey = JSON.stringify({
 		width: safeWidth,
-		bottomStatusEnabled: input.bottomStatusEnabled,
+		beautifiedInputEnabled: enabled,
 		model: modelName,
-		thinking: readThinkingLevel(input.ctx) ?? input.currentThinkingLevel ?? readThinkingLevelFromSession(input.ctx),
+		thinking,
 		context: usage,
 		elapsedSeconds,
 		lastPrompt: input.lastPrompt,
@@ -94,29 +118,31 @@ export function renderBottomInputStatus(input: BottomInputStatusState): BottomIn
 		icons,
 	});
 
-	if (!input.bottomStatusEnabled) {
-		return { topLines: [], secondaryLines: [], lastPromptLines: [], cacheKey };
-	}
-
 	return {
-		topLines: renderTopStatusLines({ ...input, width: safeWidth, icons }),
+		topLines: [],
 		secondaryLines: renderExtensionStatusLines(extensionStatuses, safeWidth, input.theme),
 		lastPromptLines: renderLastPromptLines(input.lastPrompt, safeWidth, input.theme),
+		frameStatus: renderFrameStatus({ ...input, width: safeWidth, icons }, modelName, thinking, usage),
 		cacheKey,
 	};
 }
 
-/** 渲染输入框上方主状态栏。 */
+/** 渲染输入框边框要嵌入的 model/thinking/context/elapsed。 */
+export function renderFrameStatus(input: BottomInputStatusState & { icons?: BottomInputIconSet }, modelName = readModelName(input.ctx), thinkingLevel = readThinkingLevel(input.ctx) ?? input.currentThinkingLevel ?? readThinkingLevelFromSession(input.ctx), usage = readContextUsageSnapshot(input.ctx, input.isStreaming, input.liveUsage, input.latestAssistantUsage)): BottomInputFrameStatus {
+	return {
+		model: renderModelSegment(modelName, input.theme, input.icons ?? getBottomInputIcons()),
+		thinking: renderThinkingSegment(thinkingLevel, input.theme),
+		context: renderContextSegment(usage),
+		elapsed: renderElapsedSegment(input.theme, input.sessionStartTime, input.now, input.icons ?? getBottomInputIcons()),
+	};
+}
+
+/** 兼容旧测试/调用方：返回可见状态摘要行。 */
 export function renderTopStatusLines(input: BottomInputStatusState & { icons?: BottomInputIconSet }): string[] {
 	const safeWidth = Math.max(1, Math.floor(input.width));
-	const icons = input.icons ?? getBottomInputIcons();
-	const segments = [
-		renderModelSegment(input.ctx, input.theme, icons),
-		renderThinkingSegment(input.ctx, input.theme, input.currentThinkingLevel),
-		renderContextSegment(input.ctx, input.theme, input.isStreaming, input.liveUsage, input.latestAssistantUsage),
-		renderElapsedSegment(input.theme, input.sessionStartTime, input.now, icons),
-	].filter((segment): segment is string => Boolean(segment));
-
+	const frame = renderFrameStatus({ ...input, width: safeWidth });
+	const left = [frame.model, frame.thinking].filter((segment): segment is string => Boolean(segment)).join(safeFg(input.theme, "borderMuted", " · "));
+	const segments = [left || null, frame.context, frame.elapsed].filter((segment): segment is string => Boolean(segment));
 	if (segments.length === 0) return [];
 	return [fitStatusLine(segments, safeWidth, input.theme)];
 }
@@ -207,33 +233,28 @@ export function readContextUsageSnapshot(
 	};
 }
 
-function renderModelSegment(ctx: any, theme: ThemeLike, icons: BottomInputIconSet): string | null {
-	const modelName = readModelName(ctx);
-	if (!modelName) return null;
-	const content = icons.model ? `${icons.model} ${modelName}` : modelName;
-	return safeFg(theme, "accent", content);
+function emptyFrameStatus(): BottomInputFrameStatus {
+	return { model: null, thinking: null, context: null, elapsed: null };
 }
 
-function renderThinkingSegment(ctx: any, theme: ThemeLike, cachedLevel: string | null): string | null {
-	const level = readThinkingLevel(ctx) ?? cachedLevel ?? readThinkingLevelFromSession(ctx);
+function renderModelSegment(modelName: string | null, theme: ThemeLike, _icons: BottomInputIconSet): string | null {
+	if (!modelName) return null;
+	// 线框规格固定只显示模型名，避免 Nerd Font 图标破坏 “model · thinking” 布局。
+	return safeFg(theme, "accent", modelName);
+}
+
+function renderThinkingSegment(level: string | null, theme: ThemeLike): string | null {
 	if (!level) return null;
 	const label = normalizeThinkingLevel(level);
 	if (!label) return null;
-	const content = `think:${label}`;
+	// 线框内按需求不显示 think: 前缀，只保留 thinking 级别本身。
 	if (level === "high" || level === "xhigh") {
-		return rainbow(content);
+		return rainbow(label);
 	}
-	return safeFg(theme, thinkingColorToken(level), content);
+	return safeFg(theme, thinkingColorToken(level), label);
 }
 
-function renderContextSegment(
-	ctx: any,
-	theme: ThemeLike,
-	isStreaming: boolean,
-	liveUsage: AssistantUsage | null,
-	latestAssistantUsage: AssistantUsage | null,
-): string | null {
-	const usage = readContextUsageSnapshot(ctx, isStreaming, liveUsage, latestAssistantUsage);
+function renderContextSegment(usage: ContextUsage | null): string | null {
 	if (!usage || usage.tokens <= 0) return null;
 
 	if (usage.contextWindow && usage.contextWindow > 0) {
@@ -241,19 +262,18 @@ function renderContextSegment(
 			? usage.percent
 			: (usage.tokens / usage.contextWindow) * 100;
 		const color = contextColor(percent);
-		const prefix = applyHexColor(color, "ctx");
 		const value = applyHexColor(color, `${percent.toFixed(1)}%/${formatTokens(usage.contextWindow)}`);
-		return `${prefix} ${renderContextBar(percent, color)} ${value}`;
+		return `${renderContextBar(percent, color)} ${value}`;
 	}
 
-	return applyHexColor(CONTEXT_COLORS.normal, `ctx ${formatTokens(usage.tokens)}`);
+	return applyHexColor(CONTEXT_COLORS.normal, formatTokens(usage.tokens));
 }
 
 function renderElapsedSegment(theme: ThemeLike, startedAt: number, now: number, icons: BottomInputIconSet): string | null {
 	const elapsed = Math.max(0, now - startedAt);
 	if (elapsed < 1000) return null;
-	const prefix = icons.time ? `${icons.time} ` : "";
-	return safeFg(theme, "muted", `${prefix}${formatDuration(elapsed)}`);
+	// 线框规格要求使用 ◷，不受 Nerd Font 模式影响。
+	return safeFg(theme, "muted", `◷ ${formatDuration(elapsed)}`);
 }
 
 function fitStatusLine(segments: string[], width: number, theme: ThemeLike): string {
@@ -372,7 +392,7 @@ function readModelName(ctx: any): string | null {
 	}
 }
 
-function renderContextBar(percent: number, color: string): string {
+export function renderContextBar(percent: number, color = CONTEXT_COLORS.normal): string {
 	const clamped = Math.max(0, Math.min(100, percent));
 	const filledCells = Math.floor((clamped / 100) * CONTEXT_BAR_WIDTH);
 	const hasPartial = clamped > 0 && filledCells < CONTEXT_BAR_WIDTH;
