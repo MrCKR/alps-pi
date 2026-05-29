@@ -182,7 +182,6 @@ function normalizeSettings(settings: AlpsPiSettings | any, enabled: boolean): Al
 				...DEFAULT_CONFIG.settings.fixedBottomEditor,
 				...(settings.fixedBottomEditor ?? {}),
 			},
-			// bottomStatus 是旧字段，运行时配置只保留 beautifiedInput。
 			beautifiedInput: {
 				...DEFAULT_CONFIG.settings.beautifiedInput,
 				...(settings.beautifiedInput ?? {}),

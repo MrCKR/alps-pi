@@ -90,7 +90,7 @@ function renderStatus(overrides: Partial<Parameters<typeof renderBottomInputStat
 		footerData: undefined,
 		theme,
 		width: 80,
-		bottomStatusEnabled: true,
+		beautifiedInputEnabled: true,
 		isStreaming: false,
 		liveUsage: null,
 		latestAssistantUsage: null,
@@ -206,7 +206,7 @@ test("extension statuses 聚合过滤 notification、空值和内部 key", () =>
 	assert.doesNotMatch(line, /提示|internal/);
 });
 
-test("streaming 时 live usage 不被旧 core context 覆盖", () => {
+test("streaming 时 live usage 不被 core context 覆盖", () => {
 	const harness = createCtx();
 	harness.ctx.getContextUsage = () => ({ tokens: 190000, contextWindow: 272000, percent: 69.9 });
 	const { rendered } = renderStatus({

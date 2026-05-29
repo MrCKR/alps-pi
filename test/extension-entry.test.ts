@@ -40,9 +40,6 @@ function createHarness(options: { failEnable?: boolean } = {}) {
 		setBeautifiedInputEnabled(nextEnabled: boolean) {
 			runtimeCalls.push(`beautified:${nextEnabled}`);
 		},
-		setBottomStatusEnabled(nextEnabled: boolean) {
-			runtimeCalls.push(`beautified:${nextEnabled}`);
-		},
 		resetSessionStartTime() {
 			runtimeCalls.push("resetTime");
 		},

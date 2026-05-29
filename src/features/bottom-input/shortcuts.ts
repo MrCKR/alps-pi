@@ -159,7 +159,7 @@ export function matchesConfiguredShortcut(data: string, shortcut: string): boole
 	return matchesKey(data, normalizedShortcut);
 }
 
-/** Alt+S 多编码兼容；配置为 alt+s 时也匹配原版特殊输入。 */
+/** Alt+S 多编码匹配；配置为 alt+s 时也匹配原版特殊输入。 */
 export function isStashShortcutInput(data: string, shortcut = DEFAULT_BOTTOM_INPUT_SHORTCUTS.stashEditor): boolean {
 	if (isKeyRelease(data)) return false;
 	if (normalizeShortcut(shortcut) !== "alt+s") {

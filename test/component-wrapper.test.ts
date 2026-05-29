@@ -476,7 +476,7 @@ test("Tool 极简模式在调用行只有工具名时回退 result 首行", () =
 	class TodoLikeTool {
 		toolName = "todo";
 		isPartial = false;
-		result = { isError: false, content: [{ type: "text", text: "[completed] #1 梳理项目结构\n[pending] #2 后续任务" }] };
+		result = { isError: false, content: [{ type: "text", text: "[completed] #1 梳理项目结构\n[pending] #2 待处理任务" }] };
 		expanded = false;
 		render(_width: number) {
 			return ["todo =", "✓", "[completed] #1 梳理项目结构"];
@@ -497,7 +497,7 @@ test("Tool 极简模式在无标准 result.content 时跳过工具名与状态�
 		result = { isError: false };
 		expanded = false;
 		render(_width: number) {
-			return ["todo =", "✓", "[completed] #1 梳理项目结构", "[pending] #2 后续任务"];
+			return ["todo =", "✓", "[completed] #1 梳理项目结构", "[pending] #2 待处理任务"];
 		}
 	}
 	const { lines } = renderToolInstance(new TodoLikeTool());

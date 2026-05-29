@@ -16,7 +16,7 @@ export type BottomInputEditorState = {
 };
 
 export type BottomInputEditorOptions = {
-	/** 测试或旧版环境注入 CustomEditor 构造器；生产默认读取 pi-coding-agent 导出。 */
+	/** 测试注入 CustomEditor 构造器；生产默认读取 pi-coding-agent 导出。 */
 	CustomEditor?: new (tui: any, theme: any, keybindings: any, options?: any) => any;
 };
 
@@ -97,7 +97,7 @@ class FallbackBeautifiedInputEditor extends Editor {
 		this.stateRef = stateRef;
 	}
 
-	/** 旧版环境没有 CustomEditor 时只保留 pi-tui Editor 语义，并套用同一套 render 逻辑。 */
+	/** 没有 CustomEditor 时只保留 pi-tui Editor 语义，并套用同一套 render 逻辑。 */
 	render(width: number): string[] {
 		if (!this.stateRef.beautifiedInputEnabled || width < MIN_FRAME_WIDTH) return super.render(width);
 		const innerWidth = Math.max(1, Math.floor(width) - 4);

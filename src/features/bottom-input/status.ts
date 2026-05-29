@@ -28,11 +28,9 @@ export type BottomInputStatusState = {
 	theme: ThemeLike;
 	/** 渲染宽度。 */
 	width: number;
-	/** 兼容旧字段：美化输入框关闭时为 false。 */
-	bottomStatusEnabled: boolean;
-	/** 美化输入框是否开启；未传时按旧 bottomStatusEnabled 处理。 */
-	beautifiedInputEnabled?: boolean;
-	/** streaming 标记；为 true 时 liveUsage 优先于旧 core usage。 */
+	/** 美化输入框是否开启。 */
+	beautifiedInputEnabled: boolean;
+	/** streaming 标记；为 true 时 liveUsage 优先于 core context usage。 */
 	isStreaming: boolean;
 	/** message_update 捕获到的 usage。 */
 	liveUsage: AssistantUsage | null;
@@ -58,7 +56,7 @@ export type BottomInputFrameStatus = {
 };
 
 export type BottomInputStatusRender = {
-	/** 兼容旧主状态行；线框模式下为空。 */
+	/** 输入框上方状态行；当前由线框内嵌状态承载，保持为空。 */
 	topLines: string[];
 	secondaryLines: string[];
 	lastPromptLines: string[];
@@ -89,7 +87,7 @@ const INTERNAL_STATUS_KEYS = new Set(["alps-pi-bottom-input", "alps-pi-bottom-st
 /** 渲染输入框附属状态；美化关闭时不读取 model/thinking/context/elapsed，只保留下方附属信息。 */
 export function renderBottomInputStatus(input: BottomInputStatusState): BottomInputStatusRender {
 	const safeWidth = Math.max(1, Math.floor(input.width));
-	const enabled = input.beautifiedInputEnabled ?? input.bottomStatusEnabled;
+	const enabled = input.beautifiedInputEnabled;
 	const extensionStatuses = getVisibleExtensionStatuses(input.footerData);
 	if (!enabled) {
 		return {
@@ -135,16 +133,6 @@ export function renderFrameStatus(input: BottomInputStatusState & { icons?: Bott
 		context: renderContextSegment(usage),
 		elapsed: renderElapsedSegment(input.theme, input.sessionStartTime, input.now, input.icons ?? getBottomInputIcons()),
 	};
-}
-
-/** 兼容旧测试/调用方：返回可见状态摘要行。 */
-export function renderTopStatusLines(input: BottomInputStatusState & { icons?: BottomInputIconSet }): string[] {
-	const safeWidth = Math.max(1, Math.floor(input.width));
-	const frame = renderFrameStatus({ ...input, width: safeWidth });
-	const left = [frame.model, frame.thinking].filter((segment): segment is string => Boolean(segment)).join(safeFg(input.theme, "borderMuted", " · "));
-	const segments = [left || null, frame.context, frame.elapsed].filter((segment): segment is string => Boolean(segment));
-	if (segments.length === 0) return [];
-	return [fitStatusLine(segments, safeWidth, input.theme)];
 }
 
 /** 渲染输入框下方 extension statuses 聚合行。 */
@@ -274,15 +262,6 @@ function renderElapsedSegment(theme: ThemeLike, startedAt: number, now: number, 
 	if (elapsed < 1000) return null;
 	// 线框规格要求使用 ◷，不受 Nerd Font 模式影响。
 	return safeFg(theme, "muted", `◷ ${formatDuration(elapsed)}`);
-}
-
-function fitStatusLine(segments: string[], width: number, theme: ThemeLike): string {
-	const separator = safeFg(theme, "borderMuted", " › ");
-	const fitted = [...segments];
-	while (fitted.length > 1 && visibleWidth(` ${fitted.join(separator)} `) > width) {
-		fitted.pop();
-	}
-	return truncateToWidth(` ${fitted.join(separator)} `, width, "…", false);
 }
 
 function normalizeModelName(value: unknown): string | null {

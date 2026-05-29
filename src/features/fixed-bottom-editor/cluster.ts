@@ -1,15 +1,8 @@
 /** 功能：为 fixed bottom editor 组装底部固定区域 cluster 实现者：alps 实现日期：2026-05-27 */
 
-import * as PiTui from "@earendil-works/pi-tui";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { CURSOR_MARKER, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
-const FALLBACK_CURSOR_MARKER = "\x1b_pi:c\x07";
-
-/** 兼容旧版 pi-tui：若未导出 CURSOR_MARKER，则使用当前 APC 协议值。 */
-export const FIXED_EDITOR_CURSOR_MARKER =
-	typeof (PiTui as { CURSOR_MARKER?: unknown }).CURSOR_MARKER === "string"
-		? (PiTui as { CURSOR_MARKER: string }).CURSOR_MARKER
-		: FALLBACK_CURSOR_MARKER;
+export const FIXED_EDITOR_CURSOR_MARKER = CURSOR_MARKER;
 
 export type FixedEditorClusterInput = {
 	/** 原生 status 行，例如 working 动画、todo/status 区域；位于主状态栏上方。 */
@@ -22,8 +15,6 @@ export type FixedEditorClusterInput = {
 	secondaryLines?: readonly string[];
 	/** 输入框下方最后一行用户问题。 */
 	lastPromptLines?: readonly string[];
-	/** 兼容旧调用：追加到 secondaryLines。 */
-	footerLines?: readonly string[];
 	/** 最大可见列宽。 */
 	width: number;
 	/** cluster 最大行数。 */
@@ -97,12 +88,12 @@ function collectClusterSections(input: FixedEditorClusterInput, width: number): 
 		status: normalizeLines(input.statusLines, width),
 		top: normalizeLines(input.topLines, width),
 		editor: normalizeLines(input.editorLines, width),
-		secondary: normalizeLines([...(input.secondaryLines ?? []), ...(input.footerLines ?? [])], width),
+		secondary: normalizeLines(input.secondaryLines, width),
 		lastPrompt: normalizeLines(input.lastPromptLines, width),
 	};
 }
 
-/** 复制输入行、裁剪宽度并提取光标 marker，避免调用方数组被后续处理意外共享。 */
+/** 复制输入行、裁剪宽度并提取光标 marker，避免调用方数组被下游处理意外共享。 */
 function normalizeLines(lines: readonly string[] | undefined, width: number): ClusterLine[] {
 	return lines
 		? [...lines].map((line) => extractCursorMarker(truncateVisibleLine(line, width)))

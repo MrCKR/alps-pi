@@ -21,11 +21,11 @@ function notify(ctx: any, message: string, level: "info" | "warning" | "error" =
 			ctx.ui.notify(message, level);
 		}
 	} catch {
-		// 通知依赖当前 session UI；reload 后旧 ctx 失效时直接忽略。
+		// 通知依赖当前 session UI；reload 后 stale ctx 失效时直接忽略。
 	}
 }
 
-/** 安全读取命令 UI；ctx stale 时返回 undefined，避免设置面板回调继续使用旧 session。 */
+/** 安全读取命令 UI；ctx stale 时返回 undefined，避免设置面板回调继续使用失效 session。 */
 function readCommandUI(ctx: any): any | undefined {
 	try {
 		return ctx?.ui;
@@ -107,7 +107,7 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 								return result;
 							}) ?? getGlobalPatchState(),
 							setFixedBottomEditorEnabled: (enabled) => {
-								// 固定输入框依赖当前 interactive session；ctx stale 时旧设置面板回调失效。
+								// 固定输入框依赖当前 interactive session；ctx stale 时当前设置面板回调失效。
 								const result = runIfActive(() => setFixedEnabled(enabled, ctx));
 								refocusSettingsOverlay();
 								return result;

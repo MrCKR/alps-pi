@@ -106,7 +106,7 @@ test("Pi 原生 settings 的 alps-pi 命名空间可读写且保留其它字段�
 	}
 });
 
-test("Pi 原生 settings 缺少 alps-pi 时从旧独立文件迁移并忽略 bottomStatus", () => {
+test("Pi 原生 settings 缺少 alps-pi 时从独立文件迁移并忽略 bottomStatus", () => {
 	const dir = mkdtempSync(join(tmpdir(), "alps-pi-settings-"));
 	const piFile = join(dir, "settings.json");
 	const legacyFile = join(dir, "legacy-settings.json");

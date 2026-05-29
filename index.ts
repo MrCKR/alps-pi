@@ -4,23 +4,18 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerAlpsPiCommand } from "./src/commands.ts";
 import { disablePatch, enablePatch, getGlobalPatchState } from "./src/features/chrome-frame/index.ts";
 import { cloneSettings, readPersistedSettings, writePersistedSettings } from "./src/settings-store.ts";
-import { registerBottomStatusShortcuts } from "./src/features/bottom-status/index.ts";
-import { createBottomInputRuntime, type BottomInputRuntime } from "./src/features/bottom-input/index.ts";
+import { createBottomInputRuntime, registerBottomInputShortcuts, type BottomInputRuntime } from "./src/features/bottom-input/index.ts";
 
 export type AlpsPiRuntimeDeps = {
 	/** 测试注入点：生产环境使用模块级 bottom input runtime。 */
 	bottomInputRuntime?: BottomInputRuntime;
-	/** 兼容旧测试注入名：会被当作 bottom input runtime 使用。 */
-	fixedBottomEditorRuntime?: BottomInputRuntime;
-	/** 兼容旧测试注入名：不再单独注册 widget。 */
-	bottomStatusRuntime?: BottomInputRuntime;
 };
 
 const defaultBottomInputRuntime = createBottomInputRuntime();
 
 /** 注册扩展入口；deps 仅供生命周期测试注入，生产环境不传。 */
 export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDeps = {}) {
-	const bottomInputRuntime = deps.bottomInputRuntime ?? deps.fixedBottomEditorRuntime ?? deps.bottomStatusRuntime ?? defaultBottomInputRuntime;
+	const bottomInputRuntime = deps.bottomInputRuntime ?? defaultBottomInputRuntime;
 
 	const state = getGlobalPatchState();
 	const persistedSettings = readPersistedSettings();
@@ -72,7 +67,7 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 			writePersistedSettings(settings);
 		},
 	});
-	registerBottomStatusShortcuts(pi, bottomInputRuntime);
+	registerBottomInputShortcuts(pi, bottomInputRuntime);
 
 	// session_start 保存当前 ctx；若设置已打开，则立即尝试安装 fixed editor。
 	pi.on("session_start", (_event: any, ctx: any) => {

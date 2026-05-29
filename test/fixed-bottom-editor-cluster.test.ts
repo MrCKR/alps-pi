@@ -27,7 +27,7 @@ test("ANSI、CJK 和 emoji 不导致可见宽度超出 width", () => {
 	const cluster = renderFixedEditorCluster({
 		statusLines: ["\x1b[31m状态：准备好了\x1b[39m"],
 		editorLines: ["输入 😀😀😀 中文内容"],
-		footerLines: ["\x1b[2mfooter 尾部信息很长\x1b[22m"],
+		secondaryLines: ["\x1b[2mfooter 尾部信息很长\x1b[22m"],
 		width: 10,
 		maxHeight: 5,
 	});

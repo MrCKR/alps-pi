@@ -331,7 +331,7 @@ export class FixedBottomEditorCompositor {
 		target.render = hiddenRender;
 	}
 
-	/** 使用隐藏前的 render 函数渲染目标，供后续 fixed editor cluster 复用原 editor。 */
+	/** 使用隐藏前的 render 函数渲染目标，供 fixed editor cluster 复用原 editor。 */
 	renderHidden(target: FixedEditorRenderable, width: number): string[] {
 		const patch = this.patchedRenders.find((candidate) => candidate.target === target);
 		const render = patch?.originalRender ?? target.render;

@@ -9,7 +9,7 @@ test("默认开启 Tool 极简模式且默认不收起 edit", () => {
 	assert.equal(DEFAULT_SETTINGS.chromeFrame.compactEditTool, false);
 });
 
-test("固定输入框和美化输入框默认开启且无旧 bottomStatus", () => {
+test("固定输入框和美化输入框默认开启且无 bottomStatus", () => {
 	assert.equal(DEFAULT_SETTINGS.fixedBottomEditor.enabled, true);
 	assert.equal(DEFAULT_SETTINGS.beautifiedInput.enabled, true);
 	assert.equal("bottomStatus" in DEFAULT_SETTINGS, false);

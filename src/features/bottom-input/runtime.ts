@@ -1,6 +1,7 @@
 /** 功能：统一 bottom-input runtime，独占 editor/footer 并组装 fixed cluster 实现者：alps 实现日期：2026-05-28 */
 
 import * as PiAgent from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { FixedBottomEditorStatus } from "../../settings.ts";
 import { renderFixedEditorCluster } from "./cluster.ts";
 import {
@@ -41,12 +42,8 @@ export type BottomInputRuntime = {
 	dispose(): void;
 	/** 读取 fixed editor 状态快照。 */
 	getStatus(): FixedBottomEditorStatus;
-	/** 切换输入框线框美化；兼容旧 bottom status API。 */
+	/** 切换输入框线框美化。 */
 	setBeautifiedInputEnabled?(enabled: boolean): void;
-	/** 兼容旧 bottom status API；映射到输入框线框美化。 */
-	setBottomStatusEnabled?(enabled: boolean): void;
-	/** 兼容旧 bottom status API。 */
-	setEnabledStatus?(enabled: boolean): void;
 	/** 当前 UI session 重新开始计时。 */
 	resetSessionStartTime(): void;
 	/** 记录 latest prompt。 */
@@ -170,7 +167,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		this.shortcuts = resolveBottomInputShortcuts(options.shortcuts);
 	}
 
-	/** 保存当前 session context；切换 session 前先释放旧 UI 资源，避免 stale ctx 继续被异步回调访问。 */
+	/** 保存当前 session context；切换 session 前先释放上一组 UI 资源，避免 stale ctx 继续被异步回调访问。 */
 	bindSession(ctx: any): void {
 		const previousCtx = this.ctx;
 		const previousUi = this.ui;
@@ -228,14 +225,6 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 
 	setBeautifiedInputEnabled(enabled: boolean): void {
 		this.configure({ beautifiedInputEnabled: enabled });
-	}
-
-	setBottomStatusEnabled(enabled: boolean): void {
-		this.setBeautifiedInputEnabled(enabled);
-	}
-
-	setEnabledStatus(enabled: boolean): void {
-		this.setBeautifiedInputEnabled(enabled);
 	}
 
 	resetSessionStartTime(): void {
@@ -613,7 +602,6 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 			footerData: this.footerData,
 			theme,
 			width,
-			bottomStatusEnabled: this.beautifiedInputEnabled,
 			beautifiedInputEnabled: this.beautifiedInputEnabled,
 			isStreaming: this.isStreaming,
 			liveUsage: this.liveUsage,
@@ -628,7 +616,6 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 			footerData: this.footerData,
 			theme,
 			width,
-			bottomStatusEnabled: false,
 			beautifiedInputEnabled: false,
 			isStreaming: false,
 			liveUsage: null,
@@ -915,7 +902,7 @@ function findFixedEditorContainers(tui: any, editor: any): FixedEditorContainers
 	return null;
 }
 
-/** 兼容真实 Pi 顺序：statusContainer -> widgetAbove -> editorContainer -> widgetBelow。 */
+/** 按真实 Pi 顺序读取容器：statusContainer -> widgetAbove -> editorContainer -> widgetBelow。 */
 function inferAdjacentContainers(children: any[], editorIndex: number, editorContainer: FixedEditorRenderable): FixedEditorContainers {
 	return {
 		statusContainer: asRenderable(children[editorIndex - 2]),
@@ -938,7 +925,7 @@ function revealFixedEditorContainers(tui: any): void {
 		try {
 			if (container && typeof container.render === "function") delete container.render;
 		} catch {
-			// 容器可能来自第三方组件；恢复失败时交给后续 full render 自愈。
+			// 容器可能来自第三方组件；恢复失败时交给下一次 full render 自愈。
 		}
 	}
 }
@@ -1080,11 +1067,21 @@ function copyTextToClipboard(text: string, copyToClipboard: (text: string) => Pr
 	}
 }
 
+/** 注册 bottom-input 输入框快捷键；raw terminal input 由 runtime 统一处理。 */
+export function registerBottomInputShortcuts(pi: ExtensionAPI, runtime: BottomInputRuntime): void {
+	pi.registerShortcut?.("alt+s", {
+		description: "暂存/恢复当前输入框文本",
+		handler: (ctx: any) => {
+			runtime.stashOrRestoreEditorText(ctx);
+		},
+	});
+}
+
 function notify(ctx: any, message: string, level: "info" | "warning" | "error"): void {
 	try {
 		ctx?.ui?.notify?.(message, level);
 	} catch {
-		// 通知依赖 session UI；reload 后旧 ctx 失效时直接忽略。
+		// 通知依赖 session UI；reload 后 stale ctx 失效时直接忽略。
 	}
 }
 

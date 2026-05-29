@@ -141,10 +141,10 @@ test("模拟 reload 后再次加载模块不重复 patch", () => {
 	assert.equal(UserFake.prototype.render, first);
 });
 
-test("模拟旧 wrapper 热重载后会迁移到当前 wrapper 且保留原始 render", () => {
+test("模拟缺少元数据的 wrapper 热重载后会迁移到当前 wrapper 且保留原始 render", () => {
 	const list = targets();
 	const original = UserFake.prototype.render;
-	// 模拟旧版本已 patch 但没有当前 wrapper 元数据的 render。
+	// 模拟已 patch 但没有当前 wrapper 元数据的 render。
 	const oldWrapped = function oldAlpsChromeWrappedRender(this: UserFake, width: number) {
 		return original.call(this, width);
 	};
@@ -162,7 +162,7 @@ test("模拟旧 wrapper 热重载后会迁移到当前 wrapper 且保留原始 r
 	assert.equal(UserFake.prototype.render, original);
 });
 
-test("模拟同 key 旧版本 wrapper 热重载后会重新包裹", () => {
+test("模拟同 key 不同版本 wrapper 热重载后会重新包裹", () => {
 	const list = targets();
 	const original = UserFake.prototype.render;
 	const oldWrapped = function oldVersionWrappedRender(this: UserFake, width: number) {

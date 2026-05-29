@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createFixedBottomEditorRuntime } from "../src/features/fixed-bottom-editor/runtime.ts";
+import { createBottomInputRuntime } from "../src/features/fixed-bottom-editor/runtime.ts";
 import type { FixedEditorTerminal } from "../src/features/fixed-bottom-editor/compositor.ts";
 import { stripAnsi } from "./helpers.test.ts";
 
@@ -148,7 +148,7 @@ function assertLayoutRestored(harness: ReturnType<typeof createCtx>) {
 }
 
 test("未 bind session 时 setEnabled(true) fail closed", () => {
-	const runtime = createFixedBottomEditorRuntime();
+	const runtime = createBottomInputRuntime();
 	const status = runtime.setEnabled(true);
 
 	assert.equal(status.enabled, false);
@@ -158,7 +158,7 @@ test("未 bind session 时 setEnabled(true) fail closed", () => {
 
 test("无 UI session 能力时 setEnabled(true) fail closed", () => {
 	for (const ctx of [{ hasUI: false, ui: {} }, { hasUI: true }, { hasUI: true, ui: undefined }]) {
-		const runtime = createFixedBottomEditorRuntime();
+		const runtime = createBottomInputRuntime();
 		runtime.bindSession(ctx);
 
 		const status = runtime.setEnabled(true);
@@ -171,7 +171,7 @@ test("无 UI session 能力时 setEnabled(true) fail closed", () => {
 
 test("缺 setEditorComponent 时 fail closed 且不调用 setFooter", () => {
 	const footerCalls: any[] = [];
-	const runtime = createFixedBottomEditorRuntime();
+	const runtime = createBottomInputRuntime();
 	runtime.bindSession({
 		hasUI: true,
 		ui: {
@@ -191,7 +191,7 @@ test("缺 setEditorComponent 时 fail closed 且不调用 setFooter", () => {
 
 test("缺 setFooter 时 fail closed 且不调用 setEditorComponent", () => {
 	const editorCalls: any[] = [];
-	const runtime = createFixedBottomEditorRuntime();
+	const runtime = createBottomInputRuntime();
 	runtime.bindSession({
 		hasUI: true,
 		ui: {
@@ -211,7 +211,7 @@ test("缺 setFooter 时 fail closed 且不调用 setEditorComponent", () => {
 
 test("bind 后 setEnabled(true) 调用 setEditorComponent/setFooter", () => {
 	const harness = createCtx();
-	const runtime = createFixedBottomEditorRuntime();
+	const runtime = createBottomInputRuntime();
 
 	runtime.bindSession(harness.ctx);
 	const status = runtime.setEnabled(true);
@@ -230,7 +230,7 @@ test("bind 后 setEnabled(true) 调用 setEditorComponent/setFooter", () => {
 test("beautified ON 且 fixed OFF 时安装 custom editor/footer 但不安装 compositor", () => {
 	const harness = createCtx({ autoInstantiate: true });
 	let compositorCreated = false;
-	const runtime = createFixedBottomEditorRuntime({
+	const runtime = createBottomInputRuntime({
 		createCompositor() {
 			compositorCreated = true;
 			throw new Error("should not install fixed compositor");
@@ -251,7 +251,7 @@ test("beautified ON 且 fixed OFF 时安装 custom editor/footer 但不安装 co
 test("beautified ON 且 fixed OFF 时 footer 渲染下方附属信息", () => {
 	const harness = createCtx({ autoInstantiate: true });
 	let compositorCreated = false;
-	const runtime = createFixedBottomEditorRuntime({
+	const runtime = createBottomInputRuntime({
 		startClock: false,
 		createCompositor() {
 			compositorCreated = true;
@@ -301,7 +301,7 @@ test("fixed 模式下程序化写入 editor 也会主动请求底部重绘", asy
 
 test("beautified OFF 且 fixed OFF 时恢复原生 editor/footer", () => {
 	const harness = createCtx({ autoInstantiate: true });
-	const runtime = createFixedBottomEditorRuntime();
+	const runtime = createBottomInputRuntime();
 
 	runtime.bindSession(harness.ctx);
 	runtime.setBeautifiedInputEnabled?.(true);
@@ -314,7 +314,7 @@ test("beautified OFF 且 fixed OFF 时恢复原生 editor/footer", () => {
 
 test("footer factory 传入 fake tui 后安装 compositor", () => {
 	const harness = createCtx();
-	const runtime = createFixedBottomEditorRuntime();
+	const runtime = createBottomInputRuntime();
 
 	runtime.bindSession(harness.ctx);
 	runtime.setEnabled(true);
@@ -330,7 +330,7 @@ test("footer factory 传入 fake tui 后安装 compositor", () => {
 
 test("安装 compositor 时把原生 status 与 widget 容器纳入底部固定 cluster", () => {
 	const harness = createCtx({ autoInstantiate: true, attachAdjacentContainers: true });
-	const runtime = createFixedBottomEditorRuntime();
+	const runtime = createBottomInputRuntime();
 
 	runtime.bindSession(harness.ctx);
 	const status = runtime.setEnabled(true);
@@ -347,7 +347,7 @@ test("安装 compositor 时把原生 status 与 widget 容器纳入底部固定 
 
 test("缺 terminal.write 时失败且不半安装", () => {
 	const harness = createCtx({ terminal: { columns: 40, rows: 12 }, autoInstantiate: true });
-	const runtime = createFixedBottomEditorRuntime();
+	const runtime = createBottomInputRuntime();
 
 	runtime.bindSession(harness.ctx);
 	const status = runtime.setEnabled(true);
@@ -361,7 +361,7 @@ test("缺 terminal.write 时失败且不半安装", () => {
 
 test("找不到 editor container 时 fail closed", () => {
 	const harness = createCtx({ autoInstantiate: true, attachEditorContainer: false });
-	const runtime = createFixedBottomEditorRuntime();
+	const runtime = createBottomInputRuntime();
 
 	runtime.bindSession(harness.ctx);
 	const status = runtime.setEnabled(true);
@@ -375,7 +375,7 @@ test("找不到 editor container 时 fail closed", () => {
 test("compositor hideRenderable 抛错时 fail closed 并释放已创建 compositor", () => {
 	const harness = createCtx({ autoInstantiate: true });
 	const calls: string[] = [];
-	const runtime = createFixedBottomEditorRuntime({
+	const runtime = createBottomInputRuntime({
 		createCompositor() {
 			return {
 				install() {
@@ -409,7 +409,7 @@ test("compositor hideRenderable 抛错时 fail closed 并释放已创建 composi
 test("compositor install 抛错时 fail closed 并释放已创建 compositor", () => {
 	const harness = createCtx({ autoInstantiate: true });
 	const calls: string[] = [];
-	const runtime = createFixedBottomEditorRuntime({
+	const runtime = createBottomInputRuntime({
 		createCompositor() {
 			return {
 				install() {
@@ -443,7 +443,7 @@ test("compositor install 抛错时 fail closed 并释放已创建 compositor", (
 test("失败后修复 ctx 再启用可成功安装", () => {
 	const badTerminal = { columns: 40, rows: 12 };
 	const harness = createCtx({ terminal: badTerminal, autoInstantiate: true });
-	const runtime = createFixedBottomEditorRuntime();
+	const runtime = createBottomInputRuntime();
 
 	runtime.bindSession(harness.ctx);
 	const failed = runtime.setEnabled(true);
@@ -459,10 +459,10 @@ test("失败后修复 ctx 再启用可成功安装", () => {
 	assert.equal(runtime.getStatus().installed, true);
 });
 
-test("已安装后 bindSession(newCtx) 会先释放旧 session layout/compositor", () => {
+test("已安装后 bindSession(newCtx) 会先释放上一组 session layout/compositor", () => {
 	const oldHarness = createCtx({ autoInstantiate: true });
 	const newHarness = createCtx({ autoInstantiate: true });
-	const runtime = createFixedBottomEditorRuntime();
+	const runtime = createBottomInputRuntime();
 
 	runtime.bindSession(oldHarness.ctx);
 	const installed = runtime.setEnabled(true);
@@ -478,7 +478,7 @@ test("已安装后 bindSession(newCtx) 会先释放旧 session layout/compositor
 
 test("重复启用不重复安装", () => {
 	const harness = createCtx({ autoInstantiate: true });
-	const runtime = createFixedBottomEditorRuntime();
+	const runtime = createBottomInputRuntime();
 
 	runtime.bindSession(harness.ctx);
 	const first = runtime.setEnabled(true);
@@ -492,7 +492,7 @@ test("重复启用不重复安装", () => {
 
 test("setEnabled(false) 只关闭 fixed layer 并保留美化 editor/footer", () => {
 	const harness = createCtx({ autoInstantiate: true });
-	const runtime = createFixedBottomEditorRuntime();
+	const runtime = createBottomInputRuntime();
 
 	runtime.bindSession(harness.ctx);
 	runtime.setEnabled(true);
@@ -516,7 +516,7 @@ test("setEnabled(false) 只关闭 fixed layer 并保留美化 editor/footer", ()
 
 test("dispose 幂等并清理 session 引用", () => {
 	const harness = createCtx({ autoInstantiate: true });
-	const runtime = createFixedBottomEditorRuntime();
+	const runtime = createBottomInputRuntime();
 
 	runtime.bindSession(harness.ctx);
 	runtime.setEnabled(true);
@@ -531,7 +531,7 @@ test("dispose 幂等并清理 session 引用", () => {
 
 function createCountingRuntime() {
 	let repaintCalls = 0;
-	const runtime = createFixedBottomEditorRuntime({
+	const runtime = createBottomInputRuntime({
 		createCompositor() {
 			return {
 				install() {},
@@ -564,7 +564,7 @@ test("美化输入框开启时 fixed cluster 渲染已由 custom editor 按内�
 	const harness = createCtx({ autoInstantiate: true });
 	const renderWidths: number[] = [];
 	let capturedRenderCluster: ((width: number, terminalRows: number) => any) | undefined;
-	const runtime = createFixedBottomEditorRuntime({
+	const runtime = createBottomInputRuntime({
 		createCompositor(options) {
 			capturedRenderCluster = options.renderCluster;
 			return {
@@ -639,7 +639,7 @@ test("dispose 会让 pending render 失效且不再 repaint", async () => {
 
 test("dispose 使用已缓存 UI 恢复 layout，不重新读取 stale ctx.ui", () => {
 	const harness = createCtx({ autoInstantiate: true });
-	const runtime = createFixedBottomEditorRuntime();
+	const runtime = createBottomInputRuntime();
 	runtime.bindSession(harness.ctx);
 	runtime.setEnabled(true);
 	Object.defineProperty(harness.ctx, "ui", {
@@ -654,10 +654,10 @@ test("dispose 使用已缓存 UI 恢复 layout，不重新读取 stale ctx.ui", 
 	assert.equal(harness.statusCalls.at(-1)?.value, undefined);
 });
 
-test("旧 input listener 在重新 bind session 后不会消费输入", () => {
+test("失效 input listener 在重新 bind session 后不会消费输入", () => {
 	const oldHarness = createCtx({ autoInstantiate: true });
 	const newHarness = createCtx({ autoInstantiate: true });
-	const runtime = createFixedBottomEditorRuntime();
+	const runtime = createBottomInputRuntime();
 	runtime.bindSession(oldHarness.ctx);
 	runtime.setEnabled(true);
 	const oldHandler = oldHarness.getInputHandler();

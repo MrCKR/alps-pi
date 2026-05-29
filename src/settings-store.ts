@@ -28,7 +28,7 @@ export function getPiSettingsPath(): string {
 	return join(getAgentDir(), "settings.json");
 }
 
-/** 返回旧版独立设置文件路径；只用于 fallback 读取和迁移。 */
+/** 返回独立设置文件路径；只用于 fallback 读取和迁移。 */
 export function getLegacySettingsPath(): string {
 	return join(getAgentDir(), "alps-pi", "settings.json");
 }
@@ -52,7 +52,7 @@ export function writePersistedSettings(settings: AlpsPiSettings, path?: string):
 	writeNamespacedPiSettings(settings, getPiSettingsPath());
 }
 
-/** 从指定 Pi settings 文件读取 "alps-pi" 命名空间；缺失时尝试从旧文件迁移。 */
+/** 从指定 Pi settings 文件读取 "alps-pi" 命名空间；缺失时尝试从独立文件迁移。 */
 export function readNamespacedPiSettings(piSettingsPath: string, legacySettingsPath = getLegacySettingsPath()): AlpsPiSettings {
 	const defaults = cloneStartupSettings();
 	const namespaceSettings = readNamespaceFromPiFile(piSettingsPath, defaults);
@@ -148,7 +148,6 @@ function normalizeSettings(value: unknown, defaults: AlpsPiSettings): AlpsPiSett
 		fixedBottomEditor: {
 			enabled: readBoolean(raw.fixedBottomEditor, "enabled", defaults.fixedBottomEditor.enabled),
 		},
-		// 旧 bottomStatus 持久化字段在读取时直接忽略，写回时也不会输出。
 		beautifiedInput: {
 			enabled: readBoolean(raw.beautifiedInput, "enabled", defaults.beautifiedInput.enabled),
 		},

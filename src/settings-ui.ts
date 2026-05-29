@@ -167,7 +167,7 @@ export class AlpsPiSettingsComponent extends Container {
 			() => this.close(),
 			{ enableSearch: true },
 		);
-		// 官方 SettingsList 只在内部维护 item 状态；这里按当前运行时状态同步一次，避免测试或外部回调先改 state 后再打开 UI 时出现陈旧 currentValue。
+		// 官方 SettingsList 只在内部维护 item 状态；这里按当前运行时状态同步一次，避免测试或外部回调先改 state 后再打开 UI 时出现过期 currentValue。
 		this.syncAllMainValues();
 		resetSettingsListSelection(this.settingsList);
 		this.addChild(new FramedSettingsPanel(this.settingsList, theme));
