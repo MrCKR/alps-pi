@@ -99,6 +99,43 @@ test("disablePatch 会恢复原始 render，重复 disable 不抛异常", () => 
 	assert.doesNotThrow(() => disablePatch(list));
 });
 
+test("disablePatch 遇到后续第三方 wrapper 时跳过恢复，避免覆盖其它扩展", () => {
+	const list = targets();
+	enablePatch(list);
+	const alpsWrapped = UserFake.prototype.render;
+	function thirdPartyWrapped(this: UserFake, width: number) {
+		return alpsWrapped.call(this, width);
+	}
+	UserFake.prototype.render = thirdPartyWrapped as typeof UserFake.prototype.render;
+
+	const state = disablePatch(list);
+
+	assert.equal(UserFake.prototype.render, thirdPartyWrapped);
+	assert.equal(state.patched.has("UserMessageComponent"), false);
+	assert.match(state.failures.get("UserMessageComponent") ?? "", /skip restore/);
+});
+
+
+
+test("disable-skip 后再次 enable 对未知 wrapper fail closed 且不叠加 alps wrapper", () => {
+	const list = targets();
+	enablePatch(list);
+	const alpsWrapped = UserFake.prototype.render;
+	function thirdPartyWrapped(this: UserFake, width: number) {
+		return alpsWrapped.call(this, width);
+	}
+	UserFake.prototype.render = thirdPartyWrapped as typeof UserFake.prototype.render;
+	disablePatch(list);
+
+	const state = enablePatch(list);
+	const output = new UserFake().render(28).map(stripAnsi).join("\n");
+
+	assert.equal(UserFake.prototype.render, thirdPartyWrapped);
+	assert.equal(state.enabled, false);
+	assert.match(state.failures.get("UserMessageComponent") ?? "", /skip enable/);
+	assert.equal((output.match(/USER/g) ?? []).length, 1);
+});
+
 test("部分组件缺失时记录 failure，不影响其他组件", () => {
 	const list = targets();
 	list.push({ id: "MissingComponent", kind: "branch", ctor: undefined, getTheme: () => createFakeTheme() });
@@ -127,7 +164,32 @@ test("patched render 抛异常时回退原始 render", () => {
 	enablePatch(list);
 	const instance = new UserFake();
 	const lines = instance.render(1);
-	assert.deepEqual(lines, ["user:1"]);
+	assert.deepEqual(lines.map(stripAnsi), ["u"]);
+});
+
+
+test("实际 wrapper 窄宽度 fallback 会净化危险 terminal escape", () => {
+	class DangerousFake {
+		render(_width: number) {
+			return ["A\x1b]52;c;AAAA\x07B\x1b[2JC\x1bPpayload\x1b\\D\x1b_payload\x1b\\E\x1b^pm\x1b\\F\x1b[31mG"];
+		}
+	}
+	const list: ComponentTarget[] = [
+		{ id: "DangerousMessageComponent", kind: "custom", ctor: DangerousFake, core: true, getTheme: () => createFakeTheme() },
+	];
+	enablePatch(list);
+
+	for (const width of [1, 5, 7]) {
+		const output = new DangerousFake().render(width).join("");
+		assert.doesNotMatch(output, /\x1b\]52/);
+		assert.doesNotMatch(output, /\x1b\[2J/);
+		assert.doesNotMatch(output, /\x1bP/);
+		assert.doesNotMatch(output, /\x1b_/);
+		assert.doesNotMatch(output, /\x1b\^/);
+		assert.doesNotMatch(output, /payload|pm/);
+		assert.doesNotMatch(output, /\x1b\[(?![0-9;:]*m)/);
+		assert.ok(output.length <= width + 16, output);
+	}
 });
 
 test("模拟 reload 后再次加载模块不重复 patch", () => {

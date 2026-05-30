@@ -21,7 +21,7 @@ export type SettingsPanelOps = {
 	enableChromeFrame?: () => PatchState;
 	disableChromeFrame?: () => PatchState;
 	setFixedBottomEditorEnabled?: (enabled: boolean) => FixedBottomEditorStatus | void;
-	setBeautifiedInputEnabled?: (enabled: boolean) => void;
+	setBeautifiedInputEnabled?: (enabled: boolean) => FixedBottomEditorStatus | void;
 	onSettingsChanged?: (settings: AlpsPiSettings) => void;
 	requestRender?: () => void;
 };
@@ -326,11 +326,14 @@ export class AlpsPiSettingsComponent extends Container {
 				this.syncMainValue(id, state.config.settings.fixedBottomEditor.enabled);
 				return;
 			}
-			case "beautifiedInput.enabled":
+			case "beautifiedInput.enabled": {
 				state.config.settings.beautifiedInput.enabled = booleanValue(newValue);
-				this.ops.setBeautifiedInputEnabled(state.config.settings.beautifiedInput.enabled);
+				const status = this.ops.setBeautifiedInputEnabled(state.config.settings.beautifiedInput.enabled);
+				if (status) state.config.settings.fixedBottomEditor.enabled = status.enabled;
 				this.syncMainValue(id, state.config.settings.beautifiedInput.enabled);
+				this.syncMainValue("fixedBottomEditor.enabled", state.config.settings.fixedBottomEditor.enabled);
 				return;
+			}
 		}
 	}
 

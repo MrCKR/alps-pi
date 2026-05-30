@@ -59,11 +59,14 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 			const state = getGlobalPatchState();
 			state.config.settings.beautifiedInput.enabled = enabled;
 			bottomInputRuntime.bindSession(ctx);
-			bottomInputRuntime.configure?.({
+			const status = bottomInputRuntime.configure?.({
 				fixedEnabled: state.config.settings.fixedBottomEditor.enabled,
 				beautifiedInputEnabled: enabled,
-			}) ?? bottomInputRuntime.setBeautifiedInputEnabled?.(enabled);
+			});
+			if (!bottomInputRuntime.configure) bottomInputRuntime.setBeautifiedInputEnabled?.(enabled);
+			if (status) state.config.settings.fixedBottomEditor.enabled = status.enabled;
 			writePersistedSettings(state.config.settings);
+			return status;
 		},
 		onSettingsChanged: (settings) => {
 			bottomInputRuntime.setShortcuts?.(settings.shortcuts);
@@ -90,6 +93,7 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 			: bottomInputRuntime.setEnabled(state.config.settings.fixedBottomEditor.enabled);
 		if (!bottomInputRuntime.configure) bottomInputRuntime.setBeautifiedInputEnabled?.(state.config.settings.beautifiedInput.enabled);
 		state.config.settings.fixedBottomEditor.enabled = status.enabled;
+		if (status.failure) writePersistedSettings(state.config.settings);
 	});
 
 	pi.on("model_select", (_event: any, ctx: any) => {

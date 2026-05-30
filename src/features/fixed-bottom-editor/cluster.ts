@@ -1,6 +1,7 @@
 /** 功能：为 fixed bottom editor 组装底部固定区域 cluster 实现者：alps 实现日期：2026-05-27 */
 
 import { CURSOR_MARKER, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { sanitizeTerminalText } from "../../terminal-sanitizer.ts";
 
 export const FIXED_EDITOR_CURSOR_MARKER = CURSOR_MARKER;
 
@@ -96,8 +97,15 @@ function collectClusterSections(input: FixedEditorClusterInput, width: number): 
 /** 复制输入行、裁剪宽度并提取光标 marker，避免调用方数组被下游处理意外共享。 */
 function normalizeLines(lines: readonly string[] | undefined, width: number): ClusterLine[] {
 	return lines
-		? [...lines].map((line) => extractCursorMarker(truncateVisibleLine(line, width)))
+		? [...lines].map((line) => extractCursorMarker(truncateVisibleLine(sanitizeClusterLine(line), width)))
 		: [];
+}
+
+/** 净化 cluster 行；Pi 内部 cursor marker 是零宽布局标记，需要穿过 sanitizer 后再统一提取。 */
+function sanitizeClusterLine(line: string): string {
+	const placeholder = "\uE000ALPS_CURSOR\uE000";
+	const withPlaceholder = String(line).split(FIXED_EDITOR_CURSOR_MARKER).join(placeholder);
+	return sanitizeTerminalText(withPlaceholder, { allowNewline: false, allowTab: true, preserveSgr: true }).split(placeholder).join(FIXED_EDITOR_CURSOR_MARKER);
 }
 
 /** 提取并移除光标 marker；多余 marker 一并移除，光标采用该行第一个 marker。 */

@@ -169,6 +169,32 @@ test("设置界面固定输入框启用失败时回滚 OFF", () => {
 	assert.match(stripAnsi(component.render(80).join("\n")), /Fixed Input\s+OFF/);
 });
 
+
+
+test("美化输入框切换触发 fixed fail-closed 时当前 Fixed Input 行同步 OFF", () => {
+	const state = createInitialPatchState();
+	state.config.settings.fixedBottomEditor.enabled = true;
+	state.config.settings.beautifiedInput.enabled = true;
+	const beautifiedInputCalls: boolean[] = [];
+	const component = new AlpsPiSettingsComponent(createFakeTheme(), undefined, {
+		getState: () => state,
+		setBeautifiedInputEnabled: (enabled: boolean) => {
+			beautifiedInputCalls.push(enabled);
+			state.config.settings.fixedBottomEditor.enabled = false;
+			return { enabled: false, installed: false, failure: "fail closed" };
+		},
+	});
+	for (let i = 0; i < 5; i++) component.handleInput("[B");
+	component.handleInput(" ");
+
+	const plain = stripAnsi(component.render(80).join("\n"));
+	assert.deepEqual(beautifiedInputCalls, [false]);
+	assert.equal(state.config.settings.beautifiedInput.enabled, false);
+	assert.equal(state.config.settings.fixedBottomEditor.enabled, false);
+	assert.match(plain, /Fixed Input\s+OFF/);
+	assert.match(plain, /Beautified Input\s+OFF/);
+});
+
 test("Animations 二级页可修改 Enabled、Random Mode、Thinking、Working、Tool、Width、FPS，并提供预览入口", async () => {
 	const { state, changedCalls, renderCalls, component } = createPanel();
 	openAnimationsSettings(component);

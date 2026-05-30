@@ -1,6 +1,7 @@
 /** 功能：渲染 bottom-input 边框状态、extension statuses 与 last prompt 实现者：alps 实现日期：2026-05-28 */
 
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { sanitizeTerminalSingleLineText, sanitizeTerminalText } from "../../terminal-sanitizer.ts";
 import type { ThemeLike } from "../chrome-frame/styles.ts";
 import { getBottomInputIcons, type BottomInputIconSet } from "./icons.ts";
 
@@ -137,22 +138,24 @@ export function renderFrameStatus(input: BottomInputStatusState & { icons?: Bott
 
 /** 渲染输入框下方 extension statuses 聚合行。 */
 export function renderExtensionStatusLines(statuses: readonly string[], width: number, theme: ThemeLike): string[] {
-	if (statuses.length === 0) return [];
+	const safeStatuses = statuses.map((status) => sanitizeTerminalSingleLineText(status, { preserveSgr: false })).filter(Boolean);
+	if (safeStatuses.length === 0) return [];
 	const separator = safeFg(theme, "borderMuted", " › ");
-	const line = ` ${statuses.join(separator)} `;
+	const line = ` ${safeStatuses.join(separator)} `;
 	return [truncateToWidth(line, Math.max(1, Math.floor(width)), "…", false)];
 }
 
-/** 渲染最后一条用户问题。 */
+/** 渲染最后一条用户问题；prompt 先经过终端显示净化，避免控制序列污染固定区域。 */
 export function renderLastPromptLines(prompt: string, width: number, theme: ThemeLike): string[] {
 	const safeWidth = Math.max(1, Math.floor(width));
-	if (!prompt) return [];
+	const safePrompt = sanitizeTerminalSingleLineText(prompt, { preserveSgr: false });
+	if (!safePrompt) return [];
 
 	const prefix = ` ${safeFg(theme, "borderMuted", "↳")} `;
 	const availableWidth = safeWidth - visibleWidth(prefix);
 	if (availableWidth < 4) return [];
 
-	const value = truncateToWidth(prompt, availableWidth, "…", false);
+	const value = truncateToWidth(safePrompt, availableWidth, "…", false);
 	return [truncateToWidth(`${prefix}${safeFg(theme, "muted", value)}`, safeWidth, "…", false)];
 }
 
@@ -173,7 +176,7 @@ export function getVisibleExtensionStatuses(footerData: any): string[] {
 	for (const [key, value] of entries) {
 		if (typeof key === "string" && INTERNAL_STATUS_KEYS.has(key)) continue;
 		if (typeof value !== "string") continue;
-		const normalized = value.trim();
+		const normalized = sanitizeTerminalSingleLineText(value, { preserveSgr: false });
 		if (!normalized) continue;
 		if (normalized.trimStart().startsWith("[")) continue;
 		if (visibleWidth(stripAnsi(normalized)) <= 0) continue;
@@ -182,9 +185,9 @@ export function getVisibleExtensionStatuses(footerData: any): string[] {
 	return visible;
 }
 
-/** 压缩 prompt 到单行。 */
+/** 压缩 prompt 到单行，并在进入 footer/fixed 展示链路前剥离危险终端控制序列。 */
 export function normalizePromptText(value: unknown): string {
-	return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+	return sanitizeTerminalSingleLineText(value, { preserveSgr: false });
 }
 
 export function isAssistantUsage(value: unknown): value is AssistantUsage {
@@ -443,7 +446,7 @@ function hexToAnsi(hex: string): string {
 }
 
 function stripAnsi(input: string): string {
-	return input.replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+	return sanitizeTerminalText(input, { allowNewline: false, allowTab: false, preserveSgr: false });
 }
 
 function isRecord(value: unknown): value is Record<string, any> {

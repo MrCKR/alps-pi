@@ -10,9 +10,11 @@ import {
 	ToolExecutionComponent,
 	UserMessageComponent,
 } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 import { isEmptyMessageChrome, renderCompactThinkingBox, renderNeonBox } from "./chrome.ts";
 import { containsImageLine, isImageEscapeLine } from "./image.ts";
 import { cloneDefaultSettings, type AlpsPiSettings } from "../../settings.ts";
+import { sanitizeTerminalText } from "../../terminal-sanitizer.ts";
 import { DEFAULT_CONFIG, getChromeStyle, type ChromeConfig, type ChromeKind, type ChromeStatus, type ThemeLike } from "./styles.ts";
 
 export const PATCH_KEY = Symbol.for("alps.pi.patch.v1");
@@ -22,6 +24,7 @@ export type PatchState = {
 	originals: Map<string, Function>;
 	patched: Set<string>;
 	failures: Map<string, string>;
+	conflicts: Set<string>;
 	config: ChromeConfig;
 	configVersion: number;
 };
@@ -63,6 +66,7 @@ type WrappedRenderMetadata = {
 	id: string;
 	version: number;
 	originalRender: Function;
+	owner: symbol;
 };
 
 type TimingState = {
@@ -72,6 +76,7 @@ type TimingState = {
 	lastUpdatedAt: number;
 };
 
+const CHROME_PATCH_OWNER = Symbol.for("alps.pi.chromeFrame.patchOwner.v1");
 const timingRegistry = new Map<number, TimingState>();
 let nextTimingSequence = 1;
 let timingGeneration = 1;
@@ -89,7 +94,7 @@ function markWrappedRender(render: Function, metadata: WrappedRenderMetadata): v
 
 function isCurrentWrappedRender(id: string, render: unknown): boolean {
 	const metadata = getWrappedRenderMetadata(render);
-	return metadata?.id === id && metadata.version === WRAPPED_RENDER_VERSION;
+	return metadata?.id === id && metadata.version === WRAPPED_RENDER_VERSION && metadata.owner === CHROME_PATCH_OWNER;
 }
 
 function resetTimingRegistry(): void {
@@ -236,6 +241,8 @@ function createTrackedSettings(settings: AlpsPiSettings, onChange: () => void, e
 
 function ensurePatchStateConfigTracking(state: PatchState): PatchState {
 	if (typeof state.configVersion !== "number") state.configVersion = 0;
+	// reload 兼容旧全局 state：补齐 P4 conflict 集合，避免 skip-restore 后再次包装未知 wrapper。
+	if (!(state as any).conflicts) state.conflicts = new Set();
 	state.config.settings = createTrackedSettings(state.config.settings, () => {
 		state.configVersion += 1;
 	});
@@ -259,6 +266,7 @@ export function createInitialPatchState(): PatchState {
 		originals: new Map(),
 		patched: new Set(),
 		failures: new Map(),
+		conflicts: new Set(),
 		config: undefined as unknown as ChromeConfig,
 		configVersion: 0,
 	};
@@ -278,6 +286,15 @@ function asLines(value: unknown): string[] {
 	if (Array.isArray(value)) return value.map(String);
 	if (value === undefined || value === null) return [];
 	return [String(value)];
+}
+
+/** 净化窄宽度原始 fallback 输出，避免 wrapper 分支绕过 terminal 展示边界。 */
+function sanitizeNarrowFallbackLines(lines: readonly string[], width: number): string[] {
+	const maxWidth = Number.isFinite(width) ? Math.max(0, Math.floor(width)) : 0;
+	if (maxWidth <= 0) return [];
+	return lines
+		.flatMap((line) => sanitizeTerminalText(line, { preserveSgr: true }).split("\n"))
+		.map((line) => truncateToWidth(line, maxWidth, "", false));
 }
 
 function getToolStatus(instance: any): ChromeStatus {
@@ -537,7 +554,7 @@ export function createWrappedRender(
 		const fallback = () => asLines(originalRender.call(instance, width));
 		try {
 			const numericWidth = Number.isFinite(width) ? Math.floor(width) : 0;
-			if (numericWidth < 8) return fallback();
+			if (numericWidth < 8) return sanitizeNarrowFallbackLines(fallback(), numericWidth);
 			const innerWidth = Math.max(1, numericWidth - 4);
 			const innerLines = asLines(originalRender.call(instance, innerWidth));
 			const state = getGlobalPatchState();
@@ -578,7 +595,7 @@ export function createWrappedRender(
 			}
 		}
 	};
-	markWrappedRender(wrapped, { id, version: WRAPPED_RENDER_VERSION, originalRender });
+	markWrappedRender(wrapped, { id, version: WRAPPED_RENDER_VERSION, originalRender, owner: CHROME_PATCH_OWNER });
 	return wrapped;
 }
 
@@ -608,6 +625,18 @@ export function enablePatch(targets: readonly ComponentTarget[] = createRuntimeT
 			}
 
 			const current = target.ctor.prototype.render;
+			// 发生过 skip-restore 后，未知 wrapper 链可能仍闭包引用旧 alps wrapper；再次 enable 选择 fail closed，避免叠加双层 alps chrome。
+			if (state.conflicts.has(target.id) && !isCurrentWrappedRender(target.id, current)) {
+				state.failures.set(target.id, "skip enable: prototype.render conflict from previous disable is still active");
+				if (target.core) {
+					disablePatch(targets);
+					state.enabled = false;
+					syncChromeFrameEnabled(state);
+					return state;
+				}
+				continue;
+			}
+			state.conflicts.delete(target.id);
 			const currentMetadata = getWrappedRenderMetadata(current);
 			const original = state.originals.get(target.id) ?? currentMetadata?.originalRender ?? current;
 			if (!state.originals.has(target.id)) {
@@ -644,21 +673,29 @@ export function enablePatch(targets: readonly ComponentTarget[] = createRuntimeT
 export function disablePatch(targets: readonly ComponentTarget[] = createRuntimeTargets()): PatchState {
 	resetTimingRegistry();
 	const state = getGlobalPatchState();
-	let restoreFailed = false;
 	for (const target of targets) {
 		const original = state.originals.get(target.id);
 		if (original && target.ctor?.prototype) {
 			try {
-				target.ctor.prototype.render = original;
-				state.originals.delete(target.id);
-				state.patched.delete(target.id);
+				const current = target.ctor.prototype.render;
+				if (isCurrentWrappedRender(target.id, current)) {
+					target.ctor.prototype.render = original;
+					state.originals.delete(target.id);
+					state.patched.delete(target.id);
+					state.conflicts.delete(target.id);
+				} else {
+					state.failures.set(target.id, "skip restore: prototype.render is no longer owned by alps-pi chrome-frame");
+					state.conflicts.add(target.id);
+					state.originals.delete(target.id);
+					state.patched.delete(target.id);
+				}
 			} catch (error) {
-				restoreFailed = true;
 				state.failures.set(target.id, error instanceof Error ? error.message : String(error));
 			}
 		} else {
 			state.originals.delete(target.id);
 			state.patched.delete(target.id);
+			if (!target.ctor?.prototype) state.conflicts.delete(target.id);
 		}
 	}
 	state.enabled = state.patched.size > 0;

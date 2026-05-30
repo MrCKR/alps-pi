@@ -82,6 +82,9 @@ function createCtx(options: { terminal?: any; autoInstantiate?: boolean; hasUI?:
 			setStatus(key: string, value: string | undefined) {
 				statusCalls.push({ key, value });
 			},
+			getEditorComponent() {
+				return editorFactory;
+			},
 			setEditorComponent(factory: any) {
 				calls.push({ type: "editor", value: factory });
 				editorFactory = factory;
@@ -189,12 +192,38 @@ test("缺 setEditorComponent 时 fail closed 且不调用 setFooter", () => {
 	assert.deepEqual(footerCalls, []);
 });
 
+test("缺 getEditorComponent 时 fail closed 且不调用 setEditorComponent/setFooter", () => {
+	const calls: string[] = [];
+	const runtime = createBottomInputRuntime();
+	runtime.bindSession({
+		hasUI: true,
+		ui: {
+			setEditorComponent() {
+				calls.push("editor");
+			},
+			setFooter() {
+				calls.push("footer");
+			},
+		},
+	});
+
+	const status = runtime.setEnabled(true);
+
+	assert.equal(status.enabled, false);
+	assert.equal(status.installed, false);
+	assert.match(status.failure ?? "", /getEditorComponent/);
+	assert.deepEqual(calls, []);
+});
+
 test("缺 setFooter 时 fail closed 且不调用 setEditorComponent", () => {
 	const editorCalls: any[] = [];
 	const runtime = createBottomInputRuntime();
 	runtime.bindSession({
 		hasUI: true,
 		ui: {
+			getEditorComponent() {
+				return undefined;
+			},
 			setEditorComponent(factory: any) {
 				editorCalls.push(factory);
 			},
@@ -825,6 +854,68 @@ test("restoreDefaultLayout 遇到 stale UI 清理错误不污染 failure", () =>
 	assert.equal(runtime.getStatus().failure, undefined);
 	assert.equal(runtime.getStatus().enabled, false);
 	assert.equal(runtime.getStatus().installed, false);
+});
+
+test("layout cache 不会在 TTL 内跨 width 复用旧布局", () => {
+	const footerData = { getExtensionStatuses: () => new Map([["wide", "1234567890"]]) };
+	const harness = createCtx({ autoInstantiate: true, footerData });
+	const runtime = createBottomInputRuntime({ startClock: false, now: () => 1_000 });
+	runtime.bindSession(harness.ctx);
+	runtime.setBeautifiedInputEnabled?.(true);
+	const footer = harness.getFooterInstance();
+
+	const wide = footer.render(20).map(stripAnsi);
+	const narrow = footer.render(8).map(stripAnsi);
+	const narrowAgain = footer.render(8).map(stripAnsi);
+
+	assert.deepEqual(wide, [" 1234567890 "]);
+	assert.deepEqual(narrow, [" 123456…"]);
+	assert.deepEqual(narrowAgain, narrow);
+});
+
+test("旧 session 的 editor/footer factory 迟到调用不会覆盖当前 runtime", () => {
+	const oldHarness = createCtx();
+	const newHarness = createCtx({ autoInstantiate: true });
+	const runtime = createBottomInputRuntime();
+	runtime.bindSession(oldHarness.ctx);
+	runtime.setBeautifiedInputEnabled?.(true);
+	const oldEditorFactory = oldHarness.getEditorFactory();
+	const oldFooterFactory = oldHarness.getFooterFactory();
+
+	runtime.bindSession(newHarness.ctx);
+	runtime.setBeautifiedInputEnabled?.(true);
+	const staleEditor = oldEditorFactory(oldHarness.tui, undefined, { matches: () => false });
+	const staleFooter = oldFooterFactory(oldHarness.tui, undefined, {});
+
+	assert.deepEqual(staleEditor.render(40), []);
+	assert.doesNotThrow(() => staleEditor.handleInput("x"));
+	assert.deepEqual(staleFooter.render(40), []);
+	assert.equal(newHarness.getEditorInstance().render(24).map(stripAnsi).some((line: string) => line.includes("╭")), true);
+});
+
+
+
+test("第三方后接管 editor/footer 后 alps disable 不清空对方 UI", () => {
+	const harness = createCtx({ autoInstantiate: true });
+	const runtime = createBottomInputRuntime();
+	runtime.bindSession(harness.ctx);
+	runtime.setBeautifiedInputEnabled?.(true);
+	const thirdPartyEditorFactory = () => ({ render: () => ["third-editor"] });
+	const thirdPartyFooterFactory = () => ({
+		dispose() {},
+		invalidate() {},
+		render: () => ["third-footer"],
+	});
+	harness.ctx.ui.setEditorComponent(thirdPartyEditorFactory);
+	harness.ctx.ui.setFooter(thirdPartyFooterFactory);
+	harness.calls.length = 0;
+
+	runtime.setBeautifiedInputEnabled?.(false);
+
+	assert.equal(harness.getEditorFactory(), thirdPartyEditorFactory);
+	assert.equal(harness.getFooterFactory(), thirdPartyFooterFactory);
+	assert.equal(harness.calls.some((call) => call.type === "editor" && call.value === undefined), false);
+	assert.equal(harness.calls.some((call) => call.type === "footer" && call.value === undefined), false);
 });
 
 test("footer branch callback 在 session 切换后不会触发旧 runtime repaint", () => {

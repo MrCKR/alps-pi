@@ -9,7 +9,7 @@ export type CommandOps = {
 	enable?: () => PatchState;
 	disable?: () => PatchState;
 	setFixedBottomEditorEnabled?: (enabled: boolean, ctx: any) => FixedBottomEditorStatus | void;
-	setBeautifiedInputEnabled?: (enabled: boolean, ctx: any) => void;
+	setBeautifiedInputEnabled?: (enabled: boolean, ctx: any) => FixedBottomEditorStatus | void;
 	onSettingsChanged?: (settings: AlpsPiSettings, ctx: any) => void;
 };
 
@@ -91,6 +91,7 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 			const disableFn = ops.disable ?? (() => disablePatch());
 			const setBeautifiedInputEnabled = ops.setBeautifiedInputEnabled ?? ((enabled: boolean) => {
 				getGlobalPatchState().config.settings.beautifiedInput.enabled = enabled;
+				return undefined;
 			});
 			const onSettingsChanged = ops.onSettingsChanged ?? ((settings: AlpsPiSettings) => {
 				getGlobalPatchState().config.settings.shortcuts = { ...settings.shortcuts };
@@ -158,8 +159,9 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 									return result;
 								},
 								setBeautifiedInputEnabled: (enabled) => {
-									runIfActive(() => setBeautifiedInputEnabled(enabled, ctx));
+									const result = runIfActive(() => setBeautifiedInputEnabled(enabled, ctx));
 									refocusSettingsOverlay();
+									return result;
 								},
 								onSettingsChanged: (settings) => {
 									runIfActive(() => onSettingsChanged(settings, ctx));

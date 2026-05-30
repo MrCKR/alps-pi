@@ -12,6 +12,7 @@ import {
 	renderContextBar,
 	splitNativeEditorRender,
 } from "../src/features/bottom-input/index.ts";
+import { sanitizeTerminalText } from "../src/terminal-sanitizer.ts";
 import { isStashShortcutInput } from "../src/features/bottom-status/index.ts";
 import { FIXED_EDITOR_CURSOR_MARKER, renderFixedEditorCluster } from "../src/features/fixed-bottom-editor/cluster.ts";
 import { createFakeTheme, stripAnsi } from "./helpers.test.ts";
@@ -34,6 +35,9 @@ function createCtx(options: { footerData?: any } = {}) {
 			],
 		},
 		ui: {
+			getEditorComponent() {
+				return editorFactory;
+			},
 			setEditorComponent(factory: any) {
 				editorFactory = factory;
 			},
@@ -186,6 +190,30 @@ test("last prompt 缺失时下方状态行隐藏", () => {
 	const { rendered } = renderStatus({ lastPrompt: "", now: 2000 });
 
 	assert.deepEqual(rendered.lastPromptLines, []);
+});
+
+test("terminal sanitizer 剥离危险控制序列但保留 SGR", () => {
+	const input = "ok\x1b]52;c;AAAA\x07\x1b[2J\x1b[31mred\x1b[0m\x1bPbad\x1b\\done";
+	const output = sanitizeTerminalText(input, { preserveSgr: true });
+
+	assert.equal(output, "ok\x1b[31mred\x1b[0mdone");
+	assert.doesNotMatch(output, /\x1b\]52|\x1b\[2J|\x1bP/);
+});
+
+test("last prompt 和 extension statuses 会净化危险 terminal escape", () => {
+	const footerData = {
+		getExtensionStatuses: () => new Map([["evil", "ready\x1b]52;c;AAAA\x07\x1b[2Jdone"]]),
+	};
+	const { rendered } = renderStatus({
+		footerData,
+		lastPrompt: "hello\x1b[H\x1bPbad\x1b\\world",
+		width: 80,
+	});
+	const output = `${rendered.secondaryLines.join("\n")}\n${rendered.lastPromptLines.join("\n")}`;
+
+	assert.match(stripAnsi(output), /readydone/);
+	assert.match(stripAnsi(output), /helloworld/);
+	assert.doesNotMatch(output, /\x1b\]52|\x1b\[2J|\x1b\[H|\x1bP/);
 });
 
 test("extension statuses 聚合过滤 notification、空值和内部 key", () => {

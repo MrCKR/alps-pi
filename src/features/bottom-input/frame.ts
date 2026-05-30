@@ -1,6 +1,7 @@
 /** 功能：为固定底部输入框渲染完整线框，实现者：alps 实现日期：2026-05-29 */
 
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { sanitizeTerminalText } from "../../terminal-sanitizer.ts";
 import type { ThemeLike } from "../chrome-frame/styles.ts";
 import { FIXED_EDITOR_CURSOR_MARKER } from "../fixed-bottom-editor/cluster.ts";
 import type { BottomInputFrameStatus } from "./status.ts";
@@ -95,9 +96,16 @@ function fitStatusLabel(label: string, maxWidth: number): string {
 
 function renderContentLine(line: string, width: number, theme: ThemeLike): string {
 	const innerWidth = Math.max(0, width - 4);
-	const clipped = closeOpenAnsiCodes(truncateEditorLinePreservingCursor(line, innerWidth));
+	const safeLine = sanitizeEditorLine(line);
+	const clipped = closeOpenAnsiCodes(truncateEditorLinePreservingCursor(safeLine, innerWidth));
 	const padded = padToWidth(clipped, innerWidth);
 	return styleBorder(theme, "│") + " " + padded + " " + styleBorder(theme, "│");
+}
+
+function sanitizeEditorLine(line: string): string {
+	const placeholder = "\uE000ALPS_CURSOR\uE000";
+	const withPlaceholder = String(line).split(FIXED_EDITOR_CURSOR_MARKER).join(placeholder);
+	return sanitizeTerminalText(withPlaceholder, { allowNewline: false, allowTab: true, preserveSgr: true }).split(placeholder).join(FIXED_EDITOR_CURSOR_MARKER);
 }
 
 function truncateEditorLinePreservingCursor(line: string, width: number): string {
@@ -136,7 +144,7 @@ function containsSgr(line: string): boolean {
 	return false;
 }
 
-/** 按终端可见列截取内容，保留 ANSI/APC/OSC 与 grapheme 的完整性。 */
+/** 按终端可见列截取内容，保留允许的 SGR 与 grapheme 的完整性。 */
 function sliceVisibleColumns(line: string, startCol: number, length: number): string {
 	if (length <= 0) return "";
 	const endCol = startCol + length;
@@ -188,7 +196,7 @@ function extractAnsiSequence(line: string, index: number): { code: string; lengt
 		}
 		return null;
 	}
-	if (next === "]" || next === "_") {
+	if (next === "]" || next === "_" || next === "P" || next === "^") {
 		for (let end = index + 2; end < line.length; end += 1) {
 			if (line[end] === "\x07") return { code: line.slice(index, end + 1), length: end + 1 - index };
 			if (line[end] === "\x1b" && line[end + 1] === "\\") return { code: line.slice(index, end + 2), length: end + 2 - index };
@@ -223,5 +231,5 @@ function safeFg(theme: ThemeLike, token: string, text: string, fallback = "text"
 }
 
 function stripAnsi(input: string): string {
-	return input.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "");
+	return sanitizeTerminalText(input, { allowNewline: false, allowTab: false, preserveSgr: false });
 }

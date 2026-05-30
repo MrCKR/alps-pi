@@ -92,7 +92,7 @@ Esc/q 关闭
 - header
 - overlay
 
-开启 `固定输入框` 后，扩展会临时接管 editor/footer 和 terminal 绘制，以实现“聊天区在上方滚动、输入框固定在底部”。这属于实验性绘制接管。关闭开关或 `session_shutdown` 时会恢复 Pi 默认 editor/footer，并重置终端滚动区域和光标状态。
+开启 `固定输入框` 后，扩展会临时接管 editor/footer 和 terminal 绘制，以实现“聊天区在上方滚动、输入框固定在底部”。这属于实验性绘制接管，也是独占 editor/footer 的能力：如果其它扩展同时接管 editor/footer，可能互斥；检测到必要 UI API 缺失或安装失败时会 fail closed 并自动关闭 Fixed Input。关闭开关或 `session_shutdown` 时会恢复 Pi 默认 editor/footer，并重置终端滚动区域和光标状态；reload/session replacement 的旧 runtime 不会清理新 session 已安装的 UI。当前 Pi 只对 editor 暴露可确认 owner 的 getter，footer 缺少公开 getter/owner token/disposable handle；alps-pi 会用保存的 footer component active sentinel 做保守清理，不能确认仍属 alps-pi 时会跳过清理，这是不改 picore 前提下的 partial mitigation。
 
 开启 `美化输入框` 后，扩展会把 editor 包装成完整线框：顶部左侧显示模型与 thinking，顶部右侧显示 10 字符上下文进度和百分比/窗口，底部右侧显示本次对话耗时。extension statuses 与上一个问题保持在线框下方，不塞进边框。缺失的数据不会显示占位。`Alt+S` 对齐原版行为：有输入时暂存并清空输入框，输入框为空时恢复暂存内容。
 
@@ -141,14 +141,26 @@ toolError.border     error
 ## 安全策略
 
 - 扩展默认启用消息线框 patch；固定输入框、美化输入框和内置 Animations 默认开启。
-- 设置界面里的线框美化开关会恢复原始 render 方法。
+- 设置界面里的线框美化开关会恢复原始 render 方法；如果 render 已被后续扩展接管，alps-pi 会跳过恢复，避免覆盖其它 wrapper。
 - patch 是幂等的，重复启用不会重复包裹。
 - 核心组件 patch 失败时会自动回滚。
-- 固定输入框启用失败会 fail closed，并回滚 editor/footer/compositor。
+- 用户 prompt、extension status、消息正文进入 terminal 展示前会剥离 OSC/DCS/APC/PM 与非 SGR CSI；主题层生成的 SGR 颜色仍保留。
+- 固定输入框启用失败会 fail closed，并回滚 editor/footer/compositor，同时把 Fixed Input 设置同步为 OFF。
 - 固定输入框会接管 `terminal.write`、`terminal.rows`、`tui.render`、`tui.doRender` 和滚动区域；关闭或 shutdown 时会尽力恢复。
 - image escape 行会回退或跳过包装，避免破坏终端图片协议。
 - assistant / user / custom / skill / compaction / branch 空内容不会渲染空框。
 - tool / bash / working 即使正文为空也保留外框，因为标题和状态本身有信息价值。
+
+## 兼容性
+
+当前测试版本窗口：
+
+```text
+@earendil-works/pi-coding-agent >=0.75.5 <0.76.0
+@earendil-works/pi-tui          >=0.75.5 <0.76.0
+```
+
+`alps-pi` 的 Message Frame、Fixed Input 与 Beautified Input 依赖 Pi 当前导出的 TUI component、`render(width)`、`ctx.ui.setEditorComponent`、`ctx.ui.setFooter`、terminal descriptor 等内部 UI 能力。不在上述窗口内的 Pi 版本不再声明兼容；运行时如果发现关键字段或方法缺失，对应功能会 fail closed 或跳过 patch，而不是继续覆盖原型或 editor/footer。
 
 ## 开发
 
@@ -172,4 +184,4 @@ C:/Users/Administrator/AppData/Local/nvm/v22.22.3/npm.cmd test
 
 ## 注意
 
-本扩展依赖 Pi 当前的内置 TUI 组件导出。升级 pi 后如果内置组件名称、构造方式或 `render(width)` 行为变化，需要重新跑测试并同步适配。
+本扩展依赖 Pi 当前的内置 TUI 组件导出。升级 pi 后如果内置组件名称、构造方式或 `render(width)` 行为变化，需要重新跑测试并同步适配；验证通过后再扩大 peer dependency 窗口。

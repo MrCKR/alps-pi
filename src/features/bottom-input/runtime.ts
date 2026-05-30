@@ -70,6 +70,7 @@ export type BottomInputRuntime = {
 
 type RuntimeUI = {
 	setEditorComponent?: (factory: ((tui: any, theme: any, keybindings: any) => any) | undefined) => void;
+	getEditorComponent?: () => unknown;
 	setFooter?: (factory: ((tui: any, theme: any, footerData: any) => any) | undefined) => void;
 	setStatus?: (key: string, value: string | undefined) => void;
 	getEditorText?: () => string;
@@ -145,6 +146,8 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	private creatingFooter = false;
 	private compositor: CompositorLike | null = null;
 	private editorInstance: any;
+	private editorFactory: ((tui: any, theme: any, keybindings: any) => any) | undefined;
+	private footerFactory: ((tui: any, theme: any, footerData: any) => any) | undefined;
 	private footerComponent: any;
 	private footerData: any;
 	private footerDataRestore: (() => void) | null = null;
@@ -156,7 +159,8 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	private renderTimer: ReturnType<typeof setTimeout> | null = null;
 	private renderPending = false;
 	private renderPendingFull = false;
-	private cachedLayout: { key: string; expiresAt: number; result: { topLines: string[]; secondaryLines: string[]; lastPromptLines: string[]; frameStatus: BottomInputFrameStatus } } | null = null;
+	private layoutOwnerGeneration: number | null = null;
+	private cachedLayout: { key: string; width: number; expiresAt: number; result: { topLines: string[]; secondaryLines: string[]; lastPromptLines: string[]; frameStatus: BottomInputFrameStatus } } | null = null;
 	private stashedEditorText: string | null = null;
 	private liveUsage: AssistantUsage | null = null;
 	private latestAssistantUsage: AssistantUsage | null = null;
@@ -216,6 +220,8 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		this.ctx = undefined;
 		this.ui = undefined;
 		this.editorInstance = undefined;
+		this.editorFactory = undefined;
+		this.footerFactory = undefined;
 		this.footerComponent = undefined;
 		this.restoreFooterDataHook();
 		this.footerData = undefined;
@@ -401,18 +407,24 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 			this.validateUI(ui);
 			this.failure = undefined;
 			if (!this.layoutInstalled) {
+				const layoutGeneration = this.generation;
 				this.editorInstance = undefined;
 				this.footerComponent = undefined;
 				this.restoreFooterDataHook();
 				this.footerData = undefined;
-				ui.setEditorComponent!(this.createEditorFactory());
+				this.layoutOwnerGeneration = layoutGeneration;
+				const editorFactory = this.createEditorFactory(layoutGeneration);
+				this.editorFactory = editorFactory;
+				ui.setEditorComponent!(editorFactory);
 				this.layoutInstalled = true;
 				this.installInputListener();
 				this.startClockTimer();
 
 				this.creatingFooter = true;
 				try {
-					ui.setFooter!(this.createFooterFactory());
+					const footerFactory = this.createFooterFactory(layoutGeneration);
+					this.footerFactory = footerFactory;
+					ui.setFooter!(footerFactory);
 				} finally {
 					this.creatingFooter = false;
 				}
@@ -429,6 +441,9 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 					this.removeInputListener = null;
 					this.restoreDefaultLayout();
 					this.layoutInstalled = false;
+					this.layoutOwnerGeneration = null;
+					this.editorFactory = undefined;
+					this.footerFactory = undefined;
 					this.editorInstance = undefined;
 					this.footerComponent = undefined;
 					this.restoreFooterDataHook();
@@ -464,6 +479,9 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		this.restoreDefaultLayout();
 		this.installed = false;
 		this.layoutInstalled = false;
+		this.layoutOwnerGeneration = null;
+		this.editorFactory = undefined;
+		this.footerFactory = undefined;
 		this.editorInstance = undefined;
 		this.footerComponent = undefined;
 		this.restoreFooterDataHook();
@@ -483,13 +501,17 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		if (typeof ui.setEditorComponent !== "function") {
 			throw new Error("bottom input expected ctx.ui.setEditorComponent(factory) to exist");
 		}
+		if (typeof ui.getEditorComponent !== "function") {
+			throw new Error("bottom input expected ctx.ui.getEditorComponent() to exist");
+		}
 		if (typeof ui.setFooter !== "function") {
 			throw new Error("bottom input expected ctx.ui.setFooter(factory) to exist");
 		}
 	}
 
-	private createEditorFactory(): (tui: any, theme: any, keybindings: any) => any {
+	private createEditorFactory(ownerGeneration: number): (tui: any, theme: any, keybindings: any) => any {
 		return (tui: any, theme: any, keybindings: any) => {
+			if (ownerGeneration !== this.generation || ownerGeneration !== this.layoutOwnerGeneration) return createStaleEditorFallback();
 			this.tui = tui;
 			this.editorTheme = theme ?? FALLBACK_EDITOR_THEME;
 			const editorStateOwner = this;
@@ -507,8 +529,9 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	}
 
 	/** footer factory 是唯一 owner：捕获 tui/theme/footerData 并安装 compositor。 */
-	private createFooterFactory(): (tui: any, theme: any, footerData: any) => any {
+	private createFooterFactory(ownerGeneration: number): (tui: any, theme: any, footerData: any) => any {
 		return (tui: any, theme: any, footerData: any) => {
+			if (ownerGeneration !== this.generation || ownerGeneration !== this.layoutOwnerGeneration) return createStaleFooterFallback();
 			const generation = this.generation;
 			this.tui = tui;
 			this.theme = theme ?? FALLBACK_EDITOR_THEME;
@@ -524,6 +547,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 				}
 			}
 
+			let footerActive = true;
 			const unsubscribeBranch = typeof footerData?.onBranchChange === "function"
 				? footerData.onBranchChange(() => {
 					if (generation !== this.generation) return;
@@ -532,7 +556,12 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 				})
 				: undefined;
 			const footer = {
+				__alpsBottomInputOwner: true,
+				get __alpsBottomInputActive() {
+					return footerActive;
+				},
 				dispose: () => {
+					footerActive = false;
 					unsubscribeBranch?.();
 					if (generation !== this.generation) return;
 					if (this.footerComponent === footer) {
@@ -630,7 +659,8 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 
 	private getStatusLayout(width: number): { topLines: string[]; secondaryLines: string[]; lastPromptLines: string[]; frameStatus: BottomInputFrameStatus } {
 		const now = this.now();
-		if (this.cachedLayout && this.cachedLayout.expiresAt > now) {
+		const safeWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 1;
+		if (this.cachedLayout && this.cachedLayout.width === safeWidth && this.cachedLayout.expiresAt > now) {
 			return cloneStatusLayout(this.cachedLayout.result);
 		}
 
@@ -639,7 +669,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 			ctx: this.ctx,
 			footerData: this.footerData,
 			theme,
-			width,
+			width: safeWidth,
 			beautifiedInputEnabled: this.beautifiedInputEnabled,
 			isStreaming: this.isStreaming,
 			liveUsage: this.liveUsage,
@@ -653,7 +683,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 			ctx: undefined,
 			footerData: this.footerData,
 			theme,
-			width,
+			width: safeWidth,
 			beautifiedInputEnabled: false,
 			isStreaming: false,
 			liveUsage: null,
@@ -671,7 +701,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 			lastPromptLines: [...result.lastPromptLines],
 			frameStatus: { ...result.frameStatus },
 		};
-		this.cachedLayout = { key: result.cacheKey, expiresAt: now + ttl, result: layout };
+		this.cachedLayout = { key: result.cacheKey, width: safeWidth, expiresAt: now + ttl, result: layout };
 		return cloneStatusLayout(layout);
 	}
 
@@ -819,18 +849,36 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		if (!this.layoutInstalled) return;
 		const ui = this.ui;
 		if (!ui) return;
+		this.clearEditorIfOwned(ui);
+		this.clearFooterIfOwned(ui);
 		try {
+			ui.setStatus?.(STASH_STATUS_KEY, undefined);
+		} catch (error) {
+			if (!isStaleCtxError(error)) this.failure = formatFailure(error);
+		}
+	}
+
+	/** editor 通过 Pi 公开 getter 确认当前 factory 仍属 alps-pi；无法确认 owner 时跳过清理。 */
+	private clearEditorIfOwned(ui: RuntimeUI): void {
+		try {
+			if (typeof ui.getEditorComponent !== "function") return;
+			if (ui.getEditorComponent() !== this.editorFactory) return;
 			ui.setEditorComponent?.(undefined);
 		} catch (error) {
 			if (!isStaleCtxError(error)) this.failure = formatFailure(error);
 		}
+	}
+
+	/** footer 没有公开 getter；只能在保存的 alps footer 仍处于 active sentinel 时做保守清理。 */
+	private clearFooterIfOwned(ui: RuntimeUI): void {
 		try {
-			ui.setFooter?.(undefined);
-		} catch (error) {
-			if (!isStaleCtxError(error)) this.failure = formatFailure(error);
-		}
-		try {
-			ui.setStatus?.(STASH_STATUS_KEY, undefined);
+			if (isActiveAlpsFooterComponent(this.footerComponent)) {
+				ui.setFooter?.(undefined);
+				return;
+			}
+			if (this.footerComponent === undefined && this.footerFactory) {
+				ui.setFooter?.(undefined);
+			}
 		} catch (error) {
 			if (!isStaleCtxError(error)) this.failure = formatFailure(error);
 		}
@@ -847,6 +895,9 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		this.teardownCompositor();
 		this.restoreDefaultLayout();
 		this.layoutInstalled = false;
+		this.layoutOwnerGeneration = null;
+		this.editorFactory = undefined;
+		this.footerFactory = undefined;
 		this.editorInstance = undefined;
 		this.footerComponent = undefined;
 		this.restoreFooterDataHook();
@@ -901,8 +952,29 @@ type JumpAction =
 
 type StatusLayout = { topLines: string[]; secondaryLines: string[]; lastPromptLines: string[]; frameStatus: BottomInputFrameStatus };
 
+function isActiveAlpsFooterComponent(component: any): boolean {
+	return Boolean(component?.__alpsBottomInputOwner && component.__alpsBottomInputActive === true);
+}
+
 function createEmptyStatusLayout(): StatusLayout {
 	return { topLines: [], secondaryLines: [], lastPromptLines: [], frameStatus: { model: null, thinking: null, context: null, elapsed: null } };
+}
+
+/** 旧 generation 的 editor factory 被 Pi 迟到调用时返回空组件，避免旧 owner 重新接管 UI。 */
+function createStaleEditorFallback(): { render: () => string[]; handleInput: () => void } {
+	return {
+		render: () => [],
+		handleInput: () => undefined,
+	};
+}
+
+/** 旧 generation 的 footer factory 被 Pi 迟到调用时返回空组件，且 dispose/invalidate 无副作用。 */
+function createStaleFooterFallback(): { render: () => string[]; dispose: () => void; invalidate: () => void } {
+	return {
+		render: () => [],
+		dispose: () => undefined,
+		invalidate: () => undefined,
+	};
 }
 
 function cloneStatusLayout(layout: StatusLayout): StatusLayout {

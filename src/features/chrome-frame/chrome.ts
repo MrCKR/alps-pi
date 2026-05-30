@@ -1,6 +1,7 @@
 /** 功能：渲染统一消息 chrome box，保证 ANSI/CJK/OSC/image 场景的宽度安全 实现者：alps 实现日期：2026-05-26 */
 
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { sanitizeTerminalText } from "../../terminal-sanitizer.ts";
 import { isImageEscapeLine } from "./image.ts";
 import { extractBoundaryOscMarkers, restoreBoundaryOscMarkers } from "./osc.ts";
 import { DEFAULT_CONFIG, getChromeLabel, getChromeStyle, type ChromeConfig, type ChromeKind, type ChromeStatus, type ThemeLike } from "./styles.ts";
@@ -35,11 +36,14 @@ function applyLineBackground(_theme: ThemeLike, _bgToken: string, line: string, 
 	return padToWidth(line, width);
 }
 
+/** 窄宽度 fallback 也属于 terminal 输出边界，必须先净化外部文本再截断。 */
 function simpleLines(lines: readonly string[], width: number): string[] {
 	const max = safeWidth(width);
 	if (max <= 0) return [];
 	const raw = lines.length > 0 ? lines : [""];
-	return raw.flatMap((line) => String(line).split("\n")).map((line) => truncateToWidth(line, max, "", false));
+	return raw
+		.flatMap((line) => sanitizeTerminalText(line, { preserveSgr: true }).split("\n"))
+		.map((line) => truncateToWidth(line, max, "", false));
 }
 
 function buildTopBorder(label: string, width: number, theme: ThemeLike, borderToken: string, labelToken: string): string {
@@ -124,8 +128,13 @@ function renderContentLine(line: string, width: number, theme: ThemeLike, border
 }
 
 function stripControlMarkers(line: string): string {
-	if (!line.includes("\x1b")) return line;
-	return line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "");
+	return sanitizeTerminalText(line, { allowNewline: false, allowTab: false, preserveSgr: false });
+}
+
+/** 净化消息正文；image 协议行由既有 image fallback 保护，其它用户/工具正文只保留 SGR。 */
+function sanitizeContentLines(lines: readonly string[]): string[] {
+	const raw = lines.length > 0 ? lines : [""];
+	return raw.map((line) => isImageEscapeLine(line) ? String(line) : sanitizeTerminalText(line, { preserveSgr: true }));
 }
 
 function isBlankAfterControlMarkers(line: string): boolean {
@@ -151,7 +160,7 @@ export function renderNeonBox(kind: ChromeKind, contentLines: readonly string[],
 	}
 
 	const markers = extractBoundaryOscMarkers(contentLines.map(String));
-	const rawLines = markers.lines.length > 0 ? markers.lines : [""];
+	const rawLines = sanitizeContentLines(markers.lines);
 	if (isEmptyMessageChrome(kind, rawLines)) return [];
 	const status = options.status;
 	const style = getChromeStyle(kind, { toolName: options.toolName, status }, options.config ?? DEFAULT_CONFIG);

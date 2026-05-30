@@ -10,7 +10,7 @@ import { createInitialPatchState, PATCH_KEY } from "../src/features/chrome-frame
 import { disposeAnimations, getAnimationsPatchState, getAnimationsRuntimeState } from "../src/features/animations/index.ts";
 import type { BottomInputRuntime } from "../src/features/bottom-input/index.ts";
 
-function createHarness(options: { failEnable?: boolean } = {}) {
+function createHarness(options: { failEnable?: boolean; configureFailure?: boolean } = {}) {
 	const handlers = new Map<string, Function[]>();
 	const commands = new Map<string, any>();
 	const runtimeCalls: string[] = [];
@@ -36,6 +36,16 @@ function createHarness(options: { failEnable?: boolean } = {}) {
 			enabled = false;
 		},
 		getStatus() {
+			return { enabled, installed: enabled };
+		},
+		configure(settings: { fixedEnabled?: boolean; beautifiedInputEnabled?: boolean }) {
+			if (typeof settings.beautifiedInputEnabled === "boolean") runtimeCalls.push(`beautified:${settings.beautifiedInputEnabled}`);
+			if (typeof settings.fixedEnabled === "boolean") runtimeCalls.push(`set:${settings.fixedEnabled}`);
+			if (options.configureFailure && settings.fixedEnabled) {
+				enabled = false;
+				return { enabled: false, installed: false, failure: "boom" };
+			}
+			if (typeof settings.fixedEnabled === "boolean") enabled = settings.fixedEnabled;
 			return { enabled, installed: enabled };
 		},
 		setBeautifiedInputEnabled(nextEnabled: boolean) {
@@ -131,7 +141,7 @@ test("session_start 配置 animations 并调用统一 runtime", () => {
 	const harness = createHarness();
 	harness.emit("session_start", { id: "one" });
 
-	assert.deepEqual(harness.runtimeCalls, ["shortcuts", "beautified:true", "bind:one", "resetTime", "prompt:", "shortcuts", "set:true", "beautified:true"]);
+	assert.deepEqual(harness.runtimeCalls, ["shortcuts", "beautified:true", "bind:one", "resetTime", "prompt:", "shortcuts", "beautified:true", "set:true"]);
 	assert.equal(getAnimationsRuntimeState().currentCtx.id, "one");
 	assert.equal(getAnimationsPatchState().enabled, true);
 });
@@ -172,7 +182,7 @@ test("shutdown 后下一次 session_start 会按持久化设置恢复 fixed edit
 	harness.emit("session_shutdown");
 	harness.emit("session_start", { id: "next" });
 
-	assert.deepEqual(harness.runtimeCalls.slice(-6), ["bind:next", "resetTime", "prompt:", "shortcuts", "set:true", "beautified:false"]);
+	assert.deepEqual(harness.runtimeCalls.slice(-6), ["bind:next", "resetTime", "prompt:", "shortcuts", "beautified:false", "set:true"]);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, true);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled, false);
 });
@@ -187,7 +197,7 @@ test("session_start 会按设置切换 beautified input", () => {
 });
 
 test("session_start 安装失败时回写 fixedBottomEditor=false", () => {
-	const harness = createHarness({ failEnable: true });
+	const harness = createHarness({ configureFailure: true });
 	(globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled = true;
 
 	harness.emit("session_start", { id: "fail" });
@@ -310,8 +320,9 @@ test("命令层 fixed/beautified ops 使用入口创建的统一 runtime 并用�
 	assert.equal(harness.runtimeCalls.includes("beautified:false"), true);
 });
 
-test("美化输入框切换不强行安装 fixed runtime", async () => {
-	const harness = createHarness();
+test("美化输入框切换 fixed fail-closed 时同步关闭 fixed 设置", async () => {
+	const harness = createHarness({ configureFailure: true });
+	(globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled = true;
 	const ctx = {
 		id: "command-ctx",
 		hasUI: true,
@@ -327,5 +338,26 @@ test("美化输入框切换不强行安装 fixed runtime", async () => {
 	};
 
 	await harness.commands.get("alps-pi").handler("", ctx);
-	assert.deepEqual(harness.runtimeCalls, ["shortcuts", "beautified:true", "bind:command-ctx", "beautified:false"]);
+	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, false);
+});
+
+test("美化输入框切换不强行安装 fixed runtime", async () => {
+	const harness = createHarness();
+	(globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled = false;
+	const ctx = {
+		id: "command-ctx",
+		hasUI: true,
+		ui: {
+			custom(factory: any) {
+				const component = factory({}, undefined, {}, () => {});
+				for (let i = 0; i < 5; i++) component.handleInput("\x1b[B");
+				component.handleInput(" ");
+				return Promise.resolve();
+			},
+			notify() {},
+		},
+	};
+
+	await harness.commands.get("alps-pi").handler("", ctx);
+	assert.deepEqual(harness.runtimeCalls, ["shortcuts", "beautified:true", "bind:command-ctx", "beautified:false", "set:false"]);
 });

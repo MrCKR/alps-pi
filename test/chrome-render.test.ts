@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { renderNeonBox } from "../src/features/chrome-frame/chrome.ts";
+import { renderCompactThinkingBox, renderNeonBox } from "../src/features/chrome-frame/chrome.ts";
 import { createFakeTheme, assertLinesWithin, stripAnsi } from "./helpers.test.ts";
 
 test("renderNeonBox 输出完整三段 box 且包含 label 与内容", () => {
@@ -68,6 +68,24 @@ test("宽度过小时简化渲染且不抛异常", () => {
 		const lines = renderNeonBox("user", ["abcdef"], width, theme);
 		assert.ok(Array.isArray(lines));
 		assertLinesWithin(lines, Math.max(0, width));
+	}
+});
+
+
+
+test("窄宽度 fallback 会净化危险 terminal escape", () => {
+	const theme = createFakeTheme();
+	const dangerous = "A]52;c;AAAAB[2JCPpayload\D[31mE";
+	for (const width of [1, 5, 7]) {
+		const neon = renderNeonBox("user", [dangerous], width, theme).join("");
+		const compact = renderCompactThinkingBox([dangerous], width, theme).join("");
+		for (const output of [neon, compact]) {
+			assert.doesNotMatch(output, /\]52/);
+			assert.doesNotMatch(output, /\[2J/);
+			assert.doesNotMatch(output, /P/);
+			assert.doesNotMatch(output, /payload/);
+			assert.doesNotMatch(output, /\[(?![0-9;:]*m)/);
+		}
 	}
 });
 
