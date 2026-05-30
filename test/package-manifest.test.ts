@@ -11,7 +11,17 @@ test("package.json 声明 pi 扩展入口且不依赖本机 file 路径", async 
 
 	assert.equal(packageJson.name, "alps-pi");
 	assert.match(packageJson.description, /Personal pi beautification extension/);
+	assert.equal(packageJson.private, undefined);
+	assert.equal(packageJson.license, "MIT");
+	assert.equal(packageJson.repository?.url, "git+https://github.com/MrCKR/alps-pi.git");
+	assert.equal(packageJson.homepage, "https://github.com/MrCKR/alps-pi#readme");
+	assert.equal(packageJson.bugs?.url, "https://github.com/MrCKR/alps-pi/issues");
 	assert.ok(packageJson.keywords?.includes("pi-package"));
+	assert.ok(packageJson.keywords?.includes("pi-extension"));
+	assert.ok(packageJson.files?.includes("index.ts"));
+	assert.ok(packageJson.files?.includes("src"));
+	assert.ok(packageJson.files?.includes("themes"));
+	assert.ok(packageJson.files?.includes("LICENSE"));
 	assert.deepEqual(packageJson.pi?.extensions, ["./index.ts"]);
 	assert.deepEqual(packageJson.pi?.themes, ["./themes"]);
 	assert.equal(packageJson.dependencies?.["@earendil-works/pi-coding-agent"], undefined);

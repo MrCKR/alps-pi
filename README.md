@@ -3,6 +3,12 @@
 ## 安装
 
 ```bash
+pi install npm:alps-pi
+```
+
+也可以直接从 GitHub 安装：
+
+```bash
 pi install git:https://github.com/MrCKR/alps-pi
 ```
 
@@ -13,6 +19,12 @@ pi install git:https://github.com/MrCKR/alps-pi
 ```
 
 更新时最简单的方式：
+
+```bash
+pi update npm:alps-pi
+```
+
+如果使用 GitHub 安装：
 
 ```bash
 pi remove git:https://github.com/MrCKR/alps-pi
