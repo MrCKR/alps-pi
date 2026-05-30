@@ -3,6 +3,9 @@
 import { Container, Key, matchesKey, SettingsList, truncateToWidth, visibleWidth, type Component, type SettingItem, type SettingsListTheme } from "@earendil-works/pi-tui";
 import { type PatchState, disablePatch, enablePatch, getGlobalPatchState } from "./features/chrome-frame/index.ts";
 import type { AlpsPiSettings, FixedBottomEditorStatus } from "./settings.ts";
+import { ANIMATION_FPS_VALUES, ANIMATION_WIDTH_VALUES } from "./features/animations/settings.ts";
+import { getAnimationsForCategory } from "./features/animations/registry.ts";
+import { AnimationsPreviewComponent } from "./features/animations/preview.ts";
 import type { ThemeLike } from "./features/chrome-frame/styles.ts";
 import {
 	DEFAULT_BOTTOM_INPUT_SHORTCUTS,
@@ -20,9 +23,11 @@ export type SettingsPanelOps = {
 	setFixedBottomEditorEnabled?: (enabled: boolean) => FixedBottomEditorStatus | void;
 	setBeautifiedInputEnabled?: (enabled: boolean) => void;
 	onSettingsChanged?: (settings: AlpsPiSettings) => void;
+	requestRender?: () => void;
 };
 
 const MAIN_MAX_VISIBLE = 10;
+const ANIMATIONS_MAX_VISIBLE = 8;
 const SHORTCUT_MAX_VISIBLE = 8;
 const ON = "ON";
 const OFF = "OFF";
@@ -50,7 +55,18 @@ type MainSettingId =
 	| "chromeFrame.compactEditTool"
 	| "fixedBottomEditor.enabled"
 	| "beautifiedInput.enabled"
+	| "animations"
 	| "shortcuts";
+
+type AnimationsSettingId =
+	| "animations.enabled"
+	| "animations.randomMode"
+	| "animations.thinking"
+	| "animations.working"
+	| "animations.tool"
+	| "animations.width"
+	| "animations.fps"
+	| "animations.preview";
 
 function booleanLabel(value: boolean): string {
 	return value ? ON : OFF;
@@ -120,6 +136,8 @@ function hasSettingsListSubmenu(list: SettingsList): boolean {
 }
 
 function closeSettingsListSubmenu(list: SettingsList): void {
+	const submenu = getSettingsListInternals(list).submenuComponent as any;
+	submenu?.dispose?.();
 	getSettingsListInternals(list).closeSubmenu?.();
 }
 
@@ -184,6 +202,7 @@ export class AlpsPiSettingsComponent extends Container {
 			setFixedBottomEditorEnabled: ops.setFixedBottomEditorEnabled ?? (() => undefined),
 			setBeautifiedInputEnabled: ops.setBeautifiedInputEnabled ?? (() => undefined),
 			onSettingsChanged: ops.onSettingsChanged ?? (() => undefined),
+			requestRender: ops.requestRender ?? (() => undefined),
 		};
 
 		this.settingsList = new SettingsList(
@@ -260,6 +279,13 @@ export class AlpsPiSettingsComponent extends Container {
 				values: [ON, OFF],
 			},
 			{
+				id: "animations",
+				label: "Animations",
+				description: "配置底部与 hidden thinking 内置动画",
+				currentValue: CONFIGURE,
+				submenu: (_currentValue, done) => new AnimationsSettingsSubmenu(this.ops, () => done(), this.listTheme),
+			},
+			{
 				id: "shortcuts",
 				label: "Shortcuts",
 				description: "管理底部输入框快捷键",
@@ -330,6 +356,141 @@ export class AlpsPiSettingsComponent extends Container {
 		if (this.closed) return;
 		this.closed = true;
 		this.done?.();
+	}
+}
+
+class AnimationsSettingsSubmenu extends Container {
+	private readonly ops: Required<SettingsPanelOps>;
+	private readonly onCancel: () => void;
+	private readonly listTheme: SettingsListTheme;
+	private readonly settingsList: SettingsList;
+
+	constructor(ops: Required<SettingsPanelOps>, onCancel: () => void, listTheme: SettingsListTheme) {
+		super();
+		this.ops = ops;
+		this.onCancel = onCancel;
+		this.listTheme = listTheme;
+		this.settingsList = new SettingsList(
+			this.createAnimationItems(),
+			ANIMATIONS_MAX_VISIBLE,
+			withSettingsListHint(listTheme, "↑/↓ select · Enter/Space change · Esc back"),
+			(id, newValue) => this.handleChange(id as AnimationsSettingId, newValue),
+			onCancel,
+		);
+		this.addChild(this.settingsList);
+	}
+
+	handleInput(data: string): void {
+		if ((data === "q" || data === "Q") && !hasSettingsListSubmenu(this.settingsList)) {
+			this.onCancel();
+			return;
+		}
+		this.settingsList.handleInput(data);
+	}
+
+	private createAnimationItems(): SettingItem[] {
+		const animations = this.ops.getState().config.settings.animations;
+		const thinkingValues = getAnimationsForCategory("thinking").map((animation) => animation.name);
+		const workingValues = getAnimationsForCategory("working").map((animation) => animation.name);
+		return [
+			{
+				id: "animations.enabled",
+				label: "Enabled",
+				description: "启用底部与 hidden thinking 动画替换",
+				currentValue: booleanLabel(animations.enabled),
+				values: [ON, OFF],
+			},
+			{
+				id: "animations.randomMode",
+				label: "Random Mode",
+				description: "每次按分类随机选择动画",
+				currentValue: booleanLabel(animations.randomMode),
+				values: [ON, OFF],
+			},
+			{
+				id: "animations.thinking",
+				label: "Thinking",
+				description: "替换 Pi 原生 Thinking... 的动画",
+				currentValue: animations.thinking,
+				values: thinkingValues,
+			},
+			{
+				id: "animations.working",
+				label: "Working",
+				description: "替换底部 Working... 的动画",
+				currentValue: animations.working,
+				values: workingValues,
+			},
+			{
+				id: "animations.tool",
+				label: "Tool",
+				description: "tool 执行期底部动画",
+				currentValue: animations.tool,
+				values: workingValues,
+			},
+			{
+				id: "animations.width",
+				label: "Width",
+				description: "动画渲染宽度",
+				currentValue: String(animations.width),
+				values: ANIMATION_WIDTH_VALUES.map(String),
+			},
+			{
+				id: "animations.fps",
+				label: "FPS",
+				description: "动画刷新帧率",
+				currentValue: String(animations.fps),
+				values: ANIMATION_FPS_VALUES.map(String),
+			},
+			{
+				id: "animations.preview",
+				label: "Preview",
+				description: "预览所有内置动画",
+				currentValue: "open",
+				submenu: (_currentValue, done) => new AnimationsPreviewComponent({
+					settings: animations,
+					theme: this.listThemeToTheme(),
+					onClose: done,
+					requestRender: this.ops.requestRender,
+				}),
+			},
+		];
+	}
+
+	private listThemeToTheme(): ThemeLike {
+		// 预览组件只需要 fg 能力；这里复用 SettingsListTheme 的色彩函数，保持设置页内视觉一致。
+		return {
+			fg: (token: string, text: string) => token === "dim" ? this.listTheme.description(text) : this.listTheme.value(text, false),
+		};
+	}
+
+	private handleChange(id: AnimationsSettingId, newValue: string): void {
+		if (id === "animations.preview") return;
+		const settings = this.ops.getState().config.settings;
+		switch (id) {
+			case "animations.enabled":
+				settings.animations.enabled = booleanValue(newValue);
+				break;
+			case "animations.randomMode":
+				settings.animations.randomMode = booleanValue(newValue);
+				break;
+			case "animations.thinking":
+				settings.animations.thinking = newValue;
+				break;
+			case "animations.working":
+				settings.animations.working = newValue;
+				break;
+			case "animations.tool":
+				settings.animations.tool = newValue;
+				break;
+			case "animations.width":
+				settings.animations.width = newValue === "full" || newValue === "default" ? newValue : Number(newValue);
+				break;
+			case "animations.fps":
+				settings.animations.fps = Number(newValue);
+				break;
+		}
+		this.ops.onSettingsChanged(settings);
 	}
 }
 

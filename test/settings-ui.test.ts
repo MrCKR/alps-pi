@@ -14,6 +14,8 @@ function createPanel(options: { fixedResult?: { enabled: boolean; installed: boo
 	const calls: string[] = [];
 	const fixedCalls: boolean[] = [];
 	const beautifiedInputCalls: boolean[] = [];
+	const changedCalls: string[] = [];
+	const renderCalls: boolean[] = [];
 	let closed = false;
 	const component = new AlpsPiSettingsComponent(createFakeTheme(), () => {
 		closed = true;
@@ -38,8 +40,14 @@ function createPanel(options: { fixedResult?: { enabled: boolean; installed: boo
 		setBeautifiedInputEnabled: (enabled: boolean) => {
 			beautifiedInputCalls.push(enabled);
 		},
+		onSettingsChanged: (settings) => {
+			changedCalls.push(JSON.stringify(settings.animations));
+		},
+		requestRender: () => {
+			renderCalls.push(true);
+		},
 	});
-	return { state, calls, fixedCalls, beautifiedInputCalls, component, isClosed: () => closed };
+	return { state, calls, fixedCalls, beautifiedInputCalls, changedCalls, renderCalls, component, isClosed: () => closed };
 }
 
 test("设置界面展示英文设置名、中文描述和主题线框", () => {
@@ -52,6 +60,7 @@ test("设置界面展示英文设置名、中文描述和主题线框", () => {
 	assert.match(plain, /Compact Edit/);
 	assert.match(plain, /Fixed Input/);
 	assert.match(plain, /Beautified Input/);
+	assert.match(plain, /Animations/);
 	assert.match(plain, /Shortcuts/);
 	assert.match(plain, /控制消息、工具与 bash 外框/);
 	assert.doesNotMatch(plain, /底部状态栏/);
@@ -60,6 +69,7 @@ test("设置界面展示英文设置名、中文描述和主题线框", () => {
 	assert.match(plain, /Compact Edit\s+OFF/);
 	assert.match(plain, /Fixed Input\s+ON/);
 	assert.match(plain, /Beautified Input\s+ON/);
+	assert.match(plain, /Animations\s+configure/);
 	assert.doesNotMatch(plain, /preview/i);
 	assert.doesNotMatch(plain, /Alps Pi 美化设置/);
 	assert.equal(stripAnsi(lines[0]!), `╭${"─".repeat(78)}╮`);
@@ -159,6 +169,55 @@ test("设置界面固定输入框启用失败时回滚 OFF", () => {
 	assert.match(stripAnsi(component.render(80).join("\n")), /Fixed Input\s+OFF/);
 });
 
+test("Animations 二级页可修改 Enabled、Random Mode、Thinking、Working、Tool、Width、FPS，并提供预览入口", async () => {
+	const { state, changedCalls, renderCalls, component } = createPanel();
+	openAnimationsSettings(component);
+	const initial = stripAnsi(component.render(90).join("\n"));
+	assert.match(initial, /Enabled\s+ON/);
+	assert.match(initial, /Random Mode\s+OFF/);
+	assert.match(initial, /Thinking\s+shimmer/);
+	assert.match(initial, /Working\s+crush/);
+	assert.match(initial, /Tool\s+pipeline/);
+	assert.match(initial, /Width\s+default/);
+	assert.match(initial, /FPS\s+16/);
+	assert.match(initial, /Preview\s+open/);
+
+	component.handleInput(" ");
+	assert.equal(state.config.settings.animations.enabled, false);
+	component.handleInput("\x1b[B");
+	component.handleInput(" ");
+	assert.equal(state.config.settings.animations.randomMode, true);
+	component.handleInput("\x1b[B");
+	component.handleInput(" ");
+	assert.notEqual(state.config.settings.animations.thinking, "shimmer");
+	component.handleInput("\x1b[B");
+	component.handleInput(" ");
+	assert.notEqual(state.config.settings.animations.working, "crush");
+	component.handleInput("\x1b[B");
+	component.handleInput(" ");
+	assert.notEqual(state.config.settings.animations.tool, "pipeline");
+	component.handleInput("\x1b[B");
+	component.handleInput(" ");
+	assert.equal(state.config.settings.animations.width, 20);
+	component.handleInput("\x1b[B");
+	component.handleInput(" ");
+	assert.equal(state.config.settings.animations.fps, 24);
+	component.handleInput("\x1b[B");
+	component.handleInput(" ");
+	assert.match(stripAnsi(component.render(90).join("\n")), /Animation Preview/);
+	await new Promise((resolve) => setTimeout(resolve, 120));
+	assert.ok(renderCalls.length > 0);
+	const callsBeforeClose = renderCalls.length;
+	component.handleInput("q");
+	await new Promise((resolve) => setTimeout(resolve, 120));
+	assert.equal(renderCalls.length, callsBeforeClose);
+	component.handleInput("\x1b[B");
+	component.handleInput("\x1b[B");
+	component.handleInput(" ");
+	assert.match(stripAnsi(component.render(90).join("\n")), /Preview\s+open/);
+	assert.ok(changedCalls.length >= 7);
+});
+
 test("快捷键校验拒绝归一化后的 Pi 保留键", () => {
 	for (const shortcut of ["ctrl+shift+p", "shift+ctrl+p", "ctrl+shift+o", "shift+ctrl+o"]) {
 		const result = validateShortcutChange(DEFAULT_SETTINGS.shortcuts, "copyEditor", shortcut);
@@ -237,7 +296,12 @@ test("快捷键设置保存后关闭捕获并返回快捷键页", () => {
 	assert.match(stripAnsi(component.render(80).join("\n")), /Message Frame/);
 });
 
-function openShortcutSettings(component: AlpsPiSettingsComponent): void {
+function openAnimationsSettings(component: AlpsPiSettingsComponent): void {
 	for (let i = 0; i < 6; i++) component.handleInput("\x1b[B");
+	component.handleInput(" ");
+}
+
+function openShortcutSettings(component: AlpsPiSettingsComponent): void {
+	for (let i = 0; i < 7; i++) component.handleInput("\x1b[B");
 	component.handleInput(" ");
 }

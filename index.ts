@@ -5,6 +5,7 @@ import { registerAlpsPiCommand } from "./src/commands.ts";
 import { disablePatch, enablePatch, getGlobalPatchState } from "./src/features/chrome-frame/index.ts";
 import { cloneSettings, readPersistedSettings, writePersistedSettings } from "./src/settings-store.ts";
 import { createBottomInputRuntime, registerBottomInputShortcuts, type BottomInputRuntime } from "./src/features/bottom-input/index.ts";
+import { bindAnimationsSession, configureAnimations, disposeAnimations, handleAnimationsMessageEnd, handleAnimationsMessageUpdate, handleAnimationsToolExecutionEnd, handleAnimationsToolExecutionStart, pauseAnimationsRuntime, resumeAnimationsRuntime } from "./src/features/animations/index.ts";
 
 export type AlpsPiRuntimeDeps = {
 	/** 测试注入点：生产环境使用模块级 bottom input runtime。 */
@@ -25,7 +26,9 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 	state.config.settings.chromeFrame.compactEditTool = persistedSettings.chromeFrame.compactEditTool;
 	state.config.settings.fixedBottomEditor.enabled = persistedSettings.fixedBottomEditor.enabled;
 	state.config.settings.beautifiedInput.enabled = persistedSettings.beautifiedInput.enabled;
+	state.config.settings.animations = { ...persistedSettings.animations };
 	state.config.settings.shortcuts = { ...persistedSettings.shortcuts };
+	configureAnimations(state.config.settings.animations);
 	bottomInputRuntime.setShortcuts?.(state.config.settings.shortcuts);
 	bottomInputRuntime.setBeautifiedInputEnabled?.(state.config.settings.beautifiedInput.enabled);
 
@@ -64,6 +67,7 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 		},
 		onSettingsChanged: (settings) => {
 			bottomInputRuntime.setShortcuts?.(settings.shortcuts);
+			configureAnimations(settings.animations);
 			writePersistedSettings(settings);
 		},
 	});
@@ -71,6 +75,8 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 
 	// session_start 保存当前 ctx；若设置已打开，则立即尝试安装 fixed editor。
 	pi.on("session_start", (_event: any, ctx: any) => {
+		bindAnimationsSession(ctx);
+		configureAnimations(getGlobalPatchState().config.settings.animations);
 		bottomInputRuntime.bindSession(ctx);
 		bottomInputRuntime.resetSessionStartTime();
 		bottomInputRuntime.setLastPrompt("");
@@ -102,18 +108,37 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 	});
 
 	pi.on("agent_start", (_event: any, ctx: any) => {
+		resumeAnimationsRuntime();
 		bottomInputRuntime.bindSession(ctx);
 		bottomInputRuntime.setStreaming?.(true);
 	});
 
 	pi.on("message_update", (event: any, ctx: any) => {
+		bindAnimationsSession(ctx);
+		handleAnimationsMessageUpdate(event);
 		bottomInputRuntime.bindSession(ctx);
 		bottomInputRuntime.setLiveUsage(event?.message?.usage);
 	});
 
 	pi.on("message_end", (_event: any, ctx: any) => {
+		handleAnimationsMessageEnd();
 		bottomInputRuntime.bindSession(ctx);
 		bottomInputRuntime.clearLiveUsage();
+	});
+
+	pi.on("tool_execution_start", (event: any, ctx: any) => {
+		bindAnimationsSession(ctx);
+		handleAnimationsToolExecutionStart(event);
+	});
+
+	pi.on("tool_execution_end", (event: any, ctx: any) => {
+		bindAnimationsSession(ctx);
+		handleAnimationsToolExecutionEnd(event);
+	});
+
+	pi.on("agent_end", (_event: any, ctx: any) => {
+		bindAnimationsSession(ctx);
+		pauseAnimationsRuntime();
 	});
 
 	pi.on("turn_end", (_event: any, ctx: any) => {
@@ -132,8 +157,10 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 			state.config.settings.chromeFrame.compactEditTool = persisted.chromeFrame.compactEditTool;
 			state.config.settings.fixedBottomEditor.enabled = persisted.fixedBottomEditor.enabled;
 			state.config.settings.beautifiedInput.enabled = persisted.beautifiedInput.enabled;
+			state.config.settings.animations = { ...persisted.animations };
 			state.config.settings.shortcuts = { ...persisted.shortcuts };
 			writePersistedSettings(state.config.settings);
+			disposeAnimations();
 			disablePatch();
 		}
 	});

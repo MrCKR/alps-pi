@@ -917,15 +917,8 @@ function cloneStatusLayout(layout: StatusLayout): StatusLayout {
 /** 在 TUI 树中查找 editor 与其周边原生容器；这些容器都由唯一 footer owner 纳入 fixed cluster。 */
 function findFixedEditorContainers(tui: any, editor: any): FixedEditorContainers | null {
 	if (!editor) return null;
-	const directContainer = tui?.editorContainer;
-	if (isRenderable(directContainer)) {
-		return {
-			statusContainer: asRenderable(tui?.statusContainer),
-			widgetContainerAbove: asRenderable(tui?.widgetContainerAbove),
-			editorContainer: directContainer,
-			widgetContainerBelow: asRenderable(tui?.widgetContainerBelow),
-		};
-	}
+	const explicit = findExplicitFixedEditorContainers(tui);
+	if (explicit) return explicit;
 
 	const children = Array.isArray(tui?.children) ? tui.children : [];
 	for (const [index, child] of children.entries()) {
@@ -940,7 +933,19 @@ function findFixedEditorContainers(tui: any, editor: any): FixedEditorContainers
 	return null;
 }
 
-/** 按真实 Pi 顺序读取容器：statusContainer -> widgetAbove -> editorContainer -> widgetBelow。 */
+/** 优先使用 Pi 原生显式容器字段；这是 setWidget 默认 above/below 语义的唯一可靠来源。 */
+function findExplicitFixedEditorContainers(tui: any): FixedEditorContainers | null {
+	const editorContainer = asRenderable(tui?.editorContainer);
+	if (!editorContainer) return null;
+	return {
+		statusContainer: asRenderable(tui?.statusContainer),
+		widgetContainerAbove: asRenderable(tui?.widgetContainerAbove),
+		editorContainer,
+		widgetContainerBelow: asRenderable(tui?.widgetContainerBelow),
+	};
+}
+
+/** 兼容旧 Pi 或测试替身：按真实 Pi 顺序读取容器：statusContainer -> widgetAbove -> editorContainer -> widgetBelow。 */
 function inferAdjacentContainers(children: any[], editorIndex: number, editorContainer: FixedEditorRenderable): FixedEditorContainers {
 	return {
 		statusContainer: asRenderable(children[editorIndex - 2]),

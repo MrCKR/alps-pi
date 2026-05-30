@@ -165,6 +165,7 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 									runIfActive(() => onSettingsChanged(settings, ctx));
 									refocusSettingsOverlay();
 								},
+								requestRender: () => runIfActive(() => settingsTui?.requestRender?.()),
 							});
 						}, {
 							overlay: true,

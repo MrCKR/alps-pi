@@ -28,6 +28,7 @@ function renderKind(kind: any, width = 32, extra: Record<string, unknown> = {}) 
 for (const [kind, label] of [
 	["user", "USER"],
 	["assistant", "ASSISTANT"],
+	["thinking", "THINK"],
 	["custom", "CUSTOM"],
 	["skill", "SKILL"],
 	["compaction", "COMPACT"],
@@ -41,6 +42,61 @@ for (const [kind, label] of [
 		assertLinesWithin(lines, 32);
 	});
 }
+
+test("纯 thinking assistant 线框显示 THINK label", () => {
+	const { lines } = renderKind("assistant", 36, {
+		lastMessage: { content: [{ type: "thinking", thinking: "hidden thought" }] },
+	});
+
+	assert.match(stripAnsi(lines[0]!), /THINK/);
+	assert.doesNotMatch(stripAnsi(lines[0]!), /ASSISTANT/);
+});
+
+test("thinking 加 toolCall 的 assistant 线框仍显示 THINK label", () => {
+	const { lines } = renderKind("assistant", 36, {
+		lastMessage: { content: [{ type: "thinking", thinking: "hidden thought" }, { type: "toolCall", id: "tool-1", name: "bash" }] },
+	});
+
+	assert.match(stripAnsi(lines[0]!), /THINK/);
+	assert.doesNotMatch(stripAnsi(lines[0]!), /ASSISTANT/);
+});
+
+test("隐藏 thinking 使用三行紧凑 THINK 线框，label 保持原 token，外框和内容使用 tool 外框 token", () => {
+	const { lines, theme } = renderKind("assistant", 36, {
+		hideThinkingBlock: true,
+		lastMessage: { content: [{ type: "thinking", thinking: "hidden thought" }] },
+	});
+	const plain = lines.map(stripAnsi);
+
+	assert.equal(lines.length, 3);
+	assert.match(plain[0]!, /THINK/);
+	assert.match(plain[1]!, /hidden thought|hello/);
+	assert.equal(plain.some((line) => line.trim() === "│" || line.trim() === ""), false);
+	assert.equal(lines.join("\n").includes("\x1b[38;2;"), false);
+	assert.ok(theme.calls.some((call) => call.kind === "fg" && call.token === "accent" && call.text.includes("THINK")));
+	assert.ok(theme.calls.some((call) => call.kind === "fg" && call.token === "borderAccent" && call.text.includes("│")));
+	assert.ok(theme.calls.some((call) => call.kind === "fg" && call.token === "borderAccent" && call.text.includes("hello")));
+	assertLinesWithin(lines, 36);
+});
+
+test("可见 thinking 仍使用普通 THINK 线框", () => {
+	const { lines } = renderKind("assistant", 36, {
+		hideThinkingBlock: false,
+		lastMessage: { content: [{ type: "thinking", thinking: "visible thought" }] },
+	});
+
+	assert.ok(lines.length >= 3);
+	assert.match(stripAnsi(lines[0]!), /THINK/);
+});
+
+test("包含正文的 assistant 线框保持 ASSISTANT label", () => {
+	const { lines } = renderKind("assistant", 36, {
+		lastMessage: { content: [{ type: "thinking", thinking: "hidden thought" }, { type: "text", text: "answer" }] },
+	});
+
+	assert.match(stripAnsi(lines[0]!), /ASSISTANT/);
+	assert.doesNotMatch(stripAnsi(lines[0]!), /THINK/);
+});
 
 test("tool pending / success / error kind 生成状态 label", () => {
 	let result = renderKind("tool", 36, { toolName: "read", isPartial: true });

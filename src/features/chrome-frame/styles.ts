@@ -11,6 +11,7 @@ export type ThemeLike = {
 export type ChromeKind =
 	| "user"
 	| "assistant"
+	| "thinking"
 	| "custom"
 	| "skill"
 	| "compaction"
@@ -46,6 +47,7 @@ export const DEFAULT_CONFIG: ChromeConfig = {
 	styles: {
 		user: { bg: "userMessageBg", border: "borderAccent", label: "accent", text: "userMessageText" },
 		assistant: { bg: "customMessageBg", border: "borderMuted", label: "accent", text: "text" },
+		thinking: { bg: "customMessageBg", border: "borderMuted", label: "accent", text: "text" },
 		custom: { bg: "customMessageBg", border: "borderAccent", label: "customMessageLabel", text: "customMessageText" },
 		skill: { bg: "customMessageBg", border: "borderAccent", label: "customMessageLabel", text: "customMessageText" },
 		compaction: { bg: "selectedBg", border: "borderMuted", label: "muted", text: "text" },
@@ -77,6 +79,8 @@ export function getChromeLabel(kind: ChromeKind, options: LabelOptions = {}): st
 			return "USER";
 		case "assistant":
 			return "ASSISTANT";
+		case "thinking":
+			return "THINK";
 		case "custom":
 			return "CUSTOM";
 		case "skill":

@@ -8,7 +8,7 @@ import test from "node:test";
 import { cloneStartupSettings, PI_SETTINGS_NAMESPACE, readNamespacedPiSettings, readPersistedSettings, writeNamespacedPiSettings, writePersistedSettings } from "../src/settings-store.ts";
 import { DEFAULT_SETTINGS } from "../src/settings.ts";
 
-test("启动默认设置固定输入框和美化输入框开启", () => {
+test("启动默认设置固定输入框、美化输入框和 Animations 开启", () => {
 	const settings = cloneStartupSettings();
 
 	assert.equal(settings.chromeFrame.enabled, true);
@@ -16,6 +16,8 @@ test("启动默认设置固定输入框和美化输入框开启", () => {
 	assert.equal(settings.chromeFrame.compactEditTool, false);
 	assert.equal(settings.fixedBottomEditor.enabled, true);
 	assert.equal(settings.beautifiedInput.enabled, true);
+	assert.equal(settings.animations.enabled, true);
+	assert.equal(settings.animations.thinking, "shimmer");
 	assert.equal("bottomStatus" in settings, false);
 });
 
@@ -28,6 +30,8 @@ test("读写持久化设置并合并缺失字段", () => {
 		settings.chromeFrame.compactEditTool = true;
 		settings.fixedBottomEditor.enabled = false;
 		settings.beautifiedInput.enabled = false;
+		settings.animations.enabled = false;
+		settings.animations.thinking = "aurora";
 		writePersistedSettings(settings, file);
 
 		const raw = JSON.parse(readFileSync(file, "utf-8"));
@@ -35,6 +39,8 @@ test("读写持久化设置并合并缺失字段", () => {
 		const loaded = readPersistedSettings(file);
 		assert.equal(loaded.fixedBottomEditor.enabled, false);
 		assert.equal(loaded.beautifiedInput.enabled, false);
+		assert.equal(loaded.animations.enabled, false);
+		assert.equal(loaded.animations.thinking, "aurora");
 		assert.equal("bottomStatus" in loaded, false);
 		assert.equal(loaded.chromeFrame.assistantFrame, true);
 		assert.equal(loaded.chromeFrame.toolCompactMode, false);
@@ -78,6 +84,7 @@ test("完整默认快捷键持久化不会被误拒绝", () => {
 		writeFileSync(file, JSON.stringify({ shortcuts: DEFAULT_SETTINGS.shortcuts }), "utf-8");
 
 		const loaded = readPersistedSettings(file);
+		assert.deepEqual(loaded.animations, DEFAULT_SETTINGS.animations);
 		assert.deepEqual(loaded.shortcuts, DEFAULT_SETTINGS.shortcuts);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
@@ -118,6 +125,7 @@ test("Pi 原生 settings 缺少 alps-pi 时从独立文件迁移并忽略 bottom
 
 		assert.equal(loaded.fixedBottomEditor.enabled, false);
 		assert.equal(loaded.beautifiedInput.enabled, false);
+		assert.deepEqual(loaded.animations, DEFAULT_SETTINGS.animations);
 		assert.equal("bottomStatus" in loaded, false);
 		const root = JSON.parse(readFileSync(piFile, "utf-8"));
 		assert.equal(root.theme, "dark");

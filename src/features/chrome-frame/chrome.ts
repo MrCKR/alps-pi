@@ -13,6 +13,7 @@ export type RenderBoxOptions = {
 };
 
 const MIN_FULL_BOX_WIDTH = 8;
+const COMPACT_THINKING_BORDER_TOKEN = "borderAccent";
 
 export function padToWidth(line: string, width: number): string {
 	const current = visibleWidth(line);
@@ -52,6 +53,44 @@ function buildTopBorder(label: string, width: number, theme: ThemeLike, borderTo
 	const dashCount = Math.max(0, width - visibleWidth(left + visibleLabel + separator + right));
 	const rightBorder = styleText(theme, borderToken, separator + "─".repeat(dashCount) + right);
 	return leftBorder + styledLabel + rightBorder;
+}
+
+function buildCompactThinkingTopBorder(label: string, width: number, theme: ThemeLike, borderToken: string, labelToken: string): string {
+	return buildTopBorder(label, width, theme, borderToken, labelToken);
+}
+
+function buildCompactThinkingBottomBorder(width: number, theme: ThemeLike, borderToken: string): string {
+	return styleText(theme, borderToken, "╰" + "─".repeat(Math.max(0, width - 2)) + "╯");
+}
+
+function stripAnsiForContent(line: string): string {
+	return stripControlMarkers(line).trim();
+}
+
+function firstCompactThinkingLine(lines: readonly string[]): string {
+	for (const raw of lines) {
+		for (const part of String(raw).split("\n")) {
+			const text = stripAnsiForContent(part);
+			if (text) return text;
+		}
+	}
+	return "Thinking complete";
+}
+
+export function renderCompactThinkingBox(contentLines: readonly string[], width: number, theme: ThemeLike, config: ChromeConfig = DEFAULT_CONFIG): string[] {
+	const boxWidth = safeWidth(width);
+	if (boxWidth < MIN_FULL_BOX_WIDTH) return simpleLines(contentLines, boxWidth);
+	const label = "THINK";
+	const style = getChromeStyle("thinking", {}, config);
+	const borderToken = COMPACT_THINKING_BORDER_TOKEN;
+	const innerWidth = Math.max(0, boxWidth - 4);
+	const content = truncateToWidth(firstCompactThinkingLine(contentLines), innerWidth, "", false);
+	const padded = padToWidth(content, innerWidth);
+	return [
+		buildCompactThinkingTopBorder(label, boxWidth, theme, borderToken, style.label),
+		styleText(theme, borderToken, "│") + " " + styleText(theme, borderToken, padded) + " " + styleText(theme, borderToken, "│"),
+		buildCompactThinkingBottomBorder(boxWidth, theme, borderToken),
+	];
 }
 
 function buildBottomBorder(width: number, theme: ThemeLike, borderToken: string, elapsedText?: string): string {

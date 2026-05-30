@@ -10,9 +10,16 @@ test("默认开启消息线框和 Tool 极简模式且默认不收起 edit", () 
 	assert.equal(DEFAULT_SETTINGS.chromeFrame.compactEditTool, false);
 });
 
-test("固定输入框和美化输入框默认开启且无 bottomStatus", () => {
+test("固定输入框、美化输入框和 Animations 默认开启且无 bottomStatus", () => {
 	assert.equal(DEFAULT_SETTINGS.fixedBottomEditor.enabled, true);
 	assert.equal(DEFAULT_SETTINGS.beautifiedInput.enabled, true);
+	assert.equal(DEFAULT_SETTINGS.animations.enabled, true);
+	assert.equal(DEFAULT_SETTINGS.animations.randomMode, false);
+	assert.equal(DEFAULT_SETTINGS.animations.thinking, "shimmer");
+	assert.equal(DEFAULT_SETTINGS.animations.working, "crush");
+	assert.equal(DEFAULT_SETTINGS.animations.tool, "pipeline");
+	assert.equal(DEFAULT_SETTINGS.animations.width, "default");
+	assert.equal(DEFAULT_SETTINGS.animations.fps, 16);
 	assert.equal("bottomStatus" in DEFAULT_SETTINGS, false);
 });
 
@@ -22,6 +29,7 @@ test("cloneDefaultSettings 返回包含固定输入框和美化输入框的新�
 	assert.notEqual(cloned.chromeFrame, DEFAULT_SETTINGS.chromeFrame);
 	assert.notEqual(cloned.fixedBottomEditor, DEFAULT_SETTINGS.fixedBottomEditor);
 	assert.notEqual(cloned.beautifiedInput, DEFAULT_SETTINGS.beautifiedInput);
+	assert.notEqual(cloned.animations, DEFAULT_SETTINGS.animations);
 	assert.notEqual(cloned.shortcuts, DEFAULT_SETTINGS.shortcuts);
 	assert.equal("bottomStatus" in cloned, false);
 	assert.deepEqual(cloned, {
@@ -36,6 +44,15 @@ test("cloneDefaultSettings 返回包含固定输入框和美化输入框的新�
 		},
 		beautifiedInput: {
 			enabled: true,
+		},
+		animations: {
+			enabled: true,
+			randomMode: false,
+			working: "crush",
+			thinking: "shimmer",
+			tool: "pipeline",
+			width: "default",
+			fps: 16,
 		},
 		shortcuts: {
 			stashEditor: "alt+s",

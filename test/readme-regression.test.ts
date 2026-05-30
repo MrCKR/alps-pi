@@ -36,6 +36,7 @@ test("README 说明设置面板项目", async () => {
 	assert.match(readme, /Compact Edit\s+允许 edit tool 也按极简模式展示，默认 OFF/);
 	assert.match(readme, /Fixed Input\s+控制实验性底部固定编辑器 runtime，默认 ON/);
 	assert.match(readme, /Beautified Input\s+控制输入框线框与嵌入边框状态，默认 ON/);
+	assert.match(readme, /Animations\s+配置底部 Working\/Thinking\/Tool 与 hidden thinking 内置动画，默认 ON/);
 	assert.match(readme, /Shortcuts\s+管理底部输入框快捷键/);
 	assert.doesNotMatch(readme, /底部状态栏\s+显示模型/);
 });
@@ -48,6 +49,14 @@ test("README 说明美化输入框默认开启与 Alt+S 行为", async () => {
 	assert.match(readme, /extension statuses 与上一个问题保持在线框下方/);
 	assert.match(readme, /缺失的数据不会显示占位/);
 	assert.match(readme, /Alt\+S.*暂存并清空输入框/);
+});
+
+test("README 说明 Animations 多行动画和 hidden thinking 完成态", async () => {
+	const readme = await readReadme();
+
+	assert.match(readme, /多行动画会整体写入底部 working 区域/);
+	assert.match(readme, /Thinking complete/);
+	assert.match(readme, /thinking 文案配色/);
 });
 
 test("README 说明固定输入框绘制接管风险", async () => {

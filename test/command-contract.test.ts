@@ -253,6 +253,24 @@ test("设置页关闭后显式恢复当前 editor 焦点，避免回到已替换
 	assert.deepEqual(harness.customCalls[0].fakeTui.requestRenderCalls.at(-1), true);
 });
 
+test("设置页内 Animations Preview 使用 overlay tui.requestRender 驱动动态刷新", async () => {
+	const harness = createHarness();
+	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
+	await Promise.resolve();
+	const component = harness.customCalls[0].component;
+	for (let i = 0; i < 6; i++) component.handleInput("\x1b[B");
+	component.handleInput(" ");
+	for (let i = 0; i < 7; i++) component.handleInput("\x1b[B");
+	component.handleInput(" ");
+	assert.match(component.render(90).join("\n"), /Animation Preview/);
+	await new Promise((resolve) => setTimeout(resolve, 120));
+	assert.ok(harness.customCalls[0].fakeTui.requestRenderCalls.length > 0);
+	component.handleInput("q");
+	component.handleInput("q");
+	component.handleInput("q");
+	await pending;
+});
+
 test("设置界面 fixed op 返回 failure 时回滚为 OFF", async () => {
 	const harness = createHarness({ fixedFailure: "boom" });
 	(globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled = false;

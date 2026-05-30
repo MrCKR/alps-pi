@@ -10,7 +10,7 @@ import {
 	ToolExecutionComponent,
 	UserMessageComponent,
 } from "@earendil-works/pi-coding-agent";
-import { isEmptyMessageChrome, renderNeonBox } from "./chrome.ts";
+import { isEmptyMessageChrome, renderCompactThinkingBox, renderNeonBox } from "./chrome.ts";
 import { containsImageLine, isImageEscapeLine } from "./image.ts";
 import { cloneDefaultSettings, type AlpsPiSettings } from "../../settings.ts";
 import { DEFAULT_CONFIG, getChromeStyle, type ChromeConfig, type ChromeKind, type ChromeStatus, type ThemeLike } from "./styles.ts";
@@ -186,6 +186,10 @@ function normalizeSettings(settings: AlpsPiSettings | any, enabled?: boolean): A
 				...DEFAULT_CONFIG.settings.beautifiedInput,
 				...(settings.beautifiedInput ?? {}),
 			},
+			animations: {
+				...DEFAULT_CONFIG.settings.animations,
+				...(settings.animations ?? {}),
+			},
 			shortcuts: {
 				...DEFAULT_CONFIG.settings.shortcuts,
 				...(settings.shortcuts ?? {}),
@@ -205,6 +209,10 @@ function normalizeSettings(settings: AlpsPiSettings | any, enabled?: boolean): A
 		beautifiedInput: {
 			enabled: Boolean(settings?.beautifiedInput?.enabled ?? DEFAULT_CONFIG.settings.beautifiedInput.enabled),
 		},
+		animations: {
+			...DEFAULT_CONFIG.settings.animations,
+			...(settings?.animations ?? {}),
+		},
 		shortcuts: {
 			...DEFAULT_CONFIG.settings.shortcuts,
 			...(settings?.shortcuts ?? {}),
@@ -221,6 +229,7 @@ function createTrackedSettings(settings: AlpsPiSettings, onChange: () => void, e
 	normalized.chromeFrame = createTrackedObject(normalized.chromeFrame, onChange);
 	normalized.fixedBottomEditor = createTrackedObject(normalized.fixedBottomEditor, onChange);
 	normalized.beautifiedInput = createTrackedObject(normalized.beautifiedInput, onChange);
+	normalized.animations = createTrackedObject(normalized.animations, onChange);
 	normalized.shortcuts = createTrackedObject(normalized.shortcuts, onChange);
 	return createTrackedObject(normalized, onChange);
 }
@@ -292,6 +301,30 @@ function deriveStatus(kind: ChromeKind, instance: any): ChromeStatus | undefined
 	if (kind === "toolError") return "error";
 	if (kind === "bash") return getBashStatus(instance);
 	return undefined;
+}
+
+function isNonEmptyText(value: unknown): boolean {
+	return typeof value === "string" && value.trim().length > 0;
+}
+
+function isThinkingOnlyAssistant(instance: any): boolean {
+	// 只基于 AssistantMessage 原始 content 判断，避免从渲染后的 TUI children 里误猜正文/think。
+	const content = instance?.lastMessage?.content;
+	if (!Array.isArray(content)) return false;
+	let hasThinking = false;
+	for (const block of content) {
+		if (block?.type === "thinking" && isNonEmptyText(block.thinking)) {
+			hasThinking = true;
+			continue;
+		}
+		if (block?.type === "text" && isNonEmptyText(block.text)) return false;
+	}
+	return hasThinking;
+}
+
+function resolveRenderKind(kind: ChromeKind, instance: any): ChromeKind {
+	if (kind === "assistant" && isThinkingOnlyAssistant(instance)) return "thinking";
+	return kind;
 }
 
 function deriveToolName(kind: ChromeKind, instance: any, fallback?: string): string | undefined {
@@ -468,6 +501,11 @@ function createTimingContentKey(kind: ChromeKind, instance: any, innerLines: rea
 	return innerLines.join("\n");
 }
 
+function shouldUseCompactThinkingBox(kind: ChromeKind, instance: any): boolean {
+	// hidden think 只展示状态，不需要普通消息框的上下留白；visible think 仍完整展示原文。
+	return kind === "thinking" && instance?.hideThinkingBlock === true;
+}
+
 export function createSafeBoxRender(kind: ChromeKind, inner: (innerWidth: number) => string[], options: SafeBoxRenderOptions): (width: number) => string[] {
 	return (width: number) => {
 		const innerWidth = Math.max(1, Math.floor(width) - 4);
@@ -493,8 +531,9 @@ export function createWrappedRender(
 ): (this: any, width: number) => string[] {
 	const wrapped = function alpsChromeWrappedRender(this: any, width: number): string[] {
 		const instance = this;
-		const status = deriveStatus(kind, instance);
-		const toolName = deriveToolName(kind, instance, extra.toolName as string | undefined);
+		const renderKind = resolveRenderKind(kind, instance);
+		const status = deriveStatus(renderKind, instance);
+		const toolName = deriveToolName(renderKind, instance, extra.toolName as string | undefined);
 		const fallback = () => asLines(originalRender.call(instance, width));
 		try {
 			const numericWidth = Number.isFinite(width) ? Math.floor(width) : 0;
@@ -506,27 +545,29 @@ export function createWrappedRender(
 			if (kind === "assistant" && !config.settings.chromeFrame.assistantFrame) {
 				return fallback();
 			}
-			const displayedLines = shouldCompactTool(kind, toolName, instance, config) ? compactToolLines(innerLines, instance) : innerLines;
-			if (isEmptyMessageChrome(kind, displayedLines)) return [];
+			const displayedLines = shouldCompactTool(renderKind, toolName, instance, config) ? compactToolLines(innerLines, instance) : innerLines;
+			if (isEmptyMessageChrome(renderKind, displayedLines)) return [];
 			if (Boolean(extra.forceImageFallback) && containsImageLine(displayedLines)) {
 				return fallback();
 			}
 			const innerKey = displayedLines.join("\n");
-			const styleKey = createStyleSignature(id, kind, status, toolName, config, state.configVersion, Boolean(instance?.expanded));
-			const timingContentKey = createTimingContentKey(kind, instance, innerLines);
-			const timingKey = [timingContentKey, kind, toolName ?? "", status ?? ""].join(CACHE_KEY_SEPARATOR);
+			const styleKey = createStyleSignature(id, renderKind, status, toolName, config, state.configVersion, Boolean(instance?.expanded));
+			const timingContentKey = createTimingContentKey(renderKind, instance, innerLines);
+			const timingKey = [timingContentKey, renderKind, toolName ?? "", status ?? ""].join(CACHE_KEY_SEPARATOR);
 			const timing = updateTimingState(instance, timingKey);
 			const elapsedText = formatElapsedSincePrevious(timing);
 			const cache = (instance as any)[RENDER_CACHE_KEY] as RenderCacheEntry | undefined;
 			if (cache && cache.width === numericWidth && cache.innerKey === innerKey && cache.styleKey === styleKey && cache.elapsedText === elapsedText) {
 				return cache.lines;
 			}
-			const lines = renderNeonBox(kind, displayedLines, numericWidth, getTheme(instance), {
-				toolName,
-				status,
-				config,
-				elapsedText,
-			});
+			const lines = shouldUseCompactThinkingBox(renderKind, instance)
+				? renderCompactThinkingBox(displayedLines, numericWidth, getTheme(instance), config)
+				: renderNeonBox(renderKind, displayedLines, numericWidth, getTheme(instance), {
+					toolName,
+					status,
+					config,
+					elapsedText,
+				});
 			(instance as any)[RENDER_CACHE_KEY] = { width: numericWidth, innerKey, styleKey, elapsedText, lines } satisfies RenderCacheEntry;
 			return lines;
 		} catch {

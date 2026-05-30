@@ -7,6 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { registerAlpsPiExtension } from "../index.ts";
 import { createInitialPatchState, PATCH_KEY } from "../src/features/chrome-frame/patch.ts";
+import { disposeAnimations, getAnimationsPatchState, getAnimationsRuntimeState } from "../src/features/animations/index.ts";
 import type { BottomInputRuntime } from "../src/features/bottom-input/index.ts";
 
 function createHarness(options: { failEnable?: boolean } = {}) {
@@ -107,25 +108,32 @@ test.beforeEach(() => {
 });
 
 test.afterEach(() => {
+	disposeAnimations();
 	delete process.env.ALPS_PI_SETTINGS_PATH;
 	for (const dir of settingsDirs.splice(0)) {
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
 
-test("extension load 后注册 session_start 和 session_shutdown", () => {
+test("extension load 后注册 session_start、动画事件和 session_shutdown", () => {
 	const harness = createHarness();
 	assert.ok(harness.commands.has("alps-pi"));
 	assert.equal(harness.handlers.get("session_start")?.length, 1);
+	assert.equal(harness.handlers.get("message_update")?.length, 1);
+	assert.equal(harness.handlers.get("tool_execution_start")?.length, 1);
+	assert.equal(harness.handlers.get("tool_execution_end")?.length, 1);
+	assert.equal(harness.handlers.get("agent_end")?.length, 1);
 	assert.equal(harness.handlers.get("session_shutdown")?.length, 1);
 	assert.ok(harness.commands.has("shortcut:alt+s"));
 });
 
-test("session_start 调用统一 runtime，并按默认设置安装 fixed editor", () => {
+test("session_start 配置 animations 并调用统一 runtime", () => {
 	const harness = createHarness();
 	harness.emit("session_start", { id: "one" });
 
 	assert.deepEqual(harness.runtimeCalls, ["shortcuts", "beautified:true", "bind:one", "resetTime", "prompt:", "shortcuts", "set:true", "beautified:true"]);
+	assert.equal(getAnimationsRuntimeState().currentCtx.id, "one");
+	assert.equal(getAnimationsPatchState().enabled, true);
 });
 
 test("若设置为 true，session_start 尝试安装 runtime", () => {
@@ -150,7 +158,9 @@ test("session_shutdown 先 dispose runtime、保留 fixedBottomEditor/beautified
 	assert.deepEqual(harness.disposePatchEnabledSnapshots, [true]);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, true);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled, false);
+	assert.equal((globalThis as any)[PATCH_KEY].config.settings.animations.enabled, true);
 	assert.equal("bottomStatus" in (globalThis as any)[PATCH_KEY].config.settings, false);
+	assert.equal(getAnimationsPatchState().enabled, false);
 	assert.equal((globalThis as any)[PATCH_KEY].enabled, false);
 });
 
@@ -192,6 +202,7 @@ test("扩展启动时读取持久化设置", () => {
 		chromeFrame: { enabled: false, assistantFrame: false, toolCompactMode: false, compactEditTool: true },
 		fixedBottomEditor: { enabled: false },
 		beautifiedInput: { enabled: false },
+		animations: { enabled: false, thinking: "aurora", fps: 8 },
 		bottomStatus: { enabled: true },
 	}), "utf-8");
 
@@ -205,10 +216,35 @@ test("扩展启动时读取持久化设置", () => {
 	assert.equal(settings.chromeFrame.compactEditTool, true);
 	assert.equal(settings.fixedBottomEditor.enabled, false);
 	assert.equal(settings.beautifiedInput.enabled, false);
+	assert.equal(settings.animations.enabled, false);
+	assert.equal(settings.animations.thinking, "aurora");
+	assert.equal(settings.animations.fps, 8);
 	assert.equal("bottomStatus" in settings, false);
 	assert.equal(harness.runtimeCalls.includes("bind:persisted"), true);
 	assert.equal(harness.runtimeCalls.includes("set:true"), false);
 	assert.equal(harness.runtimeCalls.includes("beautified:false"), true);
+});
+
+test("message_update 绑定 animations ctx，agent_end 才停止底部动画", () => {
+	const harness = createHarness();
+	harness.emit("message_update", { id: "anim-update" }, { message: { usage: {} } });
+
+	const state = getAnimationsRuntimeState();
+	assert.equal(state.currentCtx.id, "anim-update");
+	assert.equal(state.animating, false);
+	harness.emit("agent_start", { id: "agent" });
+	assert.equal(state.animating, true);
+	harness.emit("message_update", { id: "think" }, { assistantMessageEvent: { type: "thinking_delta" }, message: { usage: {} } });
+	assert.equal(state.thinkingActive, true);
+	harness.emit("message_end", { id: "end" });
+	assert.equal(state.animating, true);
+	assert.equal(state.thinkingActive, false);
+	harness.emit("tool_execution_start", { id: "tool" }, { toolCallId: "tool-1" });
+	assert.equal(state.toolCallIds.has("tool-1"), true);
+	harness.emit("tool_execution_end", { id: "tool" }, { toolCallId: "tool-1" });
+	assert.equal(state.toolCallIds.size, 0);
+	harness.emit("agent_end", { id: "agent-end" });
+	assert.equal(state.animating, false);
 });
 
 test("模型、thinking 与消息事件会刷新统一 runtime", () => {

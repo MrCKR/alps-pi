@@ -408,6 +408,35 @@ test("安装 compositor 时把原生 status 与 widget 容器纳入底部固定 
 	assert.ok(harness.writes.at(-1)?.includes("below:40"));
 });
 
+test("显式 TUI 容器字段优先于 children 邻接推断，避免 setWidget 默认 above 被错放", () => {
+	const harness = createCtx({ autoInstantiate: true, attachAdjacentContainers: false });
+	const explicitStatus = createStaticContainer("explicit-status");
+	const explicitAbove = createStaticContainer("explicit-above");
+	const explicitBelow = createStaticContainer("explicit-below");
+	const wrongStatus = createStaticContainer("wrong-status");
+	const wrongAbove = createStaticContainer("wrong-above");
+	const wrongBelow = createStaticContainer("wrong-below");
+
+	// 真实 Pi 暴露这些显式容器字段；children 在插件/overlay 改动后可能不再可靠。
+	harness.tui.statusContainer = explicitStatus;
+	harness.tui.widgetContainerAbove = explicitAbove;
+	harness.tui.editorContainer = harness.editorContainer;
+	harness.tui.widgetContainerBelow = explicitBelow;
+	harness.tui.children = [wrongStatus, wrongAbove, harness.editorContainer, wrongBelow];
+
+	const runtime = createBottomInputRuntime();
+	runtime.bindSession(harness.ctx);
+	const status = runtime.setEnabled(true);
+	harness.tui.terminal.write("paint");
+	const output = harness.writes.at(-1) ?? "";
+
+	assert.equal(status.installed, true);
+	assert.ok(output.includes("explicit-status:40"));
+	assert.ok(output.includes("explicit-above:40"));
+	assert.ok(output.includes("explicit-below:40"));
+	assert.doesNotMatch(output, /wrong-status:40|wrong-above:40|wrong-below:40/);
+});
+
 test("缺 terminal.write 时失败且不半安装", () => {
 	const harness = createCtx({ terminal: { columns: 40, rows: 12 }, autoInstantiate: true });
 	const runtime = createBottomInputRuntime();

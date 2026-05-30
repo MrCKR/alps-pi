@@ -21,6 +21,23 @@ export type BeautifiedInputSettings = {
 	enabled: boolean;
 };
 
+export type AnimationsSettings = {
+	/** 内置 Animations：控制底部 working/thinking/tool 与 hidden thinking 动画替换。 */
+	enabled: boolean;
+	/** 随机模式：在同分类动画中随机挑选。 */
+	randomMode: boolean;
+	/** Working 动画配置；用于接管底部 Working... 状态。 */
+	working: string;
+	/** Thinking 动画配置；用于底部 thinking phase 与 hidden thinking label。 */
+	thinking: string;
+	/** Tool 动画配置；用于 tool 执行期底部动画。 */
+	tool: string;
+	/** 动画宽度。 */
+	width: "full" | "default" | number;
+	/** 动画帧率。 */
+	fps: number;
+};
+
 export type BottomInputShortcutSettings = {
 	/** Alt+S 暂存/恢复输入框。 */
 	stashEditor: string;
@@ -64,6 +81,8 @@ export type AlpsPiSettings = {
 	fixedBottomEditor: FixedBottomEditorSettings;
 	/** 输入框线框美化配置。 */
 	beautifiedInput: BeautifiedInputSettings;
+	/** 内置 Animations 配置。 */
+	animations: AnimationsSettings;
 	/** 底部输入框快捷键配置。 */
 	shortcuts: BottomInputShortcutSettings;
 };
@@ -80,6 +99,15 @@ export const DEFAULT_SETTINGS: AlpsPiSettings = {
 	},
 	beautifiedInput: {
 		enabled: true,
+	},
+	animations: {
+		enabled: true,
+		randomMode: false,
+		working: "crush",
+		thinking: "shimmer",
+		tool: "pipeline",
+		width: "default",
+		fps: 16,
 	},
 	shortcuts: {
 		stashEditor: "alt+s",
@@ -102,6 +130,7 @@ export function cloneDefaultSettings(): AlpsPiSettings {
 		chromeFrame: { ...DEFAULT_SETTINGS.chromeFrame },
 		fixedBottomEditor: { ...DEFAULT_SETTINGS.fixedBottomEditor },
 		beautifiedInput: { ...DEFAULT_SETTINGS.beautifiedInput },
+		animations: { ...DEFAULT_SETTINGS.animations },
 		shortcuts: { ...DEFAULT_SETTINGS.shortcuts },
 	};
 }

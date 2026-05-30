@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { cloneDefaultSettings, type AlpsPiSettings } from "./settings.ts";
+import { normalizeAnimationsSettings } from "./features/animations/settings.ts";
 import { normalizeShortcut, shortcutConflictKey, shortcutUsesSuper, isSupportedSuperShortcut, RESERVED_BOTTOM_INPUT_SHORTCUTS, SHORTCUT_KEYS } from "./features/bottom-input/shortcuts.ts";
 
 const SETTINGS_ENV = "ALPS_PI_SETTINGS_PATH";
@@ -15,6 +16,7 @@ export function cloneStartupSettings(): AlpsPiSettings {
 	settings.chromeFrame.enabled = true;
 	settings.fixedBottomEditor.enabled = true;
 	settings.beautifiedInput.enabled = true;
+	settings.animations.enabled = true;
 	return settings;
 }
 
@@ -85,6 +87,7 @@ export function cloneSettings(settings: AlpsPiSettings): AlpsPiSettings {
 		chromeFrame: { ...settings.chromeFrame },
 		fixedBottomEditor: { ...settings.fixedBottomEditor },
 		beautifiedInput: { ...settings.beautifiedInput },
+		animations: { ...settings.animations },
 		shortcuts: { ...settings.shortcuts },
 	};
 }
@@ -151,6 +154,7 @@ function normalizeSettings(value: unknown, defaults: AlpsPiSettings): AlpsPiSett
 		beautifiedInput: {
 			enabled: readBoolean(raw.beautifiedInput, "enabled", defaults.beautifiedInput.enabled),
 		},
+		animations: normalizeAnimationsSettings(raw.animations, defaults.animations),
 		shortcuts: normalizeShortcutSettings(raw.shortcuts, defaults.shortcuts),
 	};
 }
