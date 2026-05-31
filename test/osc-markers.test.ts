@@ -50,28 +50,29 @@ test("marker 不参与 visibleWidth 计算", () => {
 	assert.equal(visibleWidth(`${START}abc${END}${FINAL}`), 3);
 });
 
-test("box 后 marker 被恢复到正文首尾而不是边框", () => {
-	const theme = createFakeTheme();
+test("box 后 marker 默认恢复到 top/bottom 边框", () => {
 	const input = [`${START}hello`, `${END}${FINAL}world`];
 	const extracted = extractBoundaryOscMarkers(input);
-	const boxed = renderNeonBox("assistant", extracted.lines, 30, theme);
-	const restored = restoreBoundaryOscMarkers(boxed, extracted, { startIndex: 1, endIndex: boxed.length - 2 });
-	assert.equal(restored[0]!.startsWith(START), false);
-	assert.ok(restored[1]!.startsWith(START));
-	assert.ok(restored.at(-2)!.startsWith(`${END}${FINAL}`));
-	assert.equal(restored.at(-1)!.startsWith(`${END}${FINAL}`), false);
-	assert.equal(visibleWidth(restored[1]!), 30);
-	assert.equal(visibleWidth(restored.at(-2)!), 30);
+	const restored = restoreBoundaryOscMarkers(["top", "content", "bottom"], extracted);
+	assert.ok(restored[0]!.startsWith(START));
+	assert.equal(restored[1]!.startsWith(START), false);
+	assert.ok(restored.at(-1)!.startsWith(`${END}${FINAL}`));
+	assert.equal(restored.at(-2)!.startsWith(`${END}${FINAL}`), false);
 });
 
 
-test("renderNeonBox 直接处理真实 Pi OSC133 边界且不把 END/FINAL 放到底边框", () => {
+test("renderNeonBox 直接处理真实 Pi OSC133 边界并放到 top/bottom 边框", () => {
 	const theme = createFakeTheme();
 	const lines = renderNeonBox("user", [`${START}hello`, `${END}${FINAL}world`], 32, theme);
-	assert.equal(lines[0]!.startsWith(START), false);
-	assert.ok(lines[1]!.startsWith(START));
-	assert.ok(lines.at(-2)!.startsWith(`${END}${FINAL}`));
-	assert.equal(lines.at(-1)!.startsWith(`${END}${FINAL}`), false);
+	assert.ok(lines[0]!.startsWith(START));
+	assert.ok(lines.at(-1)!.startsWith(`${END}${FINAL}`));
+	for (const line of lines.slice(1, -1)) {
+		assert.equal(line.startsWith(START), false);
+		assert.equal(line.startsWith(END), false);
+		assert.equal(line.startsWith(FINAL), false);
+	}
+	const joined = lines.join("\n");
+	assert.equal((joined.match(/\x1b\]133;/g) ?? []).length, 3);
 	const plainContent = lines.slice(1, -1).map(stripAnsi).join("\n");
 	assert.equal(plainContent.includes(END), false);
 	assert.equal(plainContent.includes(FINAL), false);
@@ -79,17 +80,123 @@ test("renderNeonBox 直接处理真实 Pi OSC133 边界且不把 END/FINAL 放�
 	assert.ok(plainContent.includes("world"));
 });
 
+test("assistant 边界空行裁剪后 OSC133 仍在 top/bottom 边框", () => {
+	const theme = createFakeTheme();
+	const lines = renderNeonBox("assistant", [`${START}`, "ok", `${END}${FINAL}`], 32, theme);
+	assert.ok(lines[0]!.startsWith(START));
+	assert.ok(lines.at(-1)!.startsWith(`${END}${FINAL}`));
+	for (const line of lines.slice(1, -1)) {
+		assert.equal(line.startsWith(START), false);
+		assert.equal(line.startsWith(END), false);
+		assert.equal(line.startsWith(FINAL), false);
+	}
+	assert.match(lines.slice(1, -1).map(stripAnsi).join("\n"), /ok/);
+});
 
-test("真实 User/Assistant renderer 的 OSC133 前缀 marker 会恢复到正文首尾", () => {
+test("thinking 边界 control-only 行被裁剪且 OSC133 留在外框边界", () => {
+	const theme = createFakeTheme();
+	const lines = renderNeonBox("thinking", [`${START}\x1b[31m \x1b[39m`, "visible", `${END}${FINAL}   `], 34, theme);
+	assert.ok(lines[0]!.startsWith(START));
+	assert.ok(lines.at(-1)!.startsWith(`${END}${FINAL}`));
+	const content = lines.slice(1, -1).map(stripAnsi);
+	assert.equal(content.length, 1);
+	assert.match(content[0]!, /visible/);
+	for (const line of lines.slice(1, -1)) {
+		assert.equal(line.startsWith(START), false);
+		assert.equal(line.startsWith(END), false);
+		assert.equal(line.startsWith(FINAL), false);
+	}
+});
+
+test("assistant 边界空白区内的 START-only blank 不会被裁剪丢失", () => {
+	const theme = createFakeTheme();
+	const lines = renderNeonBox("assistant", ["", `${START}\x1b[31m \x1b[39m`, "visible", `${END}${FINAL}`, ""], 34, theme);
+	assert.ok(lines[0]!.startsWith(START));
+	assert.ok(lines.at(-1)!.startsWith(`${END}${FINAL}`));
+	assert.equal((lines.join("\n").match(/\x1b\]133;/g) ?? []).length, 3);
+	const content = lines.slice(1, -1).map(stripAnsi);
+	assert.equal(content.length, 1);
+	assert.match(content[0]!, /visible/);
+	for (const line of lines.slice(1, -1)) {
+		assert.equal(line.startsWith(START), false);
+		assert.equal(line.startsWith(END), false);
+		assert.equal(line.startsWith(FINAL), false);
+	}
+});
+
+test("tool 尾部 END/FINAL-only blank 后有 padding 空行时 marker 不丢失", () => {
+	const theme = createFakeTheme();
+	const lines = renderNeonBox("tool", ["result", `${END}${FINAL}\x1b[31m \x1b[39m`, ""], 34, theme, { toolName: "read", status: "success" });
+	assert.equal(lines[0]!.startsWith(START), false);
+	assert.ok(lines.at(-1)!.startsWith(`${END}${FINAL}`));
+	assert.equal((lines.join("\n").match(/\x1b\]133;/g) ?? []).length, 2);
+	const content = lines.slice(1, -1).map(stripAnsi);
+	assert.equal(content.length, 1);
+	assert.match(content[0]!, /result/);
+});
+
+for (const [name, original] of [
+	["无 padding", ["body", END, FINAL]],
+	["尾部 padding 空行", ["body", END, FINAL, ""]],
+	["marker 后带空格", ["body", `${END} `, `${FINAL} `]],
+] as const) {
+	test(`assistant 尾部跨行 END/FINAL marker 保持原始顺序：${name}`, () => {
+		const theme = createFakeTheme();
+		const lines = renderNeonBox("assistant", original, 34, theme);
+		assert.ok(lines.at(-1)!.startsWith(`${END}${FINAL}`));
+		assert.equal((lines.join("\n").match(/\x1b\]133;/g) ?? []).length, 2);
+		for (const line of lines.slice(1, -1)) {
+			assert.equal(line.startsWith(END), false);
+			assert.equal(line.startsWith(FINAL), false);
+		}
+	});
+}
+
+test("custom marker 不在原始首尾但位于边界空白区时迁移到 top/bottom", () => {
+	const theme = createFakeTheme();
+	const lines = renderNeonBox("custom", ["", `${START}  `, "body", `${END}${FINAL}  `, ""], 34, theme);
+	assert.ok(lines[0]!.startsWith(START));
+	assert.ok(lines.at(-1)!.startsWith(`${END}${FINAL}`));
+	assert.equal((lines.join("\n").match(/\x1b\]133;/g) ?? []).length, 3);
+	const content = lines.slice(1, -1).map(stripAnsi);
+	assert.deepEqual(content.map((line) => line.includes("body")), [true]);
+	for (const line of lines.slice(1, -1)) {
+		assert.equal(line.startsWith(START), false);
+		assert.equal(line.startsWith(END), false);
+		assert.equal(line.startsWith(FINAL), false);
+	}
+});
+
+test("assistant START marker 附着在首个可见边界行时仍迁移且保留文本", () => {
+	const theme = createFakeTheme();
+	const lines = renderNeonBox("assistant", ["", `${START}visible`, `${END}${FINAL}tail`, ""], 34, theme);
+	assert.ok(lines[0]!.startsWith(START));
+	assert.ok(lines.at(-1)!.startsWith(`${END}${FINAL}`));
+	assert.equal((lines.join("\n").match(/\x1b\]133;/g) ?? []).length, 3);
+	const content = lines.slice(1, -1).map(stripAnsi).join("\n");
+	assert.match(content, /visible/);
+	assert.match(content, /tail/);
+	for (const line of lines.slice(1, -1)) {
+		assert.equal(line.startsWith(START), false);
+		assert.equal(line.startsWith(END), false);
+		assert.equal(line.startsWith(FINAL), false);
+	}
+});
+
+
+test("真实 User/Assistant renderer 的 OSC133 前缀 marker 会恢复到 top/bottom 边框", () => {
 	ensurePiTheme();
 	const userLines = new UserMessageComponent("hello").render(40);
 	const assistantLines = new AssistantMessageComponent({ content: [{ type: "text", text: "hello" }] } as any).render(40);
 	for (const [kind, original] of [["user", userLines], ["assistant", assistantLines]] as const) {
 		const boxed = renderNeonBox(kind, original, 44, createFakeTheme());
-		assert.equal(boxed[0]!.startsWith(START), false, kind);
-		assert.ok(boxed[1]!.startsWith(START), kind);
-		assert.ok(boxed.at(-2)!.startsWith(`${END}${FINAL}`), kind);
-		assert.equal(boxed.at(-1)!.startsWith(`${END}${FINAL}`), false, kind);
+		assert.ok(boxed[0]!.startsWith(START), kind);
+		assert.ok(boxed.at(-1)!.startsWith(`${END}${FINAL}`), kind);
+		for (const line of boxed.slice(1, -1)) {
+			assert.equal(line.startsWith(START), false, kind);
+			assert.equal(line.startsWith(END), false, kind);
+			assert.equal(line.startsWith(FINAL), false, kind);
+		}
 		const plainContent = boxed.slice(1, -1).map(stripAnsi).join("\n");
 		assert.equal(plainContent.includes(END), false, kind);
 		assert.equal(plainContent.includes(FINAL), false, kind);

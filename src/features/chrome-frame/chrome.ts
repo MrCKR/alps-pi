@@ -3,7 +3,7 @@
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { sanitizeTerminalText } from "../../terminal-sanitizer.ts";
 import { isImageEscapeLine } from "./image.ts";
-import { extractBoundaryOscMarkers, restoreBoundaryOscMarkers } from "./osc.ts";
+import { collectBoundaryOscMarkersFromBlankEdges, extractBoundaryOscMarkers, restoreBoundaryOscMarkers } from "./osc.ts";
 import { DEFAULT_CONFIG, getChromeLabel, getChromeStyle, type ChromeConfig, type ChromeKind, type ChromeStatus, type ThemeLike } from "./styles.ts";
 
 export type RenderBoxOptions = {
@@ -143,6 +143,34 @@ function isBlankAfterControlMarkers(line: string): boolean {
 	return stripControlMarkers(text).trim().length === 0;
 }
 
+/** 只对非 user 普通消息框裁剪边界 padding 空行；正文中间空行保持原样。 */
+function shouldTrimBoundaryBlankLines(kind: ChromeKind): boolean {
+	return kind === "assistant"
+		|| kind === "thinking"
+		|| kind === "bash"
+		|| kind === "tool"
+		|| kind === "toolPending"
+		|| kind === "toolSuccess"
+		|| kind === "toolError"
+		|| kind === "custom"
+		|| kind === "skill"
+		|| kind === "compaction"
+		|| kind === "branch";
+}
+
+/** 按可见文本判断边界纯空白；忽略 ANSI/OSC/OSC133 控制序列，不触碰图片行。 */
+function trimBoundaryBlankContentLines(kind: ChromeKind, lines: readonly string[]): string[] {
+	const normalized = [...lines];
+	if (!shouldTrimBoundaryBlankLines(kind)) return normalized;
+	while (normalized.length > 0 && !isImageEscapeLine(normalized[0] ?? "") && isBlankAfterControlMarkers(normalized[0] ?? "")) {
+		normalized.shift();
+	}
+	while (normalized.length > 0 && !isImageEscapeLine(normalized.at(-1) ?? "") && isBlankAfterControlMarkers(normalized.at(-1) ?? "")) {
+		normalized.pop();
+	}
+	return normalized;
+}
+
 /** 判断普通消息是否没有可见内容；工具类块即使正文为空也保留标题状态。 */
 export function isEmptyMessageChrome(kind: ChromeKind, contentLines: readonly string[]): boolean {
 	if (kind === "tool" || kind === "toolPending" || kind === "toolSuccess" || kind === "toolError" || kind === "bash" || kind === "working") {
@@ -159,8 +187,12 @@ export function renderNeonBox(kind: ChromeKind, contentLines: readonly string[],
 		return simpleLines(contentLines, boxWidth);
 	}
 
-	const markers = extractBoundaryOscMarkers(contentLines.map(String));
-	const rawLines = sanitizeContentLines(markers.lines);
+	const markers = collectBoundaryOscMarkersFromBlankEdges(
+		extractBoundaryOscMarkers(contentLines.map(String)),
+		isBlankAfterControlMarkers,
+		isImageEscapeLine,
+	);
+	const rawLines = sanitizeContentLines(trimBoundaryBlankContentLines(kind, markers.lines));
 	if (isEmptyMessageChrome(kind, rawLines)) return [];
 	const status = options.status;
 	const style = getChromeStyle(kind, { toolName: options.toolName, status }, options.config ?? DEFAULT_CONFIG);
@@ -168,15 +200,11 @@ export function renderNeonBox(kind: ChromeKind, contentLines: readonly string[],
 	const innerWidth = Math.max(1, boxWidth - 4);
 
 	const lines: string[] = [];
-	let firstContentLineIndex = -1;
-	let lastContentLineIndex = -1;
 	const pushTextLine = (line: string) => {
 		lines.push(applyLineBackground(theme, style.bg, line, boxWidth));
 	};
 	const pushContentLine = (line: string) => {
-		if (firstContentLineIndex < 0) firstContentLineIndex = lines.length;
 		lines.push(line);
-		lastContentLineIndex = lines.length - 1;
 	};
 	pushTextLine(buildTopBorder(label, boxWidth, theme, style.border, style.label));
 	for (const raw of rawLines) {
@@ -198,8 +226,6 @@ export function renderNeonBox(kind: ChromeKind, contentLines: readonly string[],
 	}
 	pushTextLine(buildBottomBorder(boxWidth, theme, style.border, options.elapsedText));
 
-	return restoreBoundaryOscMarkers(lines, markers, {
-		startIndex: firstContentLineIndex >= 0 ? firstContentLineIndex : 0,
-		endIndex: lastContentLineIndex >= 0 ? lastContentLineIndex : lines.length - 1,
-	});
+	// OSC133 边界 marker 只挂到外框边界，避免 WezTerm 将内容行行首 marker 解释成额外布局边界。
+	return restoreBoundaryOscMarkers(lines, markers, { startIndex: 0, endIndex: lines.length - 1 });
 }

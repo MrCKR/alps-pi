@@ -12,6 +12,7 @@ export type OscRestoreOptions = {
 };
 
 const OSC133_PATTERN = /^\x1b\]133;([ABC])\x07/;
+const OSC133_ANYWHERE_PATTERN = /\x1b\]133;([ABC])\x07/g;
 const OSC133_ALL_CODES = new Set(["A", "B", "C"]);
 const OSC133_START_CODES = new Set(["A"]);
 const OSC133_END_CODES = new Set(["B", "C"]);
@@ -49,6 +50,44 @@ export function extractBoundaryOscMarkers(lines: readonly string[]): OscExtracti
 		return { lines: clean, startMarkers, endMarkers };
 	} catch {
 		return { lines: [...lines], startMarkers: [], endMarkers: [] };
+	}
+}
+
+function stripOsc133Markers(input: string, target: string[], allowedCodes: ReadonlySet<string>): string {
+	return input.replace(OSC133_ANYWHERE_PATTERN, (marker: string, code: string) => {
+		if (allowedCodes.has(code)) {
+			target.push(marker);
+			return "";
+		}
+		return marker;
+	});
+}
+
+/** 在边界空白/control-only 区域内提取 OSC133，避免后续裁剪把 marker 一并删掉。 */
+export function collectBoundaryOscMarkersFromBlankEdges(extraction: OscExtraction, isBlankBoundaryLine: (line: string) => boolean, isProtectedLine: (line: string) => boolean): OscExtraction {
+	try {
+		const clean = [...extraction.lines];
+		const startMarkers = [...extraction.startMarkers];
+		const endMarkers = [...extraction.endMarkers];
+		for (let index = 0; index < clean.length; index += 1) {
+			const line = clean[index] ?? "";
+			if (isProtectedLine(line)) break;
+			const stripped = stripOsc133Markers(line, startMarkers, OSC133_START_CODES);
+			clean[index] = stripped;
+			if (!isBlankBoundaryLine(stripped)) break;
+		}
+		for (let index = clean.length - 1; index >= 0; index -= 1) {
+			const line = clean[index] ?? "";
+			if (isProtectedLine(line)) break;
+			const lineEndMarkers: string[] = [];
+			const stripped = stripOsc133Markers(line, lineEndMarkers, OSC133_END_CODES);
+			if (lineEndMarkers.length > 0) endMarkers.unshift(...lineEndMarkers);
+			clean[index] = stripped;
+			if (!isBlankBoundaryLine(stripped)) break;
+		}
+		return { lines: clean, startMarkers, endMarkers };
+	} catch {
+		return extraction;
 	}
 }
 

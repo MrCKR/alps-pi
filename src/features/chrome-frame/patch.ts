@@ -12,6 +12,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { isEmptyMessageChrome, renderCompactThinkingBox, renderNeonBox } from "./chrome.ts";
+import { isChromeFrameDebugEnabled, summarizeChromeFrameCacheKey, writeChromeFrameDebugLog, type ChromeFrameDebugBranch } from "./debug.ts";
 import { containsImageLine, isImageEscapeLine } from "./image.ts";
 import { cloneDefaultSettings, type AlpsPiSettings } from "../../settings.ts";
 import { sanitizeTerminalText } from "../../terminal-sanitizer.ts";
@@ -55,11 +56,12 @@ type RenderCacheEntry = {
 	lines: string[];
 };
 
-const RENDER_CACHE_KEY = Symbol.for("alps.pi.renderCache.v1");
+// 缓存键随边界空行裁剪语义升级，避免热加载复用旧 padding 行线框。
+const RENDER_CACHE_KEY = Symbol.for("alps.pi.renderCache.v4");
 const TIMING_STATE_KEY = Symbol.for("alps.pi.timingState.v1");
 const TRACKED_SETTINGS_KEY = Symbol.for("alps.pi.trackedSettings.v1");
 const WRAPPED_RENDER_KEY = Symbol.for("alps.pi.wrappedRender.v2");
-const WRAPPED_RENDER_VERSION = 3;
+const WRAPPED_RENDER_VERSION = 5;
 const CACHE_KEY_SEPARATOR = "\x1f";
 
 type WrappedRenderMetadata = {
@@ -546,38 +548,84 @@ export function createWrappedRender(
 	getTheme: (instance?: any) => ThemeLike,
 	extra: Record<string, unknown> = {},
 ): (this: any, width: number) => string[] {
+	const debugEnabled = isChromeFrameDebugEnabled();
 	const wrapped = function alpsChromeWrappedRender(this: any, width: number): string[] {
 		const instance = this;
 		const renderKind = resolveRenderKind(kind, instance);
 		const status = deriveStatus(renderKind, instance);
 		const toolName = deriveToolName(renderKind, instance, extra.toolName as string | undefined);
+		const numericWidth = Number.isFinite(width) ? Math.floor(width) : 0;
+		let innerWidth: number | null = null;
+		let innerLines: string[] | undefined;
+		let displayedLines: string[] | undefined;
+		let branch: ChromeFrameDebugBranch = "normal";
+		let cacheKeySummary: string | null = null;
+		const debugReturn = debugEnabled
+			? (lines: string[], nextBranch: ChromeFrameDebugBranch, error?: unknown): string[] => {
+				writeChromeFrameDebugLog({
+					targetId: id,
+					targetKind: renderKind,
+					inputWidth: numericWidth,
+					resolvedFrameWidth: numericWidth,
+					innerWidth,
+					originalLineCount: innerLines?.length ?? null,
+					displayedLineCount: displayedLines?.length ?? null,
+					boxedLineCount: lines.length,
+					branch: nextBranch,
+					cacheKeySummary,
+					hasImageLine: displayedLines ? containsImageLine(displayedLines) : false,
+					usesCompactThinking: shouldUseCompactThinkingBox(renderKind, instance),
+					error: error instanceof Error ? error.name : error ? typeof error : undefined,
+					lines,
+				});
+				return lines;
+			}
+			: undefined;
 		const fallback = () => asLines(originalRender.call(instance, width));
 		try {
-			const numericWidth = Number.isFinite(width) ? Math.floor(width) : 0;
-			if (numericWidth < 8) return sanitizeNarrowFallbackLines(fallback(), numericWidth);
-			const innerWidth = Math.max(1, numericWidth - 4);
-			const innerLines = asLines(originalRender.call(instance, innerWidth));
+			if (numericWidth < 8) {
+				branch = "narrowFallback";
+				const rawFallback = fallback();
+				innerLines = rawFallback;
+				displayedLines = rawFallback;
+				const lines = sanitizeNarrowFallbackLines(rawFallback, numericWidth);
+				return debugReturn ? debugReturn(lines, branch) : lines;
+			}
+			innerWidth = Math.max(1, numericWidth - 4);
+			innerLines = asLines(originalRender.call(instance, innerWidth));
 			const state = getGlobalPatchState();
 			const config = state.config;
 			if (kind === "assistant" && !config.settings.chromeFrame.assistantFrame) {
-				return fallback();
+				branch = "fallback";
+				const rawFallback = fallback();
+				displayedLines = rawFallback;
+				return debugReturn ? debugReturn(rawFallback, branch) : rawFallback;
 			}
-			const displayedLines = shouldCompactTool(renderKind, toolName, instance, config) ? compactToolLines(innerLines, instance) : innerLines;
-			if (isEmptyMessageChrome(renderKind, displayedLines)) return [];
+			displayedLines = shouldCompactTool(renderKind, toolName, instance, config) ? compactToolLines(innerLines, instance) : innerLines;
+			if (isEmptyMessageChrome(renderKind, displayedLines)) {
+				branch = "empty";
+				return debugReturn ? debugReturn([], branch) : [];
+			}
 			if (Boolean(extra.forceImageFallback) && containsImageLine(displayedLines)) {
-				return fallback();
+				branch = "imageFallback";
+				const rawFallback = fallback();
+				return debugReturn ? debugReturn(rawFallback, branch) : rawFallback;
 			}
 			const innerKey = displayedLines.join("\n");
 			const styleKey = createStyleSignature(id, renderKind, status, toolName, config, state.configVersion, Boolean(instance?.expanded));
+			cacheKeySummary = debugReturn ? summarizeChromeFrameCacheKey(innerKey) : null;
 			const timingContentKey = createTimingContentKey(renderKind, instance, innerLines);
 			const timingKey = [timingContentKey, renderKind, toolName ?? "", status ?? ""].join(CACHE_KEY_SEPARATOR);
 			const timing = updateTimingState(instance, timingKey);
 			const elapsedText = formatElapsedSincePrevious(timing);
 			const cache = (instance as any)[RENDER_CACHE_KEY] as RenderCacheEntry | undefined;
 			if (cache && cache.width === numericWidth && cache.innerKey === innerKey && cache.styleKey === styleKey && cache.elapsedText === elapsedText) {
-				return cache.lines;
+				branch = "cacheHit";
+				return debugReturn ? debugReturn(cache.lines, branch) : cache.lines;
 			}
-			const lines = shouldUseCompactThinkingBox(renderKind, instance)
+			const usesCompactThinking = shouldUseCompactThinkingBox(renderKind, instance);
+			branch = usesCompactThinking ? "compactThinking" : "normal";
+			const lines = usesCompactThinking
 				? renderCompactThinkingBox(displayedLines, numericWidth, getTheme(instance), config)
 				: renderNeonBox(renderKind, displayedLines, numericWidth, getTheme(instance), {
 					toolName,
@@ -586,12 +634,16 @@ export function createWrappedRender(
 					elapsedText,
 				});
 			(instance as any)[RENDER_CACHE_KEY] = { width: numericWidth, innerKey, styleKey, elapsedText, lines } satisfies RenderCacheEntry;
-			return lines;
-		} catch {
+			return debugReturn ? debugReturn(lines, branch) : lines;
+		} catch (error) {
 			try {
-				return fallback();
-			} catch {
-				return [];
+				branch = "errorFallback";
+				const rawFallback = fallback();
+				innerLines = innerLines ?? rawFallback;
+				displayedLines = displayedLines ?? rawFallback;
+				return debugReturn ? debugReturn(rawFallback, branch, error) : rawFallback;
+			} catch (fallbackError) {
+				return debugReturn ? debugReturn([], "errorFallback", fallbackError) : [];
 			}
 		}
 	};

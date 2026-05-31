@@ -5,7 +5,7 @@ import { registerAlpsPiCommand } from "./src/commands.ts";
 import { disablePatch, enablePatch, getGlobalPatchState } from "./src/features/chrome-frame/index.ts";
 import { cloneSettings, readPersistedSettings, writePersistedSettings } from "./src/settings-store.ts";
 import { createBottomInputRuntime, registerBottomInputShortcuts, type BottomInputRuntime } from "./src/features/bottom-input/index.ts";
-import { bindAnimationsSession, configureAnimations, disposeAnimations, handleAnimationsMessageEnd, handleAnimationsMessageUpdate, handleAnimationsToolExecutionEnd, handleAnimationsToolExecutionStart, pauseAnimationsRuntime, resumeAnimationsRuntime } from "./src/features/animations/index.ts";
+import { bindAnimationsSession, configureAnimations, disposeAnimations, handleAnimationsAgentEnd, handleAnimationsAgentStart, handleAnimationsMessageEnd, handleAnimationsMessageUpdate, handleAnimationsToolExecutionEnd, handleAnimationsToolExecutionStart, recordAnimationsLifecycleEvent } from "./src/features/animations/index.ts";
 
 export type AlpsPiRuntimeDeps = {
 	/** 测试注入点：生产环境使用模块级 bottom input runtime。 */
@@ -41,6 +41,7 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 	registerAlpsPiCommand(pi, {
 		setFixedBottomEditorEnabled: (enabled, ctx) => {
 			const state = getGlobalPatchState();
+			// fixedBottomEditor.enabled 表示用户偏好；runtime fail-closed 不得把显式 ON 永久改回 false。
 			state.config.settings.fixedBottomEditor.enabled = enabled;
 			// 某些 /reload 路径不会重新触发 session_start；命令 ctx 是当前可交互 session 的最新来源。
 			bottomInputRuntime.bindSession(ctx);
@@ -51,7 +52,6 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 				})
 				: bottomInputRuntime.setEnabled(enabled);
 			if (!bottomInputRuntime.configure) bottomInputRuntime.setBeautifiedInputEnabled?.(state.config.settings.beautifiedInput.enabled);
-			state.config.settings.fixedBottomEditor.enabled = status.enabled;
 			writePersistedSettings(state.config.settings);
 			return status;
 		},
@@ -64,7 +64,6 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 				beautifiedInputEnabled: enabled,
 			});
 			if (!bottomInputRuntime.configure) bottomInputRuntime.setBeautifiedInputEnabled?.(enabled);
-			if (status) state.config.settings.fixedBottomEditor.enabled = status.enabled;
 			writePersistedSettings(state.config.settings);
 			return status;
 		},
@@ -92,8 +91,6 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 			})
 			: bottomInputRuntime.setEnabled(state.config.settings.fixedBottomEditor.enabled);
 		if (!bottomInputRuntime.configure) bottomInputRuntime.setBeautifiedInputEnabled?.(state.config.settings.beautifiedInput.enabled);
-		state.config.settings.fixedBottomEditor.enabled = status.enabled;
-		if (status.failure) writePersistedSettings(state.config.settings);
 	});
 
 	pi.on("model_select", (_event: any, ctx: any) => {
@@ -111,47 +108,55 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 		bottomInputRuntime.setLastPrompt(event?.prompt);
 	});
 
-	pi.on("agent_start", (_event: any, ctx: any) => {
-		resumeAnimationsRuntime();
+	pi.on("agent_start", (event: any, ctx: any) => {
+		recordAnimationsLifecycleEvent("agent_start", ctx, event);
+		handleAnimationsAgentStart(event, ctx);
 		bottomInputRuntime.bindSession(ctx);
 		bottomInputRuntime.setStreaming?.(true);
 	});
 
 	pi.on("message_update", (event: any, ctx: any) => {
-		bindAnimationsSession(ctx);
-		handleAnimationsMessageUpdate(event);
+		recordAnimationsLifecycleEvent("message_update", ctx, event);
+		handleAnimationsMessageUpdate(event, ctx);
 		bottomInputRuntime.bindSession(ctx);
 		bottomInputRuntime.setLiveUsage(event?.message?.usage);
 	});
 
-	pi.on("message_end", (_event: any, ctx: any) => {
-		handleAnimationsMessageEnd();
+	pi.on("message_end", (event: any, ctx: any) => {
+		recordAnimationsLifecycleEvent("message_end", ctx, event);
+		handleAnimationsMessageEnd(ctx);
 		bottomInputRuntime.bindSession(ctx);
 		bottomInputRuntime.clearLiveUsage();
 	});
 
 	pi.on("tool_execution_start", (event: any, ctx: any) => {
-		bindAnimationsSession(ctx);
-		handleAnimationsToolExecutionStart(event);
+		recordAnimationsLifecycleEvent("tool_execution_start", ctx, event);
+		handleAnimationsToolExecutionStart(event, ctx);
+	});
+
+	pi.on("tool_execution_update", (event: any, ctx: any) => {
+		recordAnimationsLifecycleEvent("tool_execution_update", ctx, event);
 	});
 
 	pi.on("tool_execution_end", (event: any, ctx: any) => {
-		bindAnimationsSession(ctx);
-		handleAnimationsToolExecutionEnd(event);
+		recordAnimationsLifecycleEvent("tool_execution_end", ctx, event);
+		handleAnimationsToolExecutionEnd(event, ctx);
 	});
 
-	pi.on("agent_end", (_event: any, ctx: any) => {
-		bindAnimationsSession(ctx);
-		pauseAnimationsRuntime();
+	pi.on("agent_end", (event: any, ctx: any) => {
+		recordAnimationsLifecycleEvent("agent_end", ctx, event);
+		handleAnimationsAgentEnd(event, ctx);
 	});
 
-	pi.on("turn_end", (_event: any, ctx: any) => {
+	pi.on("turn_end", (event: any, ctx: any) => {
+		recordAnimationsLifecycleEvent("turn_end", ctx, event);
 		bottomInputRuntime.bindSession(ctx);
 		bottomInputRuntime.clearLiveUsage();
 	});
 
 	// runtime shutdown/reload 时只释放 UI/terminal 资源；开关状态保留并持久化，供下一次 session_start 恢复。
-	pi.on("session_shutdown", () => {
+	pi.on("session_shutdown", (event: any, ctx: any) => {
+		recordAnimationsLifecycleEvent("session_shutdown", ctx, event);
 		const persisted = cloneSettings(getGlobalPatchState().config.settings);
 		try {
 			bottomInputRuntime.dispose();

@@ -112,13 +112,12 @@ function createHarness(options: { fixedFailure?: string } = {}) {
 		setFixedBottomEditorEnabled: (enabled: boolean) => {
 			fixedCalls.push(enabled);
 			const state = (globalThis as any)[PATCH_KEY];
+			state.config.settings.fixedBottomEditor.enabled = enabled;
 			if (options.fixedFailure && enabled) {
 				fixedInstalled = false;
-				state.config.settings.fixedBottomEditor.enabled = false;
 				return { enabled: false, installed: false, failure: options.fixedFailure };
 			}
 			fixedInstalled = enabled;
-			state.config.settings.fixedBottomEditor.enabled = enabled;
 			return { enabled, installed: fixedInstalled };
 		},
 		setBeautifiedInputEnabled: (enabled: boolean) => {
@@ -271,7 +270,7 @@ test("设置页内 Animations Preview 使用 overlay tui.requestRender 驱动动
 	await pending;
 });
 
-test("设置界面 fixed op 返回 failure 时回滚为 OFF", async () => {
+test("设置界面 fixed op 返回 failure 时仍保留用户偏好 ON", async () => {
 	const harness = createHarness({ fixedFailure: "boom" });
 	(globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled = false;
 	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
@@ -284,8 +283,8 @@ test("设置界面 fixed op 返回 failure 时回滚为 OFF", async () => {
 	component.handleInput(" ");
 
 	assert.deepEqual(harness.fixedCalls, [true]);
-	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, false);
-	assert.match(component.render(80).join("\n"), /Fixed Input\s+OFF/);
+	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, true);
+	assert.match(component.render(80).join("\n"), /Fixed Input\s+ON/);
 	component.handleInput("q");
 	await pending;
 });

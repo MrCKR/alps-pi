@@ -5,6 +5,10 @@ import test from "node:test";
 import { createInitialPatchState, createWrappedRender, disablePatch, formatElapsedDuration, PATCH_KEY } from "../src/features/chrome-frame/patch.ts";
 import { createFakeTheme, assertLinesWithin, stripAnsi } from "./helpers.test.ts";
 
+const OSC133_START = "\x1b]133;A\x07";
+const OSC133_END = "\x1b]133;B\x07";
+const OSC133_FINAL = "\x1b]133;C\x07";
+
 test.beforeEach(() => {
 	(globalThis as any)[PATCH_KEY] = createInitialPatchState();
 });
@@ -140,6 +144,85 @@ test("wrapper 对相同内容命中实例级缓存，避免重复 box 外框计�
 
 	assert.equal(second, first);
 	assert.equal(theme.calls.length, callsAfterFirst);
+});
+
+test("wrapper cacheHit 保留 OSC133 top/bottom 边界位置", () => {
+	class OscComponent {
+		render(_width: number) {
+			return [`${OSC133_START}hello`, `${OSC133_END}${OSC133_FINAL}world`];
+		}
+	}
+	const theme = createFakeTheme();
+	const wrapped = createWrappedRender("OscFake", "assistant", OscComponent.prototype.render, () => theme);
+	const instance = new OscComponent();
+
+	const first = wrapped.call(instance, 42);
+	const second = wrapped.call(instance, 42);
+
+	assert.equal(second, first);
+	assert.ok(second[0]!.startsWith(OSC133_START));
+	assert.ok(second.at(-1)!.startsWith(`${OSC133_END}${OSC133_FINAL}`));
+	for (const line of second.slice(1, -1)) {
+		assert.equal(line.startsWith(OSC133_START), false);
+		assert.equal(line.startsWith(OSC133_END), false);
+		assert.equal(line.startsWith(OSC133_FINAL), false);
+	}
+	assert.equal((second.join("\n").match(/\x1b\]133;/g) ?? []).length, 3);
+});
+
+test("wrapper 不复用旧 v1/v2/v3 cache 中的 content 行 OSC133 或 padding 布局", () => {
+	class OscComponent {
+		render(_width: number) {
+			return [`${OSC133_START}hello`, `${OSC133_END}${OSC133_FINAL}world`];
+		}
+	}
+	for (const cacheVersion of ["v1", "v2", "v3"]) {
+		const wrapped = createWrappedRender("OscFake", "assistant", OscComponent.prototype.render, () => createFakeTheme());
+		const instance = new OscComponent() as OscComponent & Record<symbol, unknown>;
+		const legacyCacheKey = Symbol.for(`alps.pi.renderCache.${cacheVersion}`);
+		const legacyLines = ["╭ legacy ╮", `${OSC133_START}│ old content │`, `${OSC133_END}${OSC133_FINAL}│ old end │`, "╰ legacy ╯"];
+		instance[legacyCacheKey] = {
+			width: 42,
+			innerKey: `${OSC133_START}hello\n${OSC133_END}${OSC133_FINAL}world`,
+			styleKey: "legacy",
+			lines: legacyLines,
+		};
+
+		const lines = wrapped.call(instance, 42);
+
+		assert.notEqual(lines, legacyLines, cacheVersion);
+		assert.ok(lines[0]!.startsWith(OSC133_START), cacheVersion);
+		assert.ok(lines.at(-1)!.startsWith(`${OSC133_END}${OSC133_FINAL}`), cacheVersion);
+		for (const line of lines.slice(1, -1)) {
+			assert.equal(line.startsWith(OSC133_START), false, cacheVersion);
+			assert.equal(line.startsWith(OSC133_END), false, cacheVersion);
+			assert.equal(line.startsWith(OSC133_FINAL), false, cacheVersion);
+		}
+		assert.equal((lines.join("\n").match(/\x1b\]133;/g) ?? []).length, 3, cacheVersion);
+	}
+});
+
+test("streaming thinking 普通 frame 不把 OSC133 marker 放到 content 行且裁剪边界空行", () => {
+	class StreamingThinkingComponent {
+		hideThinkingBlock = false;
+		lastMessage = { content: [{ type: "thinking", thinking: "visible thought" }] };
+		render(_width: number) {
+			return [`${OSC133_START}`, "thinking", "", `${OSC133_END}${OSC133_FINAL}`];
+		}
+	}
+	const wrapped = createWrappedRender("StreamingThinking", "assistant", StreamingThinkingComponent.prototype.render, () => createFakeTheme());
+	const lines = wrapped.call(new StreamingThinkingComponent(), 44);
+
+	assert.equal(lines.length, 3);
+	assert.match(stripAnsi(lines[0]!), /THINK/);
+	assert.ok(lines[0]!.startsWith(OSC133_START));
+	assert.ok(lines.at(-1)!.startsWith(`${OSC133_END}${OSC133_FINAL}`));
+	for (const line of lines.slice(1, -1)) {
+		assert.equal(line.startsWith(OSC133_START), false);
+		assert.equal(line.startsWith(OSC133_END), false);
+		assert.equal(line.startsWith(OSC133_FINAL), false);
+	}
+	assert.match(stripAnsi(lines[1]!), /thinking/);
 });
 
 test("wrapper 缓存会随 width 变化失效", () => {

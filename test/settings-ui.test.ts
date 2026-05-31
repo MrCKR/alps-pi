@@ -147,7 +147,7 @@ test("设置界面第六项切换美化输入框并调用 runtime op", () => {
 	assert.deepEqual(beautifiedInputCalls, [false]);
 });
 
-test("设置界面固定输入框启用失败时回滚 OFF", () => {
+test("设置界面固定输入框启用失败时保留用户偏好 ON", () => {
 	const state = createInitialPatchState();
 	state.config.settings.fixedBottomEditor.enabled = false;
 	const fixedCalls: boolean[] = [];
@@ -164,14 +164,14 @@ test("设置界面固定输入框启用失败时回滚 OFF", () => {
 	component.handleInput("\x1b[B");
 	component.handleInput(" ");
 
-	assert.equal(state.config.settings.fixedBottomEditor.enabled, false);
+	assert.equal(state.config.settings.fixedBottomEditor.enabled, true);
 	assert.deepEqual(fixedCalls, [true]);
-	assert.match(stripAnsi(component.render(80).join("\n")), /Fixed Input\s+OFF/);
+	assert.match(stripAnsi(component.render(80).join("\n")), /Fixed Input\s+ON/);
 });
 
 
 
-test("美化输入框切换触发 fixed fail-closed 时当前 Fixed Input 行同步 OFF", () => {
+test("美化输入框切换触发 fixed fail-closed 时 Fixed Input 仍显示用户偏好 ON", () => {
 	const state = createInitialPatchState();
 	state.config.settings.fixedBottomEditor.enabled = true;
 	state.config.settings.beautifiedInput.enabled = true;
@@ -180,18 +180,17 @@ test("美化输入框切换触发 fixed fail-closed 时当前 Fixed Input 行同
 		getState: () => state,
 		setBeautifiedInputEnabled: (enabled: boolean) => {
 			beautifiedInputCalls.push(enabled);
-			state.config.settings.fixedBottomEditor.enabled = false;
 			return { enabled: false, installed: false, failure: "fail closed" };
 		},
 	});
-	for (let i = 0; i < 5; i++) component.handleInput("[B");
+	for (let i = 0; i < 5; i++) component.handleInput("\x1b[B");
 	component.handleInput(" ");
 
 	const plain = stripAnsi(component.render(80).join("\n"));
 	assert.deepEqual(beautifiedInputCalls, [false]);
 	assert.equal(state.config.settings.beautifiedInput.enabled, false);
-	assert.equal(state.config.settings.fixedBottomEditor.enabled, false);
-	assert.match(plain, /Fixed Input\s+OFF/);
+	assert.equal(state.config.settings.fixedBottomEditor.enabled, true);
+	assert.match(plain, /Fixed Input\s+ON/);
 	assert.match(plain, /Beautified Input\s+OFF/);
 });
 

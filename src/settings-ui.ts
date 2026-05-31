@@ -320,16 +320,15 @@ export class AlpsPiSettingsComponent extends Container {
 				return;
 			case "fixedBottomEditor.enabled": {
 				const nextEnabled = booleanValue(newValue);
+				// 开关显示用户偏好；runtime failure 仅作为状态返回，不回滚为 OFF。
 				state.config.settings.fixedBottomEditor.enabled = nextEnabled;
-				const status = this.ops.setFixedBottomEditorEnabled(nextEnabled);
-				if (status) state.config.settings.fixedBottomEditor.enabled = status.enabled;
+				this.ops.setFixedBottomEditorEnabled(nextEnabled);
 				this.syncMainValue(id, state.config.settings.fixedBottomEditor.enabled);
 				return;
 			}
 			case "beautifiedInput.enabled": {
 				state.config.settings.beautifiedInput.enabled = booleanValue(newValue);
-				const status = this.ops.setBeautifiedInputEnabled(state.config.settings.beautifiedInput.enabled);
-				if (status) state.config.settings.fixedBottomEditor.enabled = status.enabled;
+				this.ops.setBeautifiedInputEnabled(state.config.settings.beautifiedInput.enabled);
 				this.syncMainValue(id, state.config.settings.beautifiedInput.enabled);
 				this.syncMainValue("fixedBottomEditor.enabled", state.config.settings.fixedBottomEditor.enabled);
 				return;

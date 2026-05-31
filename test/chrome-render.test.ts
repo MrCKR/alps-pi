@@ -35,6 +35,26 @@ test("多行内容每行都有左右边框", () => {
 	}
 });
 
+test("普通 assistant frame 裁剪边界纯空白 content 行并保留中间空行", () => {
+	const theme = createFakeTheme();
+	const lines = renderNeonBox("assistant", ["", "第一段", "", "第二段", ""], 28, theme).map(stripAnsi);
+	const content = lines.slice(1, -1);
+
+	assert.match(content[0]!, /第一段/);
+	assert.match(content[1]!, /^│\s+│$/);
+	assert.match(content[2]!, /第二段/);
+	assert.equal(content.length, 3);
+});
+
+test("user 首个纯空白 content 行不被 assistant 逻辑删除", () => {
+	const theme = createFakeTheme();
+	const lines = renderNeonBox("user", ["", "用户内容"], 28, theme).map(stripAnsi);
+	const content = lines.slice(1, -1);
+
+	assert.match(content[0]!, /^│\s+│$/);
+	assert.match(content[1]!, /用户内容/);
+});
+
 test("长行会被换行或截断，不破坏边框", () => {
 	const theme = createFakeTheme();
 	const lines = renderNeonBox("assistant", ["abcdefghijklmnopqrstuvwxyz0123456789"], 20, theme);
@@ -60,6 +80,30 @@ test("工具类空内容仍保留状态 box", () => {
 	assert.match(stripAnsi(lines[0]!), /TOOL read ✓/);
 	assert.match(stripAnsi(lines[1]!), /^│\s+│$/);
 	assertLinesWithin(lines, 24);
+});
+
+test("指定非 user kind 裁剪边界空白但保留中间空白", () => {
+	const theme = createFakeTheme();
+	for (const kind of ["thinking", "bash", "tool", "toolPending", "toolSuccess", "toolError", "custom", "skill", "compaction", "branch"] as const) {
+		const lines = renderNeonBox(kind, ["", "alpha", "", "omega", ""], 34, theme, { toolName: "read", status: "success" }).map(stripAnsi);
+		const content = lines.slice(1, -1);
+		assert.match(content[0]!, /alpha/, kind);
+		assert.match(content[1]!, /^│\s+│$/, kind);
+		assert.match(content[2]!, /omega/, kind);
+		assert.equal(content.length, 3, kind);
+	}
+});
+
+test("ANSI/OSC/control-only 边界行按空白裁剪且不删除中间空行", () => {
+	const theme = createFakeTheme();
+	const controlOnly = "\x1b[31m \x1b[39m\x1b]9;ignored\x07";
+	const lines = renderNeonBox("custom", [controlOnly, "visible", controlOnly, "tail", controlOnly], 34, theme).map(stripAnsi);
+	const content = lines.slice(1, -1);
+
+	assert.match(content[0]!, /visible/);
+	assert.match(content[1]!, /^│\s+│$/);
+	assert.match(content[2]!, /tail/);
+	assert.equal(content.length, 3);
 });
 
 test("宽度过小时简化渲染且不抛异常", () => {

@@ -98,7 +98,8 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 			});
 			const setFixedEnabled = ops.setFixedBottomEditorEnabled ?? ((enabled: boolean) => {
 				const state = getGlobalPatchState();
-				state.config.settings.fixedBottomEditor.enabled = false;
+				// 默认 fallback 也只更新用户偏好；runtime 不存在时返回 failure，不把显式 ON 回滚成 OFF。
+				state.config.settings.fixedBottomEditor.enabled = enabled;
 				const status: FixedBottomEditorStatus = { enabled: false, installed: false };
 				if (enabled) {
 					status.failure = "fixed bottom editor runtime ops not registered";
