@@ -55,6 +55,8 @@ export function writeAnimationDebugLog(options: AnimationDebugOptions): void {
 
 function buildEntry(options: AnimationDebugOptions) {
 	const ctx = options.ctx ?? options.state.currentEventCtx ?? options.state.currentCtx;
+	const currentCtx = options.state.currentUiCtx ?? options.state.currentCtx;
+	const currentUi = readCtxUiSafely(currentCtx);
 	return {
 		event: options.event,
 		seq: ++sequence,
@@ -70,9 +72,9 @@ function buildEntry(options: AnimationDebugOptions) {
 			count: Math.max(0, options.state.lastWorkingLines || 0),
 			widths: Array.isArray(options.state.lastWorkingLineWidths) ? options.state.lastWorkingLineWidths.slice(0, 8) : [],
 		},
-		ctx: summarizeCtx(ctx, options.state.currentUiCtx ?? options.state.currentCtx),
+		ctx: summarizeCtx(ctx, currentCtx),
 		eventCtx: summarizeCtx(ctx, options.state.currentEventCtx),
-		uiApi: summarizeUiApi((options.state.currentUiCtx ?? options.state.currentCtx)?.ui),
+		uiApi: summarizeUiApi(currentUi),
 		payload: summarizePayload(options.payload),
 		error: summarizeError(options.error),
 	};
@@ -100,7 +102,7 @@ function summarizeCtx(ctx: any, currentCtx: any) {
 		present: true,
 		hash: stableHash(idSource),
 		isCurrent: ctx === currentCtx,
-		hasUI: ctx?.hasUI !== false && Boolean(ctx?.ui),
+		hasUI: Boolean(readCtxUiSafely(ctx)),
 	};
 }
 
@@ -110,6 +112,17 @@ function summarizeUiApi(ui: any) {
 		setWorkingIndicator: typeof ui?.setWorkingIndicator === "function",
 		requestRender: typeof ui?.requestRender === "function",
 	};
+}
+
+/** 诊断日志不能因为 reload 后 stale ctx.ui getter 中断。 */
+function readCtxUiSafely(ctx: any): any {
+	if (!ctx || ctx.hasUI === false || ctx.isCurrent === false) return undefined;
+	try {
+		return ctx.ui;
+	} catch (error) {
+		if (isStaleCtxError(error)) return undefined;
+		throw error;
+	}
 }
 
 function summarizePayload(payload: any) {

@@ -597,6 +597,22 @@ test("已安装后 bindSession(newCtx) 会先释放上一组 session layout/comp
 	assert.equal(runtime.getStatus().installed, false);
 });
 
+test("已安装后 no-UI 子代理 ctx 不释放当前 fixed layout", () => {
+	const harness = createCtx({ autoInstantiate: true });
+	const runtime = createBottomInputRuntime();
+
+	runtime.bindSession(harness.ctx);
+	runtime.setEnabled(true);
+	const installedWrite = harness.tui.terminal.write;
+	runtime.bindSession({ id: "nested-agent", hasUI: false });
+
+	assert.equal(runtime.getStatus().enabled, true);
+	assert.equal(runtime.getStatus().installed, true);
+	assert.equal(harness.tui.terminal.write, installedWrite);
+	assert.equal(harness.getEditorFactory() !== undefined, true);
+	assert.equal(harness.getFooterFactory() !== undefined, true);
+});
+
 test("重复启用不重复安装", () => {
 	const harness = createCtx({ autoInstantiate: true });
 	const runtime = createBottomInputRuntime();

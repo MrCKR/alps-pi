@@ -27,6 +27,7 @@ import {
 	type BottomInputFrameStatus,
 } from "./status.ts";
 import { createBottomInputEditor } from "./editor.ts";
+import { writeBottomInputDebugLog } from "./debug.ts";
 import { getBottomInputIcons } from "./icons.ts";
 
 export type { FixedBottomEditorStatus } from "../../settings.ts";
@@ -179,14 +180,22 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		this.shortcuts = resolveBottomInputShortcuts(options.shortcuts);
 	}
 
-	/** 保存当前 session context；切换 session 前先释放上一组 UI 资源，避免 stale ctx 继续被异步回调访问。 */
+	/** 保存当前 UI session context；无 UI 的子代理事件不得覆盖或释放当前输入框布局。 */
 	bindSession(ctx: any): void {
 		const next = readRuntimeUI(ctx);
-		if (next.stale) return;
+		if (next.stale || !next.ui) {
+			this.debug("bind_session", ctx, { note: next.stale ? "ignored_stale_ctx" : "ignored_no_ui_ctx" });
+			return;
+		}
 		const previousCtx = this.ctx;
 		const previousUi = this.ui;
 		const nextUi = next.ui;
 		const sameUiSession = Boolean(previousUi && nextUi && previousUi === nextUi);
+		this.debug("bind_session", ctx, {
+			nextUi,
+			note: previousCtx && previousCtx !== ctx && !sameUiSession && (this.installed || this.layoutInstalled) ? "switching_ui_session" : undefined,
+			details: { sameUiSession, replacingCtx: Boolean(previousCtx && previousCtx !== ctx), hasPreviousUi: Boolean(previousUi) },
+		});
 		if (previousCtx && previousCtx !== ctx && !sameUiSession && (this.installed || this.layoutInstalled)) {
 			this.disable();
 		}
@@ -392,6 +401,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		this.enabled = fixedEnabled;
 		this.beautifiedInputEnabled = beautifiedInputEnabled;
 		this.resetLayoutCache();
+		this.debug("sync_layout", this.ctx, { details: { fixedEnabled, beautifiedInputEnabled } });
 
 		const needsLayout = fixedEnabled || beautifiedInputEnabled;
 		if (!needsLayout) return this.disable();
@@ -469,6 +479,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 			return this.toStatus();
 		}
 
+		this.debug("disable", this.ctx);
 		this.enabled = false;
 		this.failure = undefined;
 		this.stopClockTimer();
@@ -885,6 +896,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	}
 
 	private failClosed(reason: string): FixedBottomEditorStatus {
+		this.debug("fail_closed", this.ctx, { reason });
 		this.enabled = false;
 		this.installed = false;
 		this.failure = reason;
@@ -906,6 +918,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	}
 
 	private disableWithFailure(reason: string): FixedBottomEditorStatus {
+		this.debug("disable_with_failure", this.ctx, { reason });
 		this.disable();
 		this.failure = reason;
 		return this.toStatus();
@@ -943,6 +956,28 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		return this.failure
 			? { enabled: this.enabled, installed: this.installed, failure: this.failure }
 			: { enabled: this.enabled, installed: this.installed };
+	}
+
+	/** 仅在配置或 ALPS_PI_BOTTOM_INPUT_DEBUG_LOG 指向绝对路径时写入脱敏生命周期日志。 */
+	private debug(event: Parameters<typeof writeBottomInputDebugLog>[0]["event"], ctx?: any, extra: Omit<Parameters<typeof writeBottomInputDebugLog>[0], "event" | "state" | "ctx" | "currentCtx" | "currentUi"> = {}): void {
+		writeBottomInputDebugLog({
+			event,
+			ctx,
+			currentCtx: this.ctx,
+			currentUi: this.ui,
+			state: {
+				enabled: this.enabled,
+				installed: this.installed,
+				layoutInstalled: this.layoutInstalled,
+				generation: this.generation,
+				layoutOwnerGeneration: this.layoutOwnerGeneration,
+				hasCompositor: Boolean(this.compositor),
+				hasEditor: Boolean(this.editorInstance),
+				hasFooter: Boolean(this.footerComponent),
+				failure: this.failure,
+			},
+			...extra,
+		});
 	}
 }
 

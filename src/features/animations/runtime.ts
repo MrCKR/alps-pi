@@ -8,6 +8,9 @@ import { isAnimationDebugEnabled, summarizeWorkingLineWidths, writeAnimationDebu
 const WORKING_WIDGET_KEY = "alps-pi-animations";
 export const THINKING_DONE_LABEL = "Thinking complete";
 
+type AnimationsRenderRequest = () => void;
+let animationsRenderRequest: AnimationsRenderRequest | undefined;
+
 export type AnimationRuntimeState = {
 	settings: AnimationsSettings;
 	frame: number;
@@ -148,7 +151,7 @@ function migrateAnimationsRuntimeState(existing: Partial<AnimationRuntimeState>)
 	existing.settings = normalizeAnimationsSettings(existing.settings ?? cloneDefaultAnimationsSettings());
 	if (typeof existing.frame !== "number") existing.frame = 0;
 	if (!(existing.activeComponents instanceof Set)) existing.activeComponents = new Set();
-	if (!('currentUiCtx' in existing)) existing.currentUiCtx = canWriteWorkingAnimation(existing.currentCtx) ? existing.currentCtx : undefined;
+	if (!('currentUiCtx' in existing)) existing.currentUiCtx = canWriteWorkingAnimation(existing as AnimationRuntimeState, existing.currentCtx) ? existing.currentCtx : undefined;
 	if (!('currentEventCtx' in existing)) existing.currentEventCtx = undefined;
 	if (!(existing.toolCallIds instanceof Set)) existing.toolCallIds = new Set();
 	if (typeof existing.agentGeneration !== "number") existing.agentGeneration = 0;
@@ -169,6 +172,10 @@ function migrateAnimationsRuntimeState(existing: Partial<AnimationRuntimeState>)
 	if (!("currentAssistantMessage" in existing)) existing.currentAssistantMessage = undefined;
 	if (typeof existing.freezeGeneration !== "number") existing.freezeGeneration = 0;
 	return existing as AnimationRuntimeState;
+}
+
+export function configureAnimationsRenderRequest(requestRender: AnimationsRenderRequest | undefined): void {
+	animationsRenderRequest = requestRender;
 }
 
 export function configureAnimationsRuntime(settings: AnimationsSettings): void {
@@ -193,7 +200,7 @@ export function configureAnimationsRuntime(settings: AnimationsSettings): void {
 export function bindAnimationsRuntimeSession(ctx: any): void {
 	const state = getAnimationsRuntimeState();
 	state.currentEventCtx = ctx;
-	if (canWriteWorkingAnimation(ctx)) {
+	if (canWriteWorkingAnimation(state, ctx)) {
 		state.currentUiCtx = ctx;
 		state.currentCtx = ctx;
 		writeAnimationDebugLog({ event: "bind_session", state, ctx });
@@ -375,10 +382,14 @@ function stopTimer(state: AnimationRuntimeState): void {
 
 function requestAnimationsRender(state: AnimationRuntimeState): void {
 	try {
+		const hasAnimatedComponents = state.activeComponents.size > 0;
 		for (const component of state.activeComponents) component.invalidate();
 		const ui = getCurrentUi(state);
-		renderWorkingAnimationFrame(state, ui);
-		if (typeof ui?.requestRender === "function") {
+		const renderedWorking = renderWorkingAnimationFrame(state, ui);
+		if (!renderedWorking && !hasAnimatedComponents) return;
+		if (animationsRenderRequest) {
+			animationsRenderRequest();
+		} else if (typeof ui?.requestRender === "function") {
 			ui.requestRender();
 		}
 		// 不用 setHiddenThinkingLabel 作为逐帧刷新驱动：Pi 会因此重建全历史 AssistantMessage，长对话下会卡死。
@@ -472,8 +483,11 @@ function resetHiddenThinkingLabel(state: AnimationRuntimeState): void {
 }
 
 function getCurrentUi(state: AnimationRuntimeState): any {
-	const ctx = canWriteWorkingAnimation(state.currentUiCtx) ? state.currentUiCtx : canWriteWorkingAnimation(state.currentCtx) ? state.currentCtx : undefined;
-	return ctx?.ui;
+	const currentUi = readCtxUiSafely(state, state.currentUiCtx);
+	if (typeof currentUi?.setWorkingMessage === "function") return currentUi;
+	const fallbackUi = readCtxUiSafely(state, state.currentCtx);
+	if (typeof fallbackUi?.setWorkingMessage === "function") return fallbackUi;
+	return undefined;
 }
 
 function resolveCurrentPhase(state: AnimationRuntimeState): AnimationPhase {
@@ -545,14 +559,38 @@ function readToolCallId(event: any): string {
 function bindEventCtx(state: AnimationRuntimeState, ctx?: any): void {
 	if (!ctx || isStaleEventCtx(ctx)) return;
 	state.currentEventCtx = ctx;
-	if (!canWriteWorkingAnimation(ctx)) return;
+	if (!canWriteWorkingAnimation(state, ctx)) return;
 	state.currentUiCtx = ctx;
 	state.currentCtx = ctx;
 }
 
-/** 判断 ctx 是否能作为 working animation 输出目标。 */
-function canWriteWorkingAnimation(ctx: any): boolean {
-	return Boolean(ctx && ctx.hasUI !== false && typeof ctx.ui?.setWorkingMessage === "function");
+/** 判断 ctx 是否能作为 working animation 输出目标；读取 stale ui getter 时会清掉旧引用。 */
+function canWriteWorkingAnimation(state: AnimationRuntimeState, ctx: any): boolean {
+	const ui = readCtxUiSafely(state, ctx);
+	return Boolean(ui && typeof ui.setWorkingMessage === "function");
+}
+
+/** 安全读取 Pi ctx.ui，避免 reload 后旧 ctx 的 stale guard 冒泡成 unhandled rejection。 */
+function readCtxUiSafely(state: AnimationRuntimeState, ctx: any): any {
+	if (!ctx || ctx.hasUI === false) return undefined;
+	if (ctx.isCurrent === false) {
+		clearStaleCtxReference(state, ctx);
+		return undefined;
+	}
+	try {
+		return ctx.ui;
+	} catch (error) {
+		if (!isStaleCtxError(error)) throw error;
+		clearStaleCtxReference(state, ctx);
+		return undefined;
+	}
+}
+
+/** stale ctx 一旦被识别，立即从 runtime state 中移除，避免 timer 下帧反复触发 getter。 */
+function clearStaleCtxReference(state: AnimationRuntimeState, ctx: any): void {
+	if (state.currentUiCtx === ctx) state.currentUiCtx = undefined;
+	if (state.currentCtx === ctx) state.currentCtx = undefined;
+	if (state.currentEventCtx === ctx) state.currentEventCtx = undefined;
 }
 
 function isStaleEventCtx(ctx?: any): boolean {
@@ -582,7 +620,7 @@ function isNestedNoUiEvent(state: AnimationRuntimeState, ctx?: any): boolean {
 }
 
 function isNestedNonWritableEvent(state: AnimationRuntimeState, ctx?: any): boolean {
-	return Boolean(state.animating && ctx && ctx !== state.currentUiCtx && !isStaleEventCtx(ctx) && !canWriteWorkingAnimation(ctx));
+	return Boolean(state.animating && ctx && ctx !== state.currentUiCtx && !isStaleEventCtx(ctx) && !canWriteWorkingAnimation(state, ctx));
 }
 
 function clearToolsForGeneration(state: AnimationRuntimeState, generation: number): void {

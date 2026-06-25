@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AssistantMessageComponent, initTheme } from "@earendil-works/pi-coding-agent";
-import { bindAnimationsSession, enableAnimationsPatch, getAnimationsPatchState, configureAnimations, disposeAnimations, getAnimationsRuntimeState, handleAnimationsAgentEnd, handleAnimationsAgentStart, handleAnimationsMessageEnd, handleAnimationsMessageUpdate, handleAnimationsToolExecutionEnd, handleAnimationsToolExecutionStart, pauseAnimationsRuntime, resumeAnimationsRuntime } from "../src/features/animations/index.ts";
+import { bindAnimationsSession, enableAnimationsPatch, getAnimationsPatchState, configureAnimations, configureAnimationsRenderRequest, disposeAnimations, getAnimationsRuntimeState, handleAnimationsAgentEnd, handleAnimationsAgentStart, handleAnimationsMessageEnd, handleAnimationsMessageUpdate, handleAnimationsToolExecutionEnd, handleAnimationsToolExecutionStart, pauseAnimationsRuntime, resumeAnimationsRuntime } from "../src/features/animations/index.ts";
 import { DEFAULT_SETTINGS } from "../src/settings.ts";
 import { stripAnsi } from "./helpers.test.ts";
 
@@ -125,6 +125,40 @@ test("timer 在 agent 活跃期运行，并在 agent 结束后停止", () => {
 	assert.equal(state.timer, undefined);
 });
 
+test("Animations tick 使用注入局部重绘回调，不触发 UI full render", async () => {
+	ensurePiTheme();
+	const workingMessages: string[] = [];
+	let localRepaints = 0;
+	let fullRenders = 0;
+	configureAnimations({ ...DEFAULT_SETTINGS.animations, enabled: true, working: "crush", width: "default", fps: 60 });
+	configureAnimationsRenderRequest(() => {
+		localRepaints += 1;
+	});
+	const state = getAnimationsRuntimeState();
+	state.currentCtx = {
+		ui: {
+			setWorkingMessage: (message: string) => workingMessages.push(message),
+			requestRender: () => {
+				fullRenders += 1;
+			},
+		},
+	};
+	state.currentUiCtx = state.currentCtx;
+
+	try {
+		resumeAnimationsRuntime();
+		await new Promise((resolve) => setTimeout(resolve, 45));
+
+		assert.ok(workingMessages.length > 0);
+		assert.ok(localRepaints > 0);
+		assert.equal(fullRenders, 0);
+	} finally {
+		configureAnimationsRenderRequest(undefined);
+		pauseAnimationsRuntime();
+		configureAnimations({ ...DEFAULT_SETTINGS.animations, enabled: false });
+	}
+});
+
 test("无 requestRender 和 working loader 时不通过 hidden label API 逐帧重建历史", async () => {
 	ensurePiTheme();
 	const labels: Array<string | undefined> = [];
@@ -154,6 +188,47 @@ test("热重载旧 runtime state 会自动补齐新增字段", () => {
 
 	assert.doesNotThrow(() => pauseAnimationsRuntime());
 	assert.ok(getAnimationsRuntimeState().toolCallIds instanceof Set);
+});
+
+test("stale ctx ui getter 不会让动画清理抛出且会移除旧 UI 引用", () => {
+	configureAnimations({ ...DEFAULT_SETTINGS.animations, working: "matrix3", width: "default" });
+	const state = getAnimationsRuntimeState();
+	const staleCtx = {
+		id: "stale-reload-ctx",
+		get ui() {
+			throw new Error("extension ctx is stale");
+		},
+	};
+	state.currentCtx = staleCtx;
+	state.currentUiCtx = staleCtx;
+	state.currentEventCtx = staleCtx;
+	state.animating = true;
+	state.workingMessageApplied = true;
+	state.workingIndicatorHidden = true;
+
+	assert.doesNotThrow(() => pauseAnimationsRuntime());
+	assert.equal(state.currentCtx, undefined);
+	assert.equal(state.currentUiCtx, undefined);
+	assert.equal(state.currentEventCtx, undefined);
+	assert.equal(state.animating, false);
+	assert.equal(state.timer, undefined);
+});
+
+test("stale ctx ui getter 不会在新事件 scope 判断中冒泡", () => {
+	configureAnimations({ ...DEFAULT_SETTINGS.animations, working: "matrix3", width: "default" });
+	const state = getAnimationsRuntimeState();
+	const staleCtx = {
+		id: "stale-event-ctx",
+		get ui() {
+			throw new Error("stale ctx");
+		},
+	};
+
+	assert.doesNotThrow(() => handleAnimationsAgentStart({}, staleCtx));
+	assert.equal(state.currentCtx, undefined);
+	assert.equal(state.currentUiCtx, undefined);
+	assert.equal(state.animating, true);
+	assert.doesNotThrow(() => pauseAnimationsRuntime());
 });
 
 test("agent 活跃期接管底部 working、thinking 和 tool 单行动画时保留原生 spinner", () => {

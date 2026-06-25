@@ -2,14 +2,14 @@
 
 import type { AnimationsSettings } from "./settings.ts";
 import { enableAnimationsPatch, disableAnimationsPatch } from "./patch.ts";
-import { bindAnimationsRuntimeSession, configureAnimationsRuntime, disposeAnimationsRuntime, handleAnimationsAgentEnd, handleAnimationsAgentStart, handleAnimationsMessageEnd, handleAnimationsMessageUpdate, handleAnimationsToolExecutionEnd, handleAnimationsToolExecutionStart, pauseAnimationsRuntime, recordAnimationsLifecycleEvent, resumeAnimationsRuntime } from "./runtime.ts";
+import { bindAnimationsRuntimeSession, configureAnimationsRenderRequest, configureAnimationsRuntime, disposeAnimationsRuntime, handleAnimationsAgentEnd, handleAnimationsAgentStart, handleAnimationsMessageEnd, handleAnimationsMessageUpdate, handleAnimationsToolExecutionEnd, handleAnimationsToolExecutionStart, pauseAnimationsRuntime, recordAnimationsLifecycleEvent, resumeAnimationsRuntime } from "./runtime.ts";
 
 export { ANIMATIONS, getAnimation, getAnimationsForCategory, pickRandomAnimation, renderAnimationFrame, resolveAnimationWidth } from "./registry.ts";
 export { AnimationsPreviewComponent } from "./preview.ts";
 export type { AnimationCategory, AnimationDefinition, AnimationPhase, AnimationWidth } from "./registry.ts";
 export { DEFAULT_ANIMATIONS_SETTINGS, normalizeAnimationsSettings } from "./settings.ts";
 export type { AnimationsSettings } from "./settings.ts";
-export { AnimatedThinkingComponent, THINKING_DONE_LABEL, getAnimationsRuntimeState, handleAnimationsAgentEnd, handleAnimationsAgentStart, handleAnimationsMessageEnd, handleAnimationsMessageUpdate, handleAnimationsToolExecutionEnd, handleAnimationsToolExecutionStart, pauseAnimationsRuntime, recordAnimationsLifecycleEvent, resumeAnimationsRuntime } from "./runtime.ts";
+export { AnimatedThinkingComponent, THINKING_DONE_LABEL, getAnimationsRuntimeState, configureAnimationsRenderRequest, handleAnimationsAgentEnd, handleAnimationsAgentStart, handleAnimationsMessageEnd, handleAnimationsMessageUpdate, handleAnimationsToolExecutionEnd, handleAnimationsToolExecutionStart, pauseAnimationsRuntime, recordAnimationsLifecycleEvent, resumeAnimationsRuntime } from "./runtime.ts";
 export { disableAnimationsPatch, enableAnimationsPatch, getAnimationsPatchState } from "./patch.ts";
 
 export function configureAnimations(settings: AnimationsSettings): void {

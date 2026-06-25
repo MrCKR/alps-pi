@@ -11,6 +11,7 @@ export type RenderBoxOptions = {
 	status?: ChromeStatus;
 	config?: ChromeConfig;
 	elapsedText?: string;
+	tokenText?: string;
 };
 
 const MIN_FULL_BOX_WIDTH = 8;
@@ -46,12 +47,13 @@ function simpleLines(lines: readonly string[], width: number): string[] {
 		.map((line) => truncateToWidth(line, max, "", false));
 }
 
-function buildTopBorder(label: string, width: number, theme: ThemeLike, borderToken: string, labelToken: string): string {
+function buildTopBorder(label: string, width: number, theme: ThemeLike, borderToken: string, labelToken: string, tokenText?: string): string {
 	const left = "╭─ ";
 	const separator = " ";
 	const right = "╮";
+	const titleText = tokenText?.trim() ? `${label} ─ ${tokenText.trim()}` : label;
 	const labelBudget = Math.max(0, width - visibleWidth(left + separator + right));
-	const visibleLabel = truncateToWidth(label, labelBudget, "", false);
+	const visibleLabel = truncateToWidth(titleText, labelBudget, "", false);
 	const leftBorder = styleText(theme, borderToken, left);
 	const styledLabel = styleText(theme, labelToken, visibleLabel);
 	const dashCount = Math.max(0, width - visibleWidth(left + visibleLabel + separator + right));
@@ -59,12 +61,12 @@ function buildTopBorder(label: string, width: number, theme: ThemeLike, borderTo
 	return leftBorder + styledLabel + rightBorder;
 }
 
-function buildCompactThinkingTopBorder(label: string, width: number, theme: ThemeLike, borderToken: string, labelToken: string): string {
-	return buildTopBorder(label, width, theme, borderToken, labelToken);
+function buildCompactThinkingTopBorder(label: string, width: number, theme: ThemeLike, borderToken: string, labelToken: string, options: Pick<RenderBoxOptions, "tokenText">): string {
+	return buildTopBorder(label, width, theme, borderToken, labelToken, options.tokenText);
 }
 
-function buildCompactThinkingBottomBorder(width: number, theme: ThemeLike, borderToken: string): string {
-	return styleText(theme, borderToken, "╰" + "─".repeat(Math.max(0, width - 2)) + "╯");
+function buildCompactThinkingBottomBorder(width: number, theme: ThemeLike, borderToken: string, options: Pick<RenderBoxOptions, "elapsedText">): string {
+	return buildBottomBorder(width, theme, borderToken, options.elapsedText);
 }
 
 function stripAnsiForContent(line: string): string {
@@ -81,7 +83,7 @@ function firstCompactThinkingLine(lines: readonly string[]): string {
 	return "Thinking complete";
 }
 
-export function renderCompactThinkingBox(contentLines: readonly string[], width: number, theme: ThemeLike, config: ChromeConfig = DEFAULT_CONFIG): string[] {
+export function renderCompactThinkingBox(contentLines: readonly string[], width: number, theme: ThemeLike, config: ChromeConfig = DEFAULT_CONFIG, options: Pick<RenderBoxOptions, "elapsedText" | "tokenText"> = {}): string[] {
 	const boxWidth = safeWidth(width);
 	if (boxWidth < MIN_FULL_BOX_WIDTH) return simpleLines(contentLines, boxWidth);
 	const label = "THINK";
@@ -91,9 +93,9 @@ export function renderCompactThinkingBox(contentLines: readonly string[], width:
 	const content = truncateToWidth(firstCompactThinkingLine(contentLines), innerWidth, "", false);
 	const padded = padToWidth(content, innerWidth);
 	return [
-		buildCompactThinkingTopBorder(label, boxWidth, theme, borderToken, style.label),
+		buildCompactThinkingTopBorder(label, boxWidth, theme, borderToken, style.label, options),
 		styleText(theme, borderToken, "│") + " " + styleText(theme, borderToken, padded) + " " + styleText(theme, borderToken, "│"),
-		buildCompactThinkingBottomBorder(boxWidth, theme, borderToken),
+		buildCompactThinkingBottomBorder(boxWidth, theme, borderToken, options),
 	];
 }
 
@@ -206,7 +208,7 @@ export function renderNeonBox(kind: ChromeKind, contentLines: readonly string[],
 	const pushContentLine = (line: string) => {
 		lines.push(line);
 	};
-	pushTextLine(buildTopBorder(label, boxWidth, theme, style.border, style.label));
+	pushTextLine(buildTopBorder(label, boxWidth, theme, style.border, style.label, options.tokenText));
 	for (const raw of rawLines) {
 		const split = String(raw).split("\n");
 		for (const part of split) {

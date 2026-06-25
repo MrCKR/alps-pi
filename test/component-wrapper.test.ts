@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createInitialPatchState, createWrappedRender, disablePatch, formatElapsedDuration, PATCH_KEY } from "../src/features/chrome-frame/patch.ts";
+import { createInitialPatchState, createWrappedRender, disablePatch, estimateFrameTokens, formatElapsedDuration, PATCH_KEY } from "../src/features/chrome-frame/patch.ts";
 import { createFakeTheme, assertLinesWithin, stripAnsi } from "./helpers.test.ts";
 
 const OSC133_START = "\x1b]133;A\x07";
@@ -309,6 +309,91 @@ test("重复渲染同一线框不刷新更新时间", () => {
 	} finally {
 		Date.now = originalNow;
 	}
+});
+
+test("wrapper 右下角 token 使用原始 assistant content 估算", () => {
+	class AssistantRawComponent {
+		lastMessage = { content: [{ type: "text", text: "x".repeat(40) }] };
+		render(_width: number) {
+			return ["short rendered"];
+		}
+	}
+	const wrapped = createWrappedRender("AssistantRaw", "assistant", AssistantRawComponent.prototype.render, () => createFakeTheme());
+	const lines = wrapped.call(new AssistantRawComponent(), 42);
+
+	assert.match(stripAnsi(lines[0]!), /ASSISTANT ─ \[ 10 \]/);
+	assert.doesNotMatch(stripAnsi(lines.at(-1)!), /\[ 10 \]/);
+});
+
+test("wrapper 右下角 token 可从 UserMessage 的 Markdown 原文估算", () => {
+	class FakeMarkdown {
+		text = "u".repeat(20);
+	}
+	class UserRawComponent {
+		children = [{ children: [new FakeMarkdown()] }];
+		render(_width: number) {
+			return ["short rendered"];
+		}
+	}
+	Object.defineProperty(FakeMarkdown, "name", { value: "Markdown" });
+	const wrapped = createWrappedRender("UserRaw", "user", UserRawComponent.prototype.render, () => createFakeTheme());
+	const lines = wrapped.call(new UserRawComponent(), 42);
+
+	assert.match(stripAnsi(lines[0]!), /USER ─ \[ 5 \]/);
+	assert.doesNotMatch(stripAnsi(lines.at(-1)!), /\[ 5 \]/);
+});
+
+test("wrapper 右下角 token 使用原始 tool args/result，忽略极简渲染行", () => {
+	class RawToolComponent {
+		toolName = "read";
+		args = { file: "src/very-long-file-name.ts" };
+		isPartial = false;
+		result = { isError: false, content: [{ type: "text", text: "y".repeat(80) }] };
+		expanded = false;
+		render(_width: number) {
+			return ["read src/a.ts"];
+		}
+	}
+	const wrapped = createWrappedRender("RawTool", "tool", RawToolComponent.prototype.render, () => createFakeTheme());
+	const instance = new RawToolComponent();
+	const expected = estimateFrameTokens("tool", instance);
+	const lines = wrapped.call(instance, 52);
+
+	assert.equal(expected, 31);
+	assert.match(stripAnsi(lines[0]!), /TOOL read ✓ ─ \[ 31 \]/);
+	assert.doesNotMatch(stripAnsi(lines[0]!), /\[ 4 \]/);
+	assert.doesNotMatch(stripAnsi(lines.at(-1)!), /\[ 31 \]/);
+});
+
+test("excludeFromContext bash frame 显示 0", () => {
+	class ExcludedBashComponent {
+		command = "echo hidden";
+		outputLines = ["secret output"];
+		excludeFromContext = true;
+		status = "complete";
+		render(_width: number) {
+			return ["$ echo hidden", "secret output"];
+		}
+	}
+	const wrapped = createWrappedRender("ExcludedBash", "bash", ExcludedBashComponent.prototype.render, () => createFakeTheme());
+	const lines = wrapped.call(new ExcludedBashComponent(), 44);
+
+	assert.match(stripAnsi(lines[0]!), /BASH ─ \[ 0 \]/);
+	assert.doesNotMatch(stripAnsi(lines.at(-1)!), /\[ 0 \]/);
+});
+
+test("token 数超过千位时向上进位显示", () => {
+	class LargeAssistantComponent {
+		lastMessage = { content: [{ type: "text", text: "x".repeat(4004) }] };
+		render(_width: number) {
+			return ["short rendered"];
+		}
+	}
+	const wrapped = createWrappedRender("LargeAssistant", "assistant", LargeAssistantComponent.prototype.render, () => createFakeTheme());
+	const lines = wrapped.call(new LargeAssistantComponent(), 48);
+
+	assert.match(stripAnsi(lines[0]!), /ASSISTANT ─ \[ 1\.1k \]/);
+	assert.doesNotMatch(stripAnsi(lines.at(-1)!), /\[ 1\.1k \]/);
 });
 
 test("Tool 展开不刷新线框更新时间", () => {

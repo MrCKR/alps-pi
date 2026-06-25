@@ -174,6 +174,20 @@ test("bottom border 可在右下角显示消息间隔", () => {
 	assertLinesWithin(lines, 32);
 });
 
+test("top border 在 title 后显示 token 数并用边框线分隔", () => {
+	const theme = createFakeTheme();
+	const lines = renderNeonBox("assistant", ["ok"], 42, theme, { tokenText: "[ 8 ]", elapsedText: "1m05s" });
+	const top = stripAnsi(lines[0]!);
+	const bottom = stripAnsi(lines.at(-1)!);
+
+	assert.match(top, /ASSISTANT ─ \[ 8 \]/);
+	assert.doesNotMatch(bottom, /\[ 8 \]/);
+	assert.match(bottom, /1m05s ╯$/);
+	assert.equal(visibleWidth(top), 42);
+	assert.equal(visibleWidth(bottom), 42);
+	assertLinesWithin(lines, 42);
+});
+
 test("bottom border 宽度不足时仍保持外框闭合", () => {
 	const theme = createFakeTheme();
 	const lines = renderNeonBox("assistant", ["ok"], 8, theme, { elapsedText: "123456789s" });

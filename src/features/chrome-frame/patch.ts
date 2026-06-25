@@ -53,6 +53,7 @@ type RenderCacheEntry = {
 	innerKey: string;
 	styleKey: string;
 	elapsedText?: string;
+	tokenText?: string;
 	lines: string[];
 };
 
@@ -324,6 +325,165 @@ function deriveStatus(kind: ChromeKind, instance: any): ChromeStatus | undefined
 
 function isNonEmptyText(value: unknown): boolean {
 	return typeof value === "string" && value.trim().length > 0;
+}
+
+const ESTIMATED_IMAGE_CHARS = 4800;
+
+/** 复用 Pi compaction 的文本/图片字符计数规则。 */
+function estimateTextAndImageContentChars(content: unknown): number | undefined {
+	if (typeof content === "string") return content.length;
+	if (!Array.isArray(content)) return undefined;
+	let chars = 0;
+	for (const block of content) {
+		if (block?.type === "text" && typeof block.text === "string") {
+			chars += block.text.length;
+		} else if (block?.type === "image") {
+			chars += ESTIMATED_IMAGE_CHARS;
+		}
+	}
+	return chars;
+}
+
+/** 安全计算 tool 参数 JSON 字符数，循环对象降级为字符串。 */
+function safeJsonLength(value: unknown): number {
+	try {
+		return JSON.stringify(value)?.length ?? 0;
+	} catch {
+		return String(value ?? "").length;
+	}
+}
+
+/** 从 AssistantMessageComponent 的原始 message content 估算字符数。 */
+function estimateAssistantContentChars(instance: any): number | undefined {
+	const content = instance?.lastMessage?.content;
+	if (!Array.isArray(content)) return undefined;
+	let chars = 0;
+	for (const block of content) {
+		if (block?.type === "text" && typeof block.text === "string") {
+			chars += block.text.length;
+		} else if (block?.type === "thinking" && typeof block.thinking === "string") {
+			chars += block.thinking.length;
+		} else if (block?.type === "toolCall") {
+			chars += String(block.name ?? "").length + safeJsonLength(block.arguments);
+		}
+	}
+	return chars;
+}
+
+/** 从 UserMessageComponent 子 Markdown 中兜底读取构造时原文。 */
+function extractMarkdownTextFromChildren(value: unknown, seen = new Set<object>()): string | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	if (seen.has(value)) return undefined;
+	seen.add(value);
+	const candidate = value as Record<string, any>;
+	if (typeof candidate.text === "string" && candidate.constructor?.name === "Markdown") return candidate.text;
+	const children = candidate.children;
+	if (Array.isArray(children)) {
+		for (const child of children) {
+			const text = extractMarkdownTextFromChildren(child, seen);
+			if (text !== undefined) return text;
+		}
+	}
+	return undefined;
+}
+
+/** 估算 user frame 对应的原始用户消息字符数。 */
+function estimateUserContentChars(instance: any): number | undefined {
+	const direct = estimateTextAndImageContentChars(instance?.message?.content);
+	if (direct !== undefined) return direct;
+	return extractMarkdownTextFromChildren(instance)?.length;
+}
+
+/** 估算 tool frame 的调用名、参数和结果内容字符数。 */
+function estimateToolContentChars(instance: any): number | undefined {
+	let chars = String(instance?.toolName ?? "").length + safeJsonLength(instance?.args);
+	const resultChars = estimateTextAndImageContentChars(instance?.result?.content);
+	if (resultChars !== undefined) chars += resultChars;
+	return chars;
+}
+
+/** 估算 bash frame 的命令与上下文输出字符数，排除 !! 命令。 */
+function estimateBashContentChars(instance: any): number | undefined {
+	if (instance?.excludeFromContext === true || instance?.message?.excludeFromContext === true) return 0;
+	const command = typeof instance?.command === "string" ? instance.command : undefined;
+	const output = typeof instance?.output === "string"
+		? instance.output
+		: Array.isArray(instance?.outputLines)
+			? instance.outputLines.map(String).join("\n")
+			: undefined;
+	if (command === undefined && output === undefined) return undefined;
+	return (command?.length ?? 0) + (output?.length ?? 0);
+}
+
+/** 估算 compaction/branch summary 的摘要字符数。 */
+function estimateSummaryContentChars(instance: any): number | undefined {
+	if (typeof instance?.message?.summary === "string") return instance.message.summary.length;
+	if (typeof instance?.summary === "string") return instance.summary.length;
+	return undefined;
+}
+
+/** 估算 skill invocation 中实际展示的 skill 内容字符数。 */
+function estimateSkillContentChars(instance: any): number | undefined {
+	const block = instance?.skillBlock;
+	if (!block) return undefined;
+	return String(block.name ?? "").length + (typeof block.content === "string" ? block.content.length : 0);
+}
+
+/** 按 Pi compaction 的 chars/4 口径估算单个 frame 对应的原始上下文 token。 */
+export function estimateFrameTokens(kind: ChromeKind, instance: any): number | undefined {
+	let chars: number | undefined;
+	switch (kind) {
+		case "assistant":
+		case "thinking":
+			chars = estimateAssistantContentChars(instance);
+			break;
+		case "user":
+			chars = estimateUserContentChars(instance);
+			break;
+		case "tool":
+		case "toolPending":
+		case "toolSuccess":
+		case "toolError":
+			chars = estimateToolContentChars(instance);
+			break;
+		case "bash":
+			chars = estimateBashContentChars(instance);
+			break;
+		case "custom":
+			chars = estimateTextAndImageContentChars(instance?.message?.content);
+			break;
+		case "skill":
+			chars = estimateSkillContentChars(instance);
+			break;
+		case "compaction":
+		case "branch":
+			chars = estimateSummaryContentChars(instance);
+			break;
+		case "working":
+			return undefined;
+	}
+	return chars === undefined ? undefined : Math.ceil(chars / 4);
+}
+
+/** 将 token 数压成标题短标签；超过千位时向上进位到 1 位小数。 */
+function formatRoundedTokenCount(tokens: number): string {
+	const count = Math.max(0, Math.ceil(tokens));
+	const units = [
+		{ value: 1_000_000, suffix: "M" },
+		{ value: 1_000, suffix: "k" },
+	] as const;
+	for (const unit of units) {
+		if (count < unit.value) continue;
+		const scaled = Math.ceil((count / unit.value) * 10) / 10;
+		return `${Number.isInteger(scaled) ? String(scaled) : scaled.toFixed(1)}${unit.suffix}`;
+	}
+	return count.toLocaleString();
+}
+
+/** 生成 frame 标题 token 文本；取不到原文时不显示。 */
+function formatTokenText(tokens: number | undefined): string | undefined {
+	if (tokens === undefined) return undefined;
+	return `[ ${formatRoundedTokenCount(tokens)} ]`;
 }
 
 function isThinkingOnlyAssistant(instance: any): boolean {
@@ -618,22 +778,24 @@ export function createWrappedRender(
 			const timingKey = [timingContentKey, renderKind, toolName ?? "", status ?? ""].join(CACHE_KEY_SEPARATOR);
 			const timing = updateTimingState(instance, timingKey);
 			const elapsedText = formatElapsedSincePrevious(timing);
+			const tokenText = formatTokenText(estimateFrameTokens(renderKind, instance));
 			const cache = (instance as any)[RENDER_CACHE_KEY] as RenderCacheEntry | undefined;
-			if (cache && cache.width === numericWidth && cache.innerKey === innerKey && cache.styleKey === styleKey && cache.elapsedText === elapsedText) {
+			if (cache && cache.width === numericWidth && cache.innerKey === innerKey && cache.styleKey === styleKey && cache.elapsedText === elapsedText && cache.tokenText === tokenText) {
 				branch = "cacheHit";
 				return debugReturn ? debugReturn(cache.lines, branch) : cache.lines;
 			}
 			const usesCompactThinking = shouldUseCompactThinkingBox(renderKind, instance);
 			branch = usesCompactThinking ? "compactThinking" : "normal";
 			const lines = usesCompactThinking
-				? renderCompactThinkingBox(displayedLines, numericWidth, getTheme(instance), config)
+				? renderCompactThinkingBox(displayedLines, numericWidth, getTheme(instance), config, { elapsedText, tokenText })
 				: renderNeonBox(renderKind, displayedLines, numericWidth, getTheme(instance), {
 					toolName,
 					status,
 					config,
 					elapsedText,
+					tokenText,
 				});
-			(instance as any)[RENDER_CACHE_KEY] = { width: numericWidth, innerKey, styleKey, elapsedText, lines } satisfies RenderCacheEntry;
+			(instance as any)[RENDER_CACHE_KEY] = { width: numericWidth, innerKey, styleKey, elapsedText, tokenText, lines } satisfies RenderCacheEntry;
 			return debugReturn ? debugReturn(lines, branch) : lines;
 		} catch (error) {
 			try {

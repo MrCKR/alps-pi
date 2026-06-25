@@ -4,8 +4,9 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerAlpsPiCommand } from "./src/commands.ts";
 import { disablePatch, enablePatch, getGlobalPatchState } from "./src/features/chrome-frame/index.ts";
 import { cloneSettings, readPersistedSettings, writePersistedSettings } from "./src/settings-store.ts";
+import { configureBottomInputDebug } from "./src/features/bottom-input/debug.ts";
 import { createBottomInputRuntime, registerBottomInputShortcuts, type BottomInputRuntime } from "./src/features/bottom-input/index.ts";
-import { bindAnimationsSession, configureAnimations, disposeAnimations, handleAnimationsAgentEnd, handleAnimationsAgentStart, handleAnimationsMessageEnd, handleAnimationsMessageUpdate, handleAnimationsToolExecutionEnd, handleAnimationsToolExecutionStart, recordAnimationsLifecycleEvent } from "./src/features/animations/index.ts";
+import { bindAnimationsSession, configureAnimations, configureAnimationsRenderRequest, disposeAnimations, handleAnimationsAgentEnd, handleAnimationsAgentStart, handleAnimationsMessageEnd, handleAnimationsMessageUpdate, handleAnimationsToolExecutionEnd, handleAnimationsToolExecutionStart, recordAnimationsLifecycleEvent } from "./src/features/animations/index.ts";
 
 export type AlpsPiRuntimeDeps = {
 	/** 测试注入点：生产环境使用模块级 bottom input runtime。 */
@@ -28,6 +29,8 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 	state.config.settings.beautifiedInput.enabled = persistedSettings.beautifiedInput.enabled;
 	state.config.settings.animations = { ...persistedSettings.animations };
 	state.config.settings.shortcuts = { ...persistedSettings.shortcuts };
+	configureBottomInputDebug(undefined);
+	configureAnimationsRenderRequest(() => bottomInputRuntime.requestRender());
 	configureAnimations(state.config.settings.animations);
 	bottomInputRuntime.setShortcuts?.(state.config.settings.shortcuts);
 	bottomInputRuntime.setBeautifiedInputEnabled?.(state.config.settings.beautifiedInput.enabled);
@@ -169,6 +172,8 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 			state.config.settings.animations = { ...persisted.animations };
 			state.config.settings.shortcuts = { ...persisted.shortcuts };
 			writePersistedSettings(state.config.settings);
+			configureBottomInputDebug(undefined);
+			configureAnimationsRenderRequest(undefined);
 			disposeAnimations();
 			disablePatch();
 		}
