@@ -751,16 +751,17 @@ export function createWrappedRender(
 				const lines = sanitizeNarrowFallbackLines(rawFallback, numericWidth);
 				return debugReturn ? debugReturn(lines, branch) : lines;
 			}
-			innerWidth = Math.max(1, numericWidth - 4);
-			innerLines = asLines(originalRender.call(instance, innerWidth));
 			const state = getGlobalPatchState();
 			const config = state.config;
 			if (kind === "assistant" && !config.settings.chromeFrame.assistantFrame) {
 				branch = "fallback";
 				const rawFallback = fallback();
+				innerLines = rawFallback;
 				displayedLines = rawFallback;
 				return debugReturn ? debugReturn(rawFallback, branch) : rawFallback;
 			}
+			innerWidth = Math.max(1, numericWidth - 4);
+			innerLines = asLines(originalRender.call(instance, innerWidth));
 			displayedLines = shouldCompactTool(renderKind, toolName, instance, config) ? compactToolLines(innerLines, instance) : innerLines;
 			if (isEmptyMessageChrome(renderKind, displayedLines)) {
 				branch = "empty";

@@ -857,16 +857,24 @@ test("工具 inner 返回空数组时仍有状态 box", () => {
 
 test("assistantFrame 关闭时 assistant 返回原始 render，开启时继续 box", () => {
 	class AssistantComponent {
-		render(_width: number) {
+		calls: number[] = [];
+
+		// 记录调用宽度，确保关闭正文线框时不先渲染 innerWidth 再 fallback。
+		render(width: number) {
+			this.calls.push(width);
 			return ["hello"];
 		}
 	}
 	const wrapped = createWrappedRender("Assistant", "assistant", AssistantComponent.prototype.render, () => createFakeTheme());
 	const state = (globalThis as any)[PATCH_KEY];
 	state.config.settings.chromeFrame.assistantFrame = false;
-	assert.deepEqual(wrapped.call(new AssistantComponent(), 30), ["hello"]);
+	const fallbackInstance = new AssistantComponent();
+	assert.deepEqual(wrapped.call(fallbackInstance, 30), ["hello"]);
+	assert.deepEqual(fallbackInstance.calls, [30]);
 	state.config.settings.chromeFrame.assistantFrame = true;
-	assert.match(stripAnsi(wrapped.call(new AssistantComponent(), 30)[0]!), /ASSISTANT/);
+	const framedInstance = new AssistantComponent();
+	assert.match(stripAnsi(wrapped.call(framedInstance, 30)[0]!), /ASSISTANT/);
+	assert.deepEqual(framedInstance.calls, [26]);
 });
 
 test("inner render 抛异常时返回原始 render fallback", () => {
