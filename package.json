@@ -1,6 +1,6 @@
 {
   "name": "alps-pi",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "type": "module",
   "description": "Personal pi beautification extension with runtime TUI message frames, fixed bottom input, animations, and theme support.",
   "license": "MIT",
