@@ -112,6 +112,7 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 	});
 
 	pi.on("agent_start", (event: any, ctx: any) => {
+		recordChromeFrameLifecycleEvent("agent_start", event, ctx);
 		recordAnimationsLifecycleEvent("agent_start", ctx, event);
 		handleAnimationsAgentStart(event, ctx);
 		bottomInputRuntime.bindSession(ctx);
@@ -119,7 +120,7 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 	});
 
 	pi.on("message_update", (event: any, ctx: any) => {
-		recordChromeFrameLifecycleEvent("message_update", event);
+		recordChromeFrameLifecycleEvent("message_update", event, ctx);
 		recordAnimationsLifecycleEvent("message_update", ctx, event);
 		handleAnimationsMessageUpdate(event, ctx);
 		bottomInputRuntime.bindSession(ctx);
@@ -127,7 +128,7 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 	});
 
 	pi.on("message_end", (event: any, ctx: any) => {
-		recordChromeFrameLifecycleEvent("message_end", event);
+		recordChromeFrameLifecycleEvent("message_end", event, ctx);
 		recordAnimationsLifecycleEvent("message_end", ctx, event);
 		handleAnimationsMessageEnd(ctx);
 		bottomInputRuntime.bindSession(ctx);
@@ -135,28 +136,30 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 	});
 
 	pi.on("tool_execution_start", (event: any, ctx: any) => {
-		recordChromeFrameLifecycleEvent("tool_execution_start", event);
+		recordChromeFrameLifecycleEvent("tool_execution_start", event, ctx);
 		recordAnimationsLifecycleEvent("tool_execution_start", ctx, event);
 		handleAnimationsToolExecutionStart(event, ctx);
 	});
 
 	pi.on("tool_execution_update", (event: any, ctx: any) => {
-		recordChromeFrameLifecycleEvent("tool_execution_update", event);
+		recordChromeFrameLifecycleEvent("tool_execution_update", event, ctx);
 		recordAnimationsLifecycleEvent("tool_execution_update", ctx, event);
 	});
 
 	pi.on("tool_execution_end", (event: any, ctx: any) => {
-		recordChromeFrameLifecycleEvent("tool_execution_end", event);
+		recordChromeFrameLifecycleEvent("tool_execution_end", event, ctx);
 		recordAnimationsLifecycleEvent("tool_execution_end", ctx, event);
 		handleAnimationsToolExecutionEnd(event, ctx);
 	});
 
 	pi.on("agent_end", (event: any, ctx: any) => {
+		recordChromeFrameLifecycleEvent("agent_end", event, ctx);
 		recordAnimationsLifecycleEvent("agent_end", ctx, event);
 		handleAnimationsAgentEnd(event, ctx);
 	});
 
 	pi.on("turn_end", (event: any, ctx: any) => {
+		recordChromeFrameLifecycleEvent("turn_end", event, ctx);
 		recordAnimationsLifecycleEvent("turn_end", ctx, event);
 		bottomInputRuntime.bindSession(ctx);
 		bottomInputRuntime.clearLiveUsage();

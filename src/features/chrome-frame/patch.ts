@@ -66,11 +66,14 @@ const WRAPPED_RENDER_VERSION = 5;
 const CACHE_KEY_SEPARATOR = "\x1f";
 
 export type ChromeFrameLifecycleEvent =
+	| "agent_start"
 	| "message_update"
 	| "message_end"
 	| "tool_execution_start"
 	| "tool_execution_update"
-	| "tool_execution_end";
+	| "tool_execution_end"
+	| "turn_end"
+	| "agent_end";
 
 type WrappedRenderMetadata = {
 	id: string;
@@ -93,6 +96,8 @@ type LifecycleTimingState = {
 	updatedAt: number;
 	completedAt?: number;
 	active: boolean;
+	/** 事件所属 session/agent ctx；用于隔离无 UI 子代理的结束事件。 */
+	owner?: object;
 };
 
 const CHROME_PATCH_OWNER = Symbol.for("alps.pi.chromeFrame.patchOwner.v1");
@@ -149,15 +154,68 @@ function frameNativeTimestamp(kind: ChromeKind, instance: any): number | undefin
 	return readTimestamp(instance?.message?.timestamp);
 }
 
+/** 从 Pi 每次新建的事件 ctx 中提取稳定 owner；顶层使用 UI，no-UI 子代理使用 sessionManager。 */
+function lifecycleOwner(ctx: any): object | undefined {
+	if (!ctx || (typeof ctx !== "object" && typeof ctx !== "function")) return undefined;
+	try {
+		if (ctx.hasUI !== false) {
+			const ui = ctx.ui;
+			if (ui && (typeof ui === "object" || typeof ui === "function")) return ui;
+		}
+		const sessionManager = ctx.sessionManager;
+		if (sessionManager && (typeof sessionManager === "object" || typeof sessionManager === "function")) return sessionManager;
+	} catch {
+		// stale ctx 的 guarded getter 不可读取；保留对象本身可避免误冻结其它 scope。
+	}
+	return ctx;
+}
+
+/** 冻结同一 ctx 遗留的 active frame；没有 ctx 的测试/兼容调用会冻结全部记录。 */
+function finalizeActiveLifecycleStates(timestamp: number, ctx?: any): void {
+	const owner = lifecycleOwner(ctx);
+	for (const state of lifecycleTimingRegistry.values()) {
+		if (!state.active) continue;
+		if (owner && state.owner !== owner) continue;
+		state.updatedAt = timestamp;
+		state.completedAt = timestamp;
+		state.active = false;
+	}
+}
+
+function writeLifecycleTimingState(key: string, timestamp: number, active: boolean, ctx?: any): void {
+	const previous = lifecycleTimingRegistry.get(key);
+	lifecycleTimingRegistry.set(key, {
+		startedAt: previous?.startedAt ?? timestamp,
+		updatedAt: timestamp,
+		completedAt: active ? undefined : timestamp,
+		active,
+		owner: lifecycleOwner(ctx) ?? previous?.owner,
+	});
+}
+
+/** assistant 流式 toolCall 出现时即建立 live 记录，历史 pending Tool 因没有事件记录不会继续计时。 */
+function recordStreamingToolCalls(message: any, timestamp: number, ctx?: any): void {
+	if (message?.role !== "assistant" || !Array.isArray(message.content)) return;
+	for (const content of message.content) {
+		if (content?.type !== "toolCall" || !content.id) continue;
+		writeLifecycleTimingState(`tool:${String(content.id)}`, timestamp, true, ctx);
+	}
+}
+
 /** 记录 Pi 的真实消息与工具生命周期；render 只消费时间，不再用重绘时机代替业务事件。 */
-export function recordChromeFrameLifecycleEvent(type: ChromeFrameLifecycleEvent, event: any, now = Date.now()): void {
+export function recordChromeFrameLifecycleEvent(type: ChromeFrameLifecycleEvent, event: any, ctx?: any, now = Date.now()): void {
 	const timestamp = readTimestamp(now);
 	if (timestamp === undefined) return;
+	if (type === "agent_start" || type === "turn_end" || type === "agent_end") {
+		finalizeActiveLifecycleStates(timestamp, ctx);
+		return;
+	}
 	let key: string | undefined;
 	let active = true;
 	switch (type) {
 		case "message_update":
 			key = messageLifecycleKey(event?.message);
+			recordStreamingToolCalls(event?.message, timestamp, ctx);
 			break;
 		case "message_end":
 			key = messageLifecycleKey(event?.message);
@@ -172,14 +230,7 @@ export function recordChromeFrameLifecycleEvent(type: ChromeFrameLifecycleEvent,
 			active = false;
 			break;
 	}
-	if (!key) return;
-	const previous = lifecycleTimingRegistry.get(key);
-	lifecycleTimingRegistry.set(key, {
-		startedAt: previous?.startedAt ?? timestamp,
-		updatedAt: timestamp,
-		completedAt: active ? undefined : timestamp,
-		active,
-	});
+	if (key) writeLifecycleTimingState(key, timestamp, active, ctx);
 }
 
 function initializeTimingState(initialUpdatedAt: number, timing?: TimingState): TimingState {
@@ -229,7 +280,8 @@ function updateTimingState(instance: any, kind: ChromeKind, status: ChromeStatus
 		timing.lastUpdatedAt = firstSignature && nativeTimestamp !== undefined ? nativeTimestamp : now;
 	}
 	timing.lastSignature = signature;
-	timing.active = lifecycleState?.active ?? status === "pending";
+	// Tool 必须有 live lifecycle 证据才动态计时；历史恢复的 pending Tool 否则会永久增长。
+	timing.active = lifecycleState?.active ?? (kind === "bash" && status === "pending");
 	return timing;
 }
 

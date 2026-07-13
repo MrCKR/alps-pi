@@ -285,7 +285,7 @@ test("Tool 从启动到完成动态更新耗时，完成后冻结并成为下一
 		Date.now = () => 1_000;
 		assistantWrapped.call(previous, 40);
 
-		recordChromeFrameLifecycleEvent("tool_execution_start", { toolCallId: tool.toolCallId }, 3_000);
+		recordChromeFrameLifecycleEvent("tool_execution_start", { toolCallId: tool.toolCallId }, undefined, 3_000);
 		Date.now = () => 3_000;
 		let lines = toolWrapped.call(tool, 40);
 		assert.match(stripAnsi(lines.at(-1)!), /2s ╯$/);
@@ -294,7 +294,7 @@ test("Tool 从启动到完成动态更新耗时，完成后冻结并成为下一
 		lines = toolWrapped.call(tool, 40);
 		assert.match(stripAnsi(lines.at(-1)!), /6s ╯$/);
 
-		recordChromeFrameLifecycleEvent("tool_execution_end", { toolCallId: tool.toolCallId }, 9_000);
+		recordChromeFrameLifecycleEvent("tool_execution_end", { toolCallId: tool.toolCallId }, undefined, 9_000);
 		tool.isPartial = false;
 		tool.result = { isError: false };
 		Date.now = () => 12_000;
@@ -308,6 +308,97 @@ test("Tool 从启动到完成动态更新耗时，完成后冻结并成为下一
 		Date.now = () => 12_000;
 		const nextLines = assistantWrapped.call(new FakeComponent(), 40);
 		assert.match(stripAnsi(nextLines.at(-1)!), /3s ╯$/);
+	} finally {
+		Date.now = originalNow;
+	}
+});
+
+test("历史恢复的 pending Tool 没有 lifecycle 证据时不会持续增长", () => {
+	class HistoricalPendingTool extends FakeComponent {
+		toolName = "pwsh";
+		toolCallId = "tool-historical-pending-1";
+		isPartial = true;
+	}
+	const originalNow = Date.now;
+	const theme = createFakeTheme();
+	const assistantWrapped = createWrappedRender("AssistantFake", "assistant", FakeComponent.prototype.render, () => theme);
+	const toolWrapped = createWrappedRender("ToolFake", "tool", HistoricalPendingTool.prototype.render, () => theme);
+	const tool = new HistoricalPendingTool();
+	try {
+		Date.now = () => 1_000;
+		assistantWrapped.call(new FakeComponent(), 40);
+		Date.now = () => 3_000;
+		let lines = toolWrapped.call(tool, 40);
+		assert.match(stripAnsi(lines.at(-1)!), /2s ╯$/);
+
+		Date.now = () => 20_000;
+		lines = toolWrapped.call(tool, 40);
+		assert.match(stripAnsi(lines.at(-1)!), /2s ╯$/);
+	} finally {
+		Date.now = originalNow;
+	}
+});
+
+test("agent_end 会冻结未收到 tool_execution_end 的 Tool 线框", () => {
+	class AbortedTool extends FakeComponent {
+		toolName = "pwsh";
+		toolCallId = "tool-aborted-1";
+		isPartial = true;
+	}
+	const originalNow = Date.now;
+	const ui = {};
+	const theme = createFakeTheme();
+	const assistantWrapped = createWrappedRender("AssistantFake", "assistant", FakeComponent.prototype.render, () => theme);
+	const toolWrapped = createWrappedRender("ToolFake", "tool", AbortedTool.prototype.render, () => theme);
+	const tool = new AbortedTool();
+	try {
+		Date.now = () => 1_000;
+		assistantWrapped.call(new FakeComponent(), 40);
+		recordChromeFrameLifecycleEvent("message_update", {
+			message: { role: "assistant", timestamp: 3_000, content: [{ type: "toolCall", id: tool.toolCallId }] },
+		}, { ui }, 3_000);
+
+		Date.now = () => 7_000;
+		let lines = toolWrapped.call(tool, 40);
+		assert.match(stripAnsi(lines.at(-1)!), /6s ╯$/);
+
+		// Pi 每次 emit 都创建新 ctx；相同 UI 才代表同一顶层 lifecycle owner。
+		recordChromeFrameLifecycleEvent("agent_end", {}, { ui }, 9_000);
+		Date.now = () => 20_000;
+		lines = toolWrapped.call(tool, 40);
+		assert.match(stripAnsi(lines.at(-1)!), /8s ╯$/);
+	} finally {
+		Date.now = originalNow;
+	}
+});
+
+test("子代理 agent_end 不会冻结父代理的 active Tool 线框", () => {
+	class ScopedTool extends FakeComponent {
+		toolName = "pwsh";
+		toolCallId = "tool-parent-1";
+		isPartial = true;
+	}
+	const originalNow = Date.now;
+	const parentUi = {};
+	const nestedSessionManager = {};
+	const theme = createFakeTheme();
+	const assistantWrapped = createWrappedRender("AssistantFake", "assistant", FakeComponent.prototype.render, () => theme);
+	const toolWrapped = createWrappedRender("ToolFake", "tool", ScopedTool.prototype.render, () => theme);
+	const tool = new ScopedTool();
+	try {
+		Date.now = () => 1_000;
+		assistantWrapped.call(new FakeComponent(), 40);
+		recordChromeFrameLifecycleEvent("tool_execution_start", { toolCallId: tool.toolCallId }, { ui: parentUi }, 3_000);
+		recordChromeFrameLifecycleEvent("agent_end", {}, { hasUI: false, sessionManager: nestedSessionManager }, 9_000);
+
+		Date.now = () => 12_000;
+		let lines = toolWrapped.call(tool, 40);
+		assert.match(stripAnsi(lines.at(-1)!), /11s ╯$/);
+
+		recordChromeFrameLifecycleEvent("agent_end", {}, { ui: parentUi }, 13_000);
+		Date.now = () => 20_000;
+		lines = toolWrapped.call(tool, 40);
+		assert.match(stripAnsi(lines.at(-1)!), /12s ╯$/);
 	} finally {
 		Date.now = originalNow;
 	}
