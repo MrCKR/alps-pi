@@ -2,7 +2,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerAlpsPiCommand } from "./src/commands.ts";
-import { disablePatch, enablePatch, getGlobalPatchState } from "./src/features/chrome-frame/index.ts";
+import { disablePatch, enablePatch, getGlobalPatchState, recordChromeFrameLifecycleEvent } from "./src/features/chrome-frame/index.ts";
 import { cloneSettings, readPersistedSettings, writePersistedSettings } from "./src/settings-store.ts";
 import { configureBottomInputDebug } from "./src/features/bottom-input/debug.ts";
 import { createBottomInputRuntime, registerBottomInputShortcuts, type BottomInputRuntime } from "./src/features/bottom-input/index.ts";
@@ -119,6 +119,7 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 	});
 
 	pi.on("message_update", (event: any, ctx: any) => {
+		recordChromeFrameLifecycleEvent("message_update", event);
 		recordAnimationsLifecycleEvent("message_update", ctx, event);
 		handleAnimationsMessageUpdate(event, ctx);
 		bottomInputRuntime.bindSession(ctx);
@@ -126,6 +127,7 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 	});
 
 	pi.on("message_end", (event: any, ctx: any) => {
+		recordChromeFrameLifecycleEvent("message_end", event);
 		recordAnimationsLifecycleEvent("message_end", ctx, event);
 		handleAnimationsMessageEnd(ctx);
 		bottomInputRuntime.bindSession(ctx);
@@ -133,15 +135,18 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 	});
 
 	pi.on("tool_execution_start", (event: any, ctx: any) => {
+		recordChromeFrameLifecycleEvent("tool_execution_start", event);
 		recordAnimationsLifecycleEvent("tool_execution_start", ctx, event);
 		handleAnimationsToolExecutionStart(event, ctx);
 	});
 
 	pi.on("tool_execution_update", (event: any, ctx: any) => {
+		recordChromeFrameLifecycleEvent("tool_execution_update", event);
 		recordAnimationsLifecycleEvent("tool_execution_update", ctx, event);
 	});
 
 	pi.on("tool_execution_end", (event: any, ctx: any) => {
+		recordChromeFrameLifecycleEvent("tool_execution_end", event);
 		recordAnimationsLifecycleEvent("tool_execution_end", ctx, event);
 		handleAnimationsToolExecutionEnd(event, ctx);
 	});

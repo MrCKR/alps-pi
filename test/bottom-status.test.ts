@@ -136,6 +136,19 @@ test("thinking high/xhigh 使用原版 rainbow 逐字符配色", () => {
 	assert.doesNotMatch(rawThinking, /\x1b\[38;2;[0-9;]+m:/);
 });
 
+test("thinking max 使用独立高亮霓虹逐字符配色", () => {
+	const harness = createCtx();
+	harness.ctx.getThinkingLevel = () => "max";
+	const { rendered } = renderStatus({ ctx: harness.ctx, now: 2000 });
+	const rawThinking = rendered.frameStatus.thinking ?? "";
+
+	assert.equal(stripAnsi(rawThinking), "max");
+	assert.match(rawThinking, /\x1b\[38;2;240;110;207mm/);
+	assert.match(rawThinking, /\x1b\[38;2;207;131;237ma/);
+	assert.match(rawThinking, /\x1b\[38;2;169;147;255mx/);
+	assert.match(rawThinking, /\x1b\[0m$/);
+});
+
 test("thinking 可从 session thinking_level_change 回退读取", () => {
 	const harness = createCtx();
 	harness.ctx.getThinkingLevel = undefined;

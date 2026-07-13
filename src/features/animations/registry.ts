@@ -472,32 +472,34 @@ export type AnimationDefinition = {
 	category: AnimationCategory;
 	description: string;
 	lines: number;
+	/** 是否保留 Pi 原生 spinner；自带完整运动主体的动画应隐藏。 */
+	nativeIndicator: "show" | "hide";
 };
 
 export const ANIMATIONS: AnimationDefinition[] = [
-	// 1-line
-	{ name: "neural-pulse", fn: neuralPulse, category: "thinking", description: "Energy pulses along neural pathway", lines: 1 },
-	{ name: "glitch-text", fn: glitchText, category: "both", description: "Cyberpunk glitch effect", lines: 1 },
-	{ name: "plasma-wave", fn: plasmaWave, category: "thinking", description: "Colorful plasma band", lines: 1 },
-	{ name: "pacman", fn: pacmanChase, category: "working", description: "Pac-Man eating dots", lines: 1 },
-	{ name: "matrix", fn: matrixRain, category: "both", description: "Matrix rain", lines: 1 },
-	{ name: "pipeline", fn: pipeline, category: "working", description: "CI/CD pipeline with icons", lines: 1 },
-	{ name: "starfield", fn: starfield, category: "thinking", description: "Horizontal parallax stars", lines: 1 },
-	{ name: "fire", fn: fire, category: "working", description: "Demoscene fire", lines: 1 },
-	{ name: "icon-morph", fn: iconMorphing, category: "both", description: "Morphing nerd font icons", lines: 1 },
-	{ name: "brainstorm", fn: brainstorm, category: "thinking", description: "Weather icon storm", lines: 1 },
-	{ name: "dev-constellation", fn: devConstellation, category: "thinking", description: "Dev icons with pulses", lines: 1 },
-	{ name: "crush", fn: crushScramble, category: "both", description: "Crush-style scrambler", lines: 1 },
-	{ name: "pi-pulse", fn: piLogoPulse, category: "both", description: "Pi logo with gradient pulse", lines: 1 },
-	{ name: "shimmer", fn: shimmerText, category: "thinking", description: "Rainbow shimmer text", lines: 1 },
-	{ name: "typewriter", fn: vibeTypewriter, category: "both", description: "Themed typewriter text", lines: 1 },
-	{ name: "orbit-dots", fn: orbitDots, category: "thinking", description: "Pulsing orbit dots", lines: 1 },
-	{ name: "neon-bounce", fn: neonBounce, category: "working", description: "Neon ball bouncing", lines: 1 },
+	// 1-line：文字状态保留原生 spinner，自带运动主体的动画隐藏。
+	{ name: "neural-pulse", fn: neuralPulse, category: "thinking", description: "Energy pulses along neural pathway", lines: 1, nativeIndicator: "hide" },
+	{ name: "glitch-text", fn: glitchText, category: "both", description: "Cyberpunk glitch effect", lines: 1, nativeIndicator: "show" },
+	{ name: "plasma-wave", fn: plasmaWave, category: "thinking", description: "Colorful plasma band", lines: 1, nativeIndicator: "hide" },
+	{ name: "pacman", fn: pacmanChase, category: "working", description: "Pac-Man eating dots", lines: 1, nativeIndicator: "hide" },
+	{ name: "matrix", fn: matrixRain, category: "both", description: "Matrix rain", lines: 1, nativeIndicator: "hide" },
+	{ name: "pipeline", fn: pipeline, category: "working", description: "CI/CD pipeline with icons", lines: 1, nativeIndicator: "hide" },
+	{ name: "starfield", fn: starfield, category: "thinking", description: "Horizontal parallax stars", lines: 1, nativeIndicator: "hide" },
+	{ name: "fire", fn: fire, category: "working", description: "Demoscene fire", lines: 1, nativeIndicator: "hide" },
+	{ name: "icon-morph", fn: iconMorphing, category: "both", description: "Morphing nerd font icons", lines: 1, nativeIndicator: "hide" },
+	{ name: "brainstorm", fn: brainstorm, category: "thinking", description: "Weather icon storm", lines: 1, nativeIndicator: "hide" },
+	{ name: "dev-constellation", fn: devConstellation, category: "thinking", description: "Dev icons with pulses", lines: 1, nativeIndicator: "hide" },
+	{ name: "crush", fn: crushScramble, category: "both", description: "Crush-style scrambler", lines: 1, nativeIndicator: "show" },
+	{ name: "pi-pulse", fn: piLogoPulse, category: "both", description: "Pi logo with gradient pulse", lines: 1, nativeIndicator: "hide" },
+	{ name: "shimmer", fn: shimmerText, category: "thinking", description: "Rainbow shimmer text", lines: 1, nativeIndicator: "show" },
+	{ name: "typewriter", fn: vibeTypewriter, category: "both", description: "Themed typewriter text", lines: 1, nativeIndicator: "show" },
+	{ name: "orbit-dots", fn: orbitDots, category: "thinking", description: "Pulsing orbit dots", lines: 1, nativeIndicator: "hide" },
+	{ name: "neon-bounce", fn: neonBounce, category: "working", description: "Neon ball bouncing", lines: 1, nativeIndicator: "hide" },
 	// 3-line
-	{ name: "fire3", fn: fire3, category: "working", description: "🔥 Demoscene fire (3-line)", lines: 3 },
-	{ name: "matrix3", fn: matrix3, category: "both", description: "🟢 Matrix rain (3-line)", lines: 3 },
-	{ name: "starfield3", fn: starfield3, category: "thinking", description: "✦ Deep starfield (3-line)", lines: 3 },
-	{ name: "aurora", fn: aurora3, category: "thinking", description: "🌌 Aurora borealis (3-line)", lines: 3 },
+	{ name: "fire3", fn: fire3, category: "working", description: "🔥 Demoscene fire (3-line)", lines: 3, nativeIndicator: "hide" },
+	{ name: "matrix3", fn: matrix3, category: "both", description: "🟢 Matrix rain (3-line)", lines: 3, nativeIndicator: "hide" },
+	{ name: "starfield3", fn: starfield3, category: "thinking", description: "✦ Deep starfield (3-line)", lines: 3, nativeIndicator: "hide" },
+	{ name: "aurora", fn: aurora3, category: "thinking", description: "🌌 Aurora borealis (3-line)", lines: 3, nativeIndicator: "hide" },
 ];
 
 export function getAnimation(name: string): AnimationDefinition | undefined {

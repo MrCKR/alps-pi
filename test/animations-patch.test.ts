@@ -231,11 +231,11 @@ test("stale ctx ui getter 不会在新事件 scope 判断中冒泡", () => {
 	assert.doesNotThrow(() => pauseAnimationsRuntime());
 });
 
-test("agent 活跃期接管底部 working、thinking 和 tool 单行动画时保留原生 spinner", () => {
+test("文字型 working、thinking 和 tool 单行动画保留原生 spinner", () => {
 	const workingMessages: Array<string | undefined> = [];
 	const indicators: Array<unknown> = [];
 	const widgets: Array<{ key: string; content?: string[] }> = [];
-	configureAnimations({ ...DEFAULT_SETTINGS.animations, working: "crush", thinking: "shimmer", tool: "pipeline", width: "default" });
+	configureAnimations({ ...DEFAULT_SETTINGS.animations, working: "crush", thinking: "shimmer", tool: "crush", width: "default" });
 	const state = getAnimationsRuntimeState();
 	state.currentCtx = {
 		ui: {
@@ -271,6 +271,27 @@ test("agent 活跃期接管底部 working、thinking 和 tool 单行动画时保
 	assert.equal(indicators.length, 0);
 });
 
+test("自带运动主体的单行动画隐藏原生 spinner", () => {
+	const workingMessages: Array<string | undefined> = [];
+	const indicators: Array<unknown> = [];
+	configureAnimations({ ...DEFAULT_SETTINGS.animations, working: "neon-bounce", width: "default" });
+	const state = getAnimationsRuntimeState();
+	state.currentCtx = {
+		ui: {
+			setWorkingIndicator: (indicator?: unknown) => indicators.push(indicator),
+			setWorkingMessage: (message?: string) => workingMessages.push(message),
+		},
+	};
+	state.currentUiCtx = state.currentCtx;
+
+	resumeAnimationsRuntime();
+	assert.equal((workingMessages.at(-1) ?? "").split("\n").length, 1);
+	assert.deepEqual(indicators.at(-1), { frames: [] });
+
+	configureAnimations({ ...DEFAULT_SETTINGS.animations, working: "crush", width: "default" });
+	assert.equal(indicators.at(-1), undefined);
+});
+
 test("多行底部动画整体写入 working message，隐藏原生 spinner 且不用补空格方案", () => {
 	const workingMessages: Array<string | undefined> = [];
 	const indicators: Array<unknown> = [];
@@ -300,7 +321,7 @@ test("多行底部动画整体写入 working message，隐藏原生 spinner 且�
 	assert.equal(indicators.at(-1), undefined);
 });
 
-test("多行动画切回单行动画会恢复原生 spinner", () => {
+test("隐藏型动画切回文字型单行动画会恢复原生 spinner", () => {
 	const workingMessages: Array<string | undefined> = [];
 	const indicators: Array<unknown> = [];
 	configureAnimations({ ...DEFAULT_SETTINGS.animations, working: "matrix3", width: "default" });
@@ -322,7 +343,7 @@ test("多行动画切回单行动画会恢复原生 spinner", () => {
 	assert.equal((workingMessages.at(-1) ?? "").split("\n").length, 1);
 });
 
-test("多行动画在 pause、settings disable 和 dispose 时恢复原生 spinner", () => {
+test("隐藏型动画在 pause、settings disable 和 dispose 时恢复原生 spinner", () => {
 	for (const action of ["pause", "disable", "dispose"] as const) {
 		disposeAnimations();
 		const workingMessages: Array<string | undefined> = [];

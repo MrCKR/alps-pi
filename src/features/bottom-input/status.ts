@@ -83,6 +83,7 @@ const RAINBOW_COLORS = [
 	"#178fb9",
 	"#b281d6",
 ];
+const MAX_NEON_COLORS = ["#f06ecf", "#cf83ed", "#a993ff"];
 const INTERNAL_STATUS_KEYS = new Set(["alps-pi-bottom-input", "alps-pi-bottom-status", "alps-pi-last-prompt"]);
 
 /** 渲染输入框附属状态；美化关闭时不读取 model/thinking/context/elapsed，只保留下方附属信息。 */
@@ -238,10 +239,9 @@ function renderThinkingSegment(level: string | null, theme: ThemeLike): string |
 	if (!level) return null;
 	const label = normalizeThinkingLevel(level);
 	if (!label) return null;
-	// 线框内按需求不显示 think: 前缀，只保留 thinking 级别本身。
-	if (level === "high" || level === "xhigh") {
-		return rainbow(label);
-	}
+	// max 使用更高亮的独立霓虹序列；high/xhigh 保留既有 rainbow 配色。
+	if (level === "max") return rainbow(label, MAX_NEON_COLORS);
+	if (level === "high" || level === "xhigh") return rainbow(label);
 	return safeFg(theme, thinkingColorToken(level), label);
 }
 
@@ -304,6 +304,7 @@ function normalizeThinkingLevel(level: string): string {
 		medium: "med",
 		high: "high",
 		xhigh: "xhigh",
+		max: "max",
 	};
 	return labels[level] ?? level;
 }
@@ -419,7 +420,8 @@ function safeFg(theme: ThemeLike, token: string, text: string, fallback = "text"
 	}
 }
 
-function rainbow(text: string): string {
+/** 按指定霓虹色板逐字符着色；默认沿用 high/xhigh 的原版 rainbow。 */
+function rainbow(text: string, colors: readonly string[] = RAINBOW_COLORS): string {
 	let result = "";
 	let colorIndex = 0;
 	for (const char of text) {
@@ -427,7 +429,7 @@ function rainbow(text: string): string {
 			result += char;
 			continue;
 		}
-		result += `${hexToAnsi(RAINBOW_COLORS[colorIndex % RAINBOW_COLORS.length]!)}${char}`;
+		result += `${hexToAnsi(colors[colorIndex % colors.length]!)}${char}`;
 		colorIndex += 1;
 	}
 	return `${result}\x1b[0m`;

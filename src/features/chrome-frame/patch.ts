@@ -65,6 +65,13 @@ const WRAPPED_RENDER_KEY = Symbol.for("alps.pi.wrappedRender.v2");
 const WRAPPED_RENDER_VERSION = 5;
 const CACHE_KEY_SEPARATOR = "\x1f";
 
+export type ChromeFrameLifecycleEvent =
+	| "message_update"
+	| "message_end"
+	| "tool_execution_start"
+	| "tool_execution_update"
+	| "tool_execution_end";
+
 type WrappedRenderMetadata = {
 	id: string;
 	version: number;
@@ -77,10 +84,20 @@ type TimingState = {
 	generation: number;
 	lastSignature: string;
 	lastUpdatedAt: number;
+	lifecycleUpdatedAt: number;
+	active: boolean;
+};
+
+type LifecycleTimingState = {
+	startedAt: number;
+	updatedAt: number;
+	completedAt?: number;
+	active: boolean;
 };
 
 const CHROME_PATCH_OWNER = Symbol.for("alps.pi.chromeFrame.patchOwner.v1");
 const timingRegistry = new Map<number, TimingState>();
+const lifecycleTimingRegistry = new Map<string, LifecycleTimingState>();
 let nextTimingSequence = 1;
 let timingGeneration = 1;
 
@@ -102,30 +119,93 @@ function isCurrentWrappedRender(id: string, render: unknown): boolean {
 
 function resetTimingRegistry(): void {
 	timingRegistry.clear();
+	lifecycleTimingRegistry.clear();
 	nextTimingSequence = 1;
 	timingGeneration += 1;
 }
 
-function initializeTimingState(timing?: TimingState): TimingState {
+function readTimestamp(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function messageLifecycleKey(message: any): string | undefined {
+	const timestamp = readTimestamp(message?.timestamp);
+	return message?.role === "assistant" && timestamp !== undefined ? `assistant:${timestamp}` : undefined;
+}
+
+function frameLifecycleKey(kind: ChromeKind, instance: any): string | undefined {
+	if (kind === "tool" || kind === "toolPending" || kind === "toolSuccess" || kind === "toolError") {
+		return instance?.toolCallId ? `tool:${String(instance.toolCallId)}` : undefined;
+	}
+	if (kind === "assistant" || kind === "thinking") return messageLifecycleKey(instance?.lastMessage);
+	return undefined;
+}
+
+function frameNativeTimestamp(kind: ChromeKind, instance: any): number | undefined {
+	if (kind === "assistant" || kind === "thinking") return readTimestamp(instance?.lastMessage?.timestamp);
+	if (kind === "tool" || kind === "toolPending" || kind === "toolSuccess" || kind === "toolError") {
+		return readTimestamp(instance?.result?.timestamp);
+	}
+	return readTimestamp(instance?.message?.timestamp);
+}
+
+/** 记录 Pi 的真实消息与工具生命周期；render 只消费时间，不再用重绘时机代替业务事件。 */
+export function recordChromeFrameLifecycleEvent(type: ChromeFrameLifecycleEvent, event: any, now = Date.now()): void {
+	const timestamp = readTimestamp(now);
+	if (timestamp === undefined) return;
+	let key: string | undefined;
+	let active = true;
+	switch (type) {
+		case "message_update":
+			key = messageLifecycleKey(event?.message);
+			break;
+		case "message_end":
+			key = messageLifecycleKey(event?.message);
+			active = false;
+			break;
+		case "tool_execution_start":
+		case "tool_execution_update":
+			key = event?.toolCallId ? `tool:${String(event.toolCallId)}` : undefined;
+			break;
+		case "tool_execution_end":
+			key = event?.toolCallId ? `tool:${String(event.toolCallId)}` : undefined;
+			active = false;
+			break;
+	}
+	if (!key) return;
+	const previous = lifecycleTimingRegistry.get(key);
+	lifecycleTimingRegistry.set(key, {
+		startedAt: previous?.startedAt ?? timestamp,
+		updatedAt: timestamp,
+		completedAt: active ? undefined : timestamp,
+		active,
+	});
+}
+
+function initializeTimingState(initialUpdatedAt: number, timing?: TimingState): TimingState {
 	const next = timing ?? {
 		sequence: 0,
 		generation: timingGeneration,
 		lastSignature: "",
-		lastUpdatedAt: 0,
+		lastUpdatedAt: initialUpdatedAt,
+		lifecycleUpdatedAt: -1,
+		active: false,
 	};
 	next.sequence = nextTimingSequence++;
 	next.generation = timingGeneration;
 	next.lastSignature = "";
-	next.lastUpdatedAt = 0;
+	next.lastUpdatedAt = initialUpdatedAt;
+	next.lifecycleUpdatedAt = -1;
+	next.active = false;
 	timingRegistry.set(next.sequence, next);
 	return next;
 }
 
-function getTimingState(instance: any): TimingState {
+function getTimingState(instance: any, initialUpdatedAt: number): TimingState {
 	let timing = instance?.[TIMING_STATE_KEY] as TimingState | undefined;
 	if (timing?.generation === timingGeneration) return timing;
-	if (timing) return initializeTimingState(timing);
-	timing = initializeTimingState();
+	if (timing) return initializeTimingState(initialUpdatedAt, timing);
+	timing = initializeTimingState(initialUpdatedAt);
 	Object.defineProperty(instance, TIMING_STATE_KEY, {
 		value: timing,
 		configurable: false,
@@ -133,23 +213,34 @@ function getTimingState(instance: any): TimingState {
 	return timing;
 }
 
-/** 内容或状态发生变化时刷新该实例更新时间；重复渲染不会让间隔抖动。 */
-function updateTimingState(instance: any, signature: string): TimingState {
-	const timing = getTimingState(instance);
-	if (timing.lastSignature !== signature) {
-		timing.lastSignature = signature;
-		timing.lastUpdatedAt = Date.now();
+/** 优先使用生命周期事件；缺失事件时以内容签名变化作为兼容回退。 */
+function updateTimingState(instance: any, kind: ChromeKind, status: ChromeStatus | undefined, signature: string): TimingState {
+	const lifecycle = frameLifecycleKey(kind, instance);
+	const lifecycleState = lifecycle ? lifecycleTimingRegistry.get(lifecycle) : undefined;
+	const nativeTimestamp = frameNativeTimestamp(kind, instance);
+	const now = Date.now();
+	const timing = getTimingState(instance, lifecycleState?.updatedAt ?? nativeTimestamp ?? now);
+	const firstSignature = timing.lastSignature === "";
+	if (lifecycleState && timing.lifecycleUpdatedAt !== lifecycleState.updatedAt) {
+		timing.lastUpdatedAt = lifecycleState.updatedAt;
+		timing.lifecycleUpdatedAt = lifecycleState.updatedAt;
+	} else if (!lifecycleState && timing.lastSignature !== signature) {
+		// 历史 frame 首次渲染使用原始 timestamp；后续内容变化才使用当前更新时间。
+		timing.lastUpdatedAt = firstSignature && nativeTimestamp !== undefined ? nativeTimestamp : now;
 	}
+	timing.lastSignature = signature;
+	timing.active = lifecycleState?.active ?? status === "pending";
 	return timing;
 }
 
 function formatElapsedSincePrevious(timing: TimingState): string | undefined {
 	const previous = timingRegistry.get(timing.sequence - 1);
 	if (!previous) return undefined;
-	return formatElapsedDuration(timing.lastUpdatedAt - previous.lastUpdatedAt);
+	const effectiveUpdatedAt = timing.active ? Date.now() : timing.lastUpdatedAt;
+	return formatElapsedDuration(effectiveUpdatedAt - previous.lastUpdatedAt);
 }
 
-/** 将消息间隔格式化为秒级文本；不足 1s 也显示为 1s。 */
+/** 将消息间隔向上取整为秒级文本；不足 1s 也显示为 1s。 */
 export function formatElapsedDuration(ms: number): string {
 	const totalSeconds = Math.max(1, Math.ceil(Math.max(0, ms) / 1000));
 	const hours = Math.floor(totalSeconds / 3600);
@@ -777,7 +868,7 @@ export function createWrappedRender(
 			cacheKeySummary = debugReturn ? summarizeChromeFrameCacheKey(innerKey) : null;
 			const timingContentKey = createTimingContentKey(renderKind, instance, innerLines);
 			const timingKey = [timingContentKey, renderKind, toolName ?? "", status ?? ""].join(CACHE_KEY_SEPARATOR);
-			const timing = updateTimingState(instance, timingKey);
+			const timing = updateTimingState(instance, renderKind, status, timingKey);
 			const elapsedText = formatElapsedSincePrevious(timing);
 			const tokenText = formatTokenText(estimateFrameTokens(renderKind, instance));
 			const cache = (instance as any)[RENDER_CACHE_KEY] as RenderCacheEntry | undefined;

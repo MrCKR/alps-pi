@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createInitialPatchState, createWrappedRender, disablePatch, estimateFrameTokens, formatElapsedDuration, PATCH_KEY } from "../src/features/chrome-frame/patch.ts";
+import { createInitialPatchState, createWrappedRender, disablePatch, estimateFrameTokens, formatElapsedDuration, PATCH_KEY, recordChromeFrameLifecycleEvent } from "../src/features/chrome-frame/patch.ts";
 import { createFakeTheme, assertLinesWithin, stripAnsi } from "./helpers.test.ts";
 
 const OSC133_START = "\x1b]133;A\x07";
@@ -239,16 +239,17 @@ test("wrapper 缓存会随 width 变化失效", () => {
 	assert.ok(theme.calls.length > callsAfterFirst);
 });
 
-test("线框间隔格式最小为 1s 且不保留小数", () => {
+test("线框间隔格式最小为 1s 且向上取整", () => {
 	assert.equal(formatElapsedDuration(0), "1s");
 	assert.equal(formatElapsedDuration(1), "1s");
 	assert.equal(formatElapsedDuration(999), "1s");
 	assert.equal(formatElapsedDuration(1000), "1s");
+	assert.equal(formatElapsedDuration(2200), "3s");
 	assert.equal(formatElapsedDuration(61_000), "1m01s");
 	assert.equal(formatElapsedDuration(3_660_000), "1h01m");
 });
 
-test("第二个线框右下角显示相对上一条的秒级间隔", () => {
+test("第二个线框右下角显示相对上一条的向上取整间隔", () => {
 	const originalNow = Date.now;
 	const original = FakeComponent.prototype.render;
 	const theme = createFakeTheme();
@@ -261,6 +262,72 @@ test("第二个线框右下角显示相对上一条的秒级间隔", () => {
 		Date.now = () => 3_200;
 		const lines = wrapped.call(second, 36);
 
+		assert.match(stripAnsi(lines.at(-1)!), /3s ╯$/);
+	} finally {
+		Date.now = originalNow;
+	}
+});
+
+test("Tool 从启动到完成动态更新耗时，完成后冻结并成为下一线框起点", () => {
+	class LifecycleTool extends FakeComponent {
+		toolName = "read";
+		toolCallId = "tool-lifecycle-1";
+		isPartial = true;
+		result: any;
+	}
+	const originalNow = Date.now;
+	const theme = createFakeTheme();
+	const assistantWrapped = createWrappedRender("AssistantFake", "assistant", FakeComponent.prototype.render, () => theme);
+	const toolWrapped = createWrappedRender("ToolFake", "tool", LifecycleTool.prototype.render, () => theme);
+	const previous = new FakeComponent();
+	const tool = new LifecycleTool();
+	try {
+		Date.now = () => 1_000;
+		assistantWrapped.call(previous, 40);
+
+		recordChromeFrameLifecycleEvent("tool_execution_start", { toolCallId: tool.toolCallId }, 3_000);
+		Date.now = () => 3_000;
+		let lines = toolWrapped.call(tool, 40);
+		assert.match(stripAnsi(lines.at(-1)!), /2s ╯$/);
+
+		Date.now = () => 7_000;
+		lines = toolWrapped.call(tool, 40);
+		assert.match(stripAnsi(lines.at(-1)!), /6s ╯$/);
+
+		recordChromeFrameLifecycleEvent("tool_execution_end", { toolCallId: tool.toolCallId }, 9_000);
+		tool.isPartial = false;
+		tool.result = { isError: false };
+		Date.now = () => 12_000;
+		lines = toolWrapped.call(tool, 40);
+		assert.match(stripAnsi(lines.at(-1)!), /8s ╯$/);
+
+		Date.now = () => 20_000;
+		lines = toolWrapped.call(tool, 40);
+		assert.match(stripAnsi(lines.at(-1)!), /8s ╯$/);
+
+		Date.now = () => 12_000;
+		const nextLines = assistantWrapped.call(new FakeComponent(), 40);
+		assert.match(stripAnsi(nextLines.at(-1)!), /3s ╯$/);
+	} finally {
+		Date.now = originalNow;
+	}
+});
+
+test("历史 frame 首次渲染优先使用原始消息 timestamp", () => {
+	class TimestampedComponent extends FakeComponent {
+		readonly message: { timestamp: number };
+
+		constructor(message: { timestamp: number }) {
+			super();
+			this.message = message;
+		}
+	}
+	const wrapped = createWrappedRender("Timestamped", "custom", TimestampedComponent.prototype.render, () => createFakeTheme());
+	const originalNow = Date.now;
+	try {
+		Date.now = () => 10_000;
+		wrapped.call(new TimestampedComponent({ timestamp: 1_000 }), 40);
+		const lines = wrapped.call(new TimestampedComponent({ timestamp: 3_200 }), 40);
 		assert.match(stripAnsi(lines.at(-1)!), /3s ╯$/);
 	} finally {
 		Date.now = originalNow;

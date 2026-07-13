@@ -2,7 +2,7 @@
 
 import type { Component } from "@earendil-works/pi-tui";
 import { type AnimationsSettings, cloneDefaultAnimationsSettings, normalizeAnimationsSettings } from "./settings.ts";
-import { pickRandomAnimation, renderAnimationFrame, resolveAnimationWidth, type AnimationPhase } from "./registry.ts";
+import { getAnimation, pickRandomAnimation, renderAnimationFrame, resolveAnimationWidth, type AnimationPhase } from "./registry.ts";
 import { isAnimationDebugEnabled, summarizeWorkingLineWidths, writeAnimationDebugLog, type AnimationDebugEvent } from "./debug.ts";
 
 const WORKING_WIDGET_KEY = "alps-pi-animations";
@@ -48,7 +48,7 @@ export type AnimationRuntimeState = {
 	workingMessageApplied: boolean;
 	/** 是否曾写入多行动画 widget；停止时用于清理旧版本或外部插件残留。 */
 	workingWidgetApplied: boolean;
-	/** 是否曾为多行动画隐藏 Pi 原生 working spinner；切回单行或停止接管时用于恢复默认 indicator。 */
+	/** 是否已按动画策略隐藏 Pi 原生 working spinner；切回文字型动画或停止接管时用于恢复。 */
 	workingIndicatorHidden: boolean;
 	/** 上一帧底部动画行数；用于测试与后续排查单行/多行切换。 */
 	lastWorkingLines: number;
@@ -406,11 +406,13 @@ function renderWorkingAnimationFrame(state: AnimationRuntimeState, ui: any): boo
 		return false;
 	}
 	const phase = resolveCurrentPhase(state);
+	const animationName = resolveAnimationNameForPhase(state, phase);
 	const width = resolveAnimationWidth(state.settings.width, process.stdout.columns || 80);
-	const lines = renderAnimationFrame(resolveAnimationNameForPhase(state, phase), state.frame, width, phase);
+	const lines = renderAnimationFrame(animationName, state.frame, width, phase);
 	if (isAnimationDebugEnabled()) state.lastWorkingLineWidths = summarizeWorkingLineWidths(lines);
-	// 仅多行动画隐藏 Pi 原生 spinner，避免首行被额外前缀推后；单行动画保留原生 spinner。
-	syncWorkingIndicatorForLines(state, ui, lines.length);
+	// 多行始终隐藏；单行根据动画语义决定，避免给自带运动主体的画面重复叠加 spinner。
+	const shouldHideIndicator = lines.length > 1 || getAnimation(animationName)?.nativeIndicator === "hide";
+	syncWorkingIndicator(state, ui, shouldHideIndicator);
 	const firstLine = lines[0] ?? "Working...";
 	ui.setWorkingMessage(lines.length > 1 ? lines.join("\n") : firstLine);
 	state.workingMessageApplied = true;
@@ -423,9 +425,9 @@ function renderWorkingAnimationFrame(state: AnimationRuntimeState, ui: any): boo
 	return true;
 }
 
-/** 根据已渲染 working message 行数同步 Pi 原生 indicator；API 缺失时安全跳过，不影响动画文案。 */
-function syncWorkingIndicatorForLines(state: AnimationRuntimeState, ui: any, lineCount: number): void {
-	if (lineCount > 1) {
+/** 根据动画语义同步 Pi 原生 indicator；API 缺失时安全跳过，不影响动画文案。 */
+function syncWorkingIndicator(state: AnimationRuntimeState, ui: any, shouldHide: boolean): void {
+	if (shouldHide) {
 		hideWorkingIndicator(state, ui);
 		return;
 	}

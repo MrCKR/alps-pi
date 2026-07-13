@@ -14,6 +14,14 @@ test("Animations registry 保留关键动画名称与分类过滤", () => {
 	assert.ok(getAnimationsForCategory("working").every((animation) => animation.category === "working" || animation.category === "both"));
 });
 
+test("动画显式声明 Pi 原生 indicator 策略", () => {
+	assert.equal(getAnimation("neon-bounce")?.nativeIndicator, "hide");
+	assert.equal(getAnimation("pipeline")?.nativeIndicator, "hide");
+	assert.equal(getAnimation("shimmer")?.nativeIndicator, "show");
+	assert.equal(getAnimation("crush")?.nativeIndicator, "show");
+	assert.ok(ANIMATIONS.filter((animation) => animation.lines > 1).every((animation) => animation.nativeIndicator === "hide"));
+});
+
 test("未知动画 render fallback 到可见帧", () => {
 	const lines = renderAnimationFrame("missing", 0, 40, "thinking");
 	assert.equal(lines.length, 1);
