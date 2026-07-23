@@ -172,7 +172,7 @@ test("无参数打开 overlay 设置界面，可切换 Message Frame 与 Assista
 	assert.deepEqual(harness.patchCalls, ["disable"]);
 	component.handleInput("\x1b[B");
 	component.handleInput(" ");
-	assert.equal((globalThis as any)[PATCH_KEY].config.settings.chromeFrame.assistantFrame, false);
+	assert.equal((globalThis as any)[PATCH_KEY].config.settings.chromeFrame.assistantFrameStyle, "horizontal");
 	assert.equal(harness.settingsChangedCalls.length, 2);
 	component.handleInput("q");
 	await pending;

@@ -53,7 +53,7 @@ pi install git:https://github.com/MrCKR/alps-pi
 - 运行期 monkey patch 和固定输入框 runtime 可回滚。
 - 普通空消息不会渲染成空白框。
 - 消息正文不铺大面积背景色，只渲染边框、标题和正文颜色。
-- 可关闭 assistant 正文线框，方便复制回复内容。
+- assistant 正文支持完整框、仅上下边框和无框三种样式，方便复制回复内容。
 
 ## 命令
 
@@ -62,11 +62,11 @@ pi install git:https://github.com/MrCKR/alps-pi
 /alps-pi preview     预览美化线框样式
 ```
 
-`/alps-pi` 设置界面目前保留六个开关、一个 Animations 配置项和一个快捷键配置项：
+`/alps-pi` 设置界面目前保留五个开关、一个 Assistant Frame 样式项、一个 Animations 配置项和一个快捷键配置项：
 
 ```text
 Message Frame       控制消息、工具与 bash 外框，默认 ON
-Assistant Frame     控制 assistant 正文回复是否包线框，默认 ON
+Assistant Frame     控制 assistant 正文的 box/horizontal/none 样式，默认 BOX
 Compact Tools       未展开 tool 只显示第一条有效文本行，默认 ON
 Compact Edit        允许 edit tool 也按极简模式展示，默认 OFF
 Fixed Input         控制实验性底部固定编辑器 runtime，默认 ON
@@ -74,6 +74,12 @@ Beautified Input    控制输入框线框与嵌入边框状态，默认 ON
 Animations          配置底部 Working/Thinking/Tool 与 hidden thinking 内置动画，默认 ON
 Shortcuts           管理底部输入框快捷键
 ```
+
+`Assistant Frame` 三种样式：
+
+- `BOX`：保留完整上下左右边框。
+- `HORIZONTAL`：保留标题顶边和耗时底边，正文行不绘制左右 `│`，适合终端原生多行复制。
+- `NONE`：使用 Pi 原生 assistant 渲染，不添加 Alps 外框。
 
 操作方式：
 

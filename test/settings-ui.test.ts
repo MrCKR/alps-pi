@@ -65,6 +65,7 @@ test("设置界面展示英文设置名、中文描述和主题线框", () => {
 	assert.match(plain, /控制消息、工具与 bash 外框/);
 	assert.doesNotMatch(plain, /底部状态栏/);
 	assert.match(plain, /Message Frame\s+ON/);
+	assert.match(plain, /Assistant Frame\s+BOX/);
 	assert.match(plain, /Compact Tools\s+ON/);
 	assert.match(plain, /Compact Edit\s+OFF/);
 	assert.match(plain, /Fixed Input\s+ON/);
@@ -93,12 +94,16 @@ test("设置界面可切换线框美化", () => {
 	assert.deepEqual(calls, ["disable", "enable"]);
 });
 
-test("设置界面可切换正文线框并关闭", () => {
+test("设置界面可循环切换三种 Assistant Frame 样式并关闭", () => {
 	const { state, component, isClosed } = createPanel();
-	assert.equal(state.config.settings.chromeFrame.assistantFrame, true);
+	assert.equal(state.config.settings.chromeFrame.assistantFrameStyle, "box");
 	component.handleInput("\x1b[B");
 	component.handleInput(" ");
-	assert.equal(state.config.settings.chromeFrame.assistantFrame, false);
+	assert.equal(state.config.settings.chromeFrame.assistantFrameStyle, "horizontal");
+	component.handleInput(" ");
+	assert.equal(state.config.settings.chromeFrame.assistantFrameStyle, "none");
+	component.handleInput(" ");
+	assert.equal(state.config.settings.chromeFrame.assistantFrameStyle, "box");
 	component.handleInput("q");
 	assert.equal(isClosed(), true);
 });

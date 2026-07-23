@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { cloneDefaultSettings, type AlpsPiSettings } from "./settings.ts";
+import { cloneDefaultSettings, type AlpsPiSettings, type AssistantFrameStyle } from "./settings.ts";
 import { normalizeAnimationsSettings } from "./features/animations/settings.ts";
 import { normalizeShortcut, shortcutConflictKey, shortcutUsesSuper, isSupportedSuperShortcut, RESERVED_BOTTOM_INPUT_SHORTCUTS, SHORTCUT_KEYS } from "./features/bottom-input/shortcuts.ts";
 
@@ -138,13 +138,13 @@ function readPiSettingsRoot(path: string): Record<string, any> | undefined {
 	}
 }
 
-/** 只接受已知 boolean 字段，避免坏配置污染运行时。 */
+/** 只接受已知设置值，避免坏配置污染运行时。 */
 function normalizeSettings(value: unknown, defaults: AlpsPiSettings): AlpsPiSettings {
 	const raw = isRecord(value) ? value : {};
 	return {
 		chromeFrame: {
 			enabled: readBoolean(raw.chromeFrame, "enabled", defaults.chromeFrame.enabled),
-			assistantFrame: readBoolean(raw.chromeFrame, "assistantFrame", defaults.chromeFrame.assistantFrame),
+			assistantFrameStyle: readAssistantFrameStyle(raw.chromeFrame, defaults.chromeFrame.assistantFrameStyle),
 			toolCompactMode: readBoolean(raw.chromeFrame, "toolCompactMode", defaults.chromeFrame.toolCompactMode),
 			compactEditTool: readBoolean(raw.chromeFrame, "compactEditTool", defaults.chromeFrame.compactEditTool),
 		},
@@ -193,6 +193,14 @@ function normalizeShortcutSettings(parent: unknown, defaults: AlpsPiSettings["sh
 
 function isReservedShortcut(shortcut: string): boolean {
 	return RESERVED_BOTTOM_INPUT_SHORTCUTS.has(shortcutConflictKey(shortcut));
+}
+
+function readAssistantFrameStyle(parent: unknown, fallback: AssistantFrameStyle): AssistantFrameStyle {
+	if (!isRecord(parent)) return fallback;
+	const style = parent.assistantFrameStyle;
+	if (style === "box" || style === "horizontal" || style === "none") return style;
+	if (typeof parent.assistantFrame === "boolean") return parent.assistantFrame ? "box" : "none";
+	return fallback;
 }
 
 function readBoolean(parent: unknown, key: string, fallback: boolean): boolean {

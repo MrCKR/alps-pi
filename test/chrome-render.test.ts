@@ -35,6 +35,27 @@ test("多行内容每行都有左右边框", () => {
 	}
 });
 
+test("horizontal assistant frame 保留上下边框并移除正文两侧边框", () => {
+	const theme = createFakeTheme();
+	const lines = renderNeonBox("assistant", ["first", "second"], 32, theme, { frameStyle: "horizontal" }).map(stripAnsi);
+
+	assert.match(lines[0]!, /^╭─ ASSISTANT/);
+	assert.equal(lines.at(-1)!, `╰${"─".repeat(30)}╯`);
+	for (const contentLine of lines.slice(1, -1)) {
+		assert.doesNotMatch(contentLine, /│/);
+		assert.equal(visibleWidth(contentLine), 32);
+	}
+});
+
+test("horizontal compact thinking frame 同样移除正文两侧边框", () => {
+	const theme = createFakeTheme();
+	const lines = renderCompactThinkingBox(["thinking"], 32, theme, undefined, { frameStyle: "horizontal" }).map(stripAnsi);
+
+	assert.match(lines[0]!, /^╭─ THINK/);
+	assert.doesNotMatch(lines[1]!, /│/);
+	assert.equal(visibleWidth(lines[1]!), 32);
+});
+
 test("普通 assistant frame 裁剪边界纯空白 content 行并保留中间空行", () => {
 	const theme = createFakeTheme();
 	const lines = renderNeonBox("assistant", ["", "第一段", "", "第二段", ""], 28, theme).map(stripAnsi);

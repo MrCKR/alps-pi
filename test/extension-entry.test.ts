@@ -234,7 +234,7 @@ test("扩展启动时读取持久化设置", () => {
 
 	const settings = (globalThis as any)[PATCH_KEY].config.settings;
 	assert.equal(settings.chromeFrame.enabled, false);
-	assert.equal(settings.chromeFrame.assistantFrame, false);
+	assert.equal(settings.chromeFrame.assistantFrameStyle, "none");
 	assert.equal(settings.chromeFrame.toolCompactMode, false);
 	assert.equal(settings.chromeFrame.compactEditTool, true);
 	assert.equal(settings.fixedBottomEditor.enabled, false);

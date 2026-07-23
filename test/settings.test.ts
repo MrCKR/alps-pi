@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS, cloneDefaultSettings } from "../src/settings.ts";
 
 test("默认开启消息线框和 Tool 极简模式且默认不收起 edit", () => {
 	assert.equal(DEFAULT_SETTINGS.chromeFrame.enabled, true);
+	assert.equal(DEFAULT_SETTINGS.chromeFrame.assistantFrameStyle, "box");
 	assert.equal(DEFAULT_SETTINGS.chromeFrame.toolCompactMode, true);
 	assert.equal(DEFAULT_SETTINGS.chromeFrame.compactEditTool, false);
 });
@@ -35,7 +36,7 @@ test("cloneDefaultSettings 返回包含固定输入框和美化输入框的新�
 	assert.deepEqual(cloned, {
 		chromeFrame: {
 			enabled: true,
-			assistantFrame: true,
+			assistantFrameStyle: "box",
 			toolCompactMode: true,
 			compactEditTool: false,
 		},

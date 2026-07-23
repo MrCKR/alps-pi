@@ -12,6 +12,7 @@ export type RenderBoxOptions = {
 	config?: ChromeConfig;
 	elapsedText?: string;
 	tokenText?: string;
+	frameStyle?: "box" | "horizontal";
 };
 
 const MIN_FULL_BOX_WIDTH = 8;
@@ -83,7 +84,7 @@ function firstCompactThinkingLine(lines: readonly string[]): string {
 	return "Thinking complete";
 }
 
-export function renderCompactThinkingBox(contentLines: readonly string[], width: number, theme: ThemeLike, config: ChromeConfig = DEFAULT_CONFIG, options: Pick<RenderBoxOptions, "elapsedText" | "tokenText"> = {}): string[] {
+export function renderCompactThinkingBox(contentLines: readonly string[], width: number, theme: ThemeLike, config: ChromeConfig = DEFAULT_CONFIG, options: Pick<RenderBoxOptions, "elapsedText" | "tokenText" | "frameStyle"> = {}): string[] {
 	const boxWidth = safeWidth(width);
 	if (boxWidth < MIN_FULL_BOX_WIDTH) return simpleLines(contentLines, boxWidth);
 	const label = "THINK";
@@ -92,9 +93,12 @@ export function renderCompactThinkingBox(contentLines: readonly string[], width:
 	const innerWidth = Math.max(0, boxWidth - 4);
 	const content = truncateToWidth(firstCompactThinkingLine(contentLines), innerWidth, "", false);
 	const padded = padToWidth(content, innerWidth);
+	const contentLine = options.frameStyle === "horizontal"
+		? "  " + styleText(theme, borderToken, padded) + "  "
+		: styleText(theme, borderToken, "│") + " " + styleText(theme, borderToken, padded) + " " + styleText(theme, borderToken, "│");
 	return [
 		buildCompactThinkingTopBorder(label, boxWidth, theme, borderToken, style.label, options),
-		styleText(theme, borderToken, "│") + " " + styleText(theme, borderToken, padded) + " " + styleText(theme, borderToken, "│"),
+		contentLine,
 		buildCompactThinkingBottomBorder(boxWidth, theme, borderToken, options),
 	];
 }
@@ -122,10 +126,11 @@ function wrapContentLine(line: string, innerWidth: number, hasImage: boolean): s
 	return wrapped.length > 0 ? wrapped : [""];
 }
 
-function renderContentLine(line: string, width: number, theme: ThemeLike, borderToken: string, textToken: string): string {
+function renderContentLine(line: string, width: number, theme: ThemeLike, borderToken: string, textToken: string, frameStyle: "box" | "horizontal"): string {
 	const innerWidth = Math.max(0, width - 4);
 	const clipped = truncateToWidth(line, innerWidth, "", false);
 	const padded = padToWidth(clipped, innerWidth);
+	if (frameStyle === "horizontal") return "  " + styleText(theme, textToken, padded) + "  ";
 	return styleText(theme, borderToken, "│") + " " + styleText(theme, textToken, padded) + " " + styleText(theme, borderToken, "│");
 }
 
@@ -200,6 +205,7 @@ export function renderNeonBox(kind: ChromeKind, contentLines: readonly string[],
 	const style = getChromeStyle(kind, { toolName: options.toolName, status }, options.config ?? DEFAULT_CONFIG);
 	const label = getChromeLabel(kind, { toolName: options.toolName, status });
 	const innerWidth = Math.max(1, boxWidth - 4);
+	const frameStyle = options.frameStyle ?? "box";
 
 	const lines: string[] = [];
 	const pushTextLine = (line: string) => {
@@ -218,13 +224,13 @@ export function renderNeonBox(kind: ChromeKind, contentLines: readonly string[],
 				if (partHasImage) {
 					pushContentLine(wrappedLine);
 				} else {
-					pushContentLine(applyLineBackground(theme, style.bg, renderContentLine(wrappedLine, boxWidth, theme, style.border, style.text), boxWidth));
+					pushContentLine(applyLineBackground(theme, style.bg, renderContentLine(wrappedLine, boxWidth, theme, style.border, style.text, frameStyle), boxWidth));
 				}
 			}
 		}
 	}
 	if (lines.length === 1) {
-		pushContentLine(applyLineBackground(theme, style.bg, renderContentLine("", boxWidth, theme, style.border, style.text), boxWidth));
+		pushContentLine(applyLineBackground(theme, style.bg, renderContentLine("", boxWidth, theme, style.border, style.text, frameStyle), boxWidth));
 	}
 	pushTextLine(buildBottomBorder(boxWidth, theme, style.border, options.elapsedText));
 

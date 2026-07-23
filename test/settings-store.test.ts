@@ -12,6 +12,7 @@ test("启动默认设置固定输入框、美化输入框和 Animations 开启",
 	const settings = cloneStartupSettings();
 
 	assert.equal(settings.chromeFrame.enabled, true);
+	assert.equal(settings.chromeFrame.assistantFrameStyle, "box");
 	assert.equal(settings.chromeFrame.toolCompactMode, true);
 	assert.equal(settings.chromeFrame.compactEditTool, false);
 	assert.equal(settings.fixedBottomEditor.enabled, true);
@@ -26,6 +27,7 @@ test("读写持久化设置并合并缺失字段", () => {
 	const file = join(dir, "settings.json");
 	try {
 		const settings = cloneStartupSettings();
+		settings.chromeFrame.assistantFrameStyle = "horizontal";
 		settings.chromeFrame.toolCompactMode = false;
 		settings.chromeFrame.compactEditTool = true;
 		settings.fixedBottomEditor.enabled = false;
@@ -36,15 +38,30 @@ test("读写持久化设置并合并缺失字段", () => {
 
 		const raw = JSON.parse(readFileSync(file, "utf-8"));
 		assert.equal(raw.bottomStatus, undefined);
+		assert.equal(raw.chromeFrame.assistantFrameStyle, "horizontal");
 		const loaded = readPersistedSettings(file);
 		assert.equal(loaded.fixedBottomEditor.enabled, false);
 		assert.equal(loaded.beautifiedInput.enabled, false);
 		assert.equal(loaded.animations.enabled, false);
 		assert.equal(loaded.animations.thinking, "aurora");
 		assert.equal("bottomStatus" in loaded, false);
-		assert.equal(loaded.chromeFrame.assistantFrame, true);
+		assert.equal(loaded.chromeFrame.assistantFrameStyle, "horizontal");
 		assert.equal(loaded.chromeFrame.toolCompactMode, false);
 		assert.equal(loaded.chromeFrame.compactEditTool, true);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("旧 assistantFrame boolean 会迁移为对应 frame style", () => {
+	const dir = mkdtempSync(join(tmpdir(), "alps-pi-settings-"));
+	const file = join(dir, "settings.json");
+	try {
+		writeFileSync(file, JSON.stringify({ chromeFrame: { assistantFrame: false } }), "utf-8");
+		assert.equal(readPersistedSettings(file).chromeFrame.assistantFrameStyle, "none");
+
+		writeFileSync(file, JSON.stringify({ chromeFrame: { assistantFrame: true } }), "utf-8");
+		assert.equal(readPersistedSettings(file).chromeFrame.assistantFrameStyle, "box");
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

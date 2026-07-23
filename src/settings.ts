@@ -1,10 +1,12 @@
 /** 功能：管理 Alps Pi 美化扩展的统一运行时设置 实现者：alps 实现日期：2026-05-27 */
 
+export type AssistantFrameStyle = "box" | "horizontal" | "none";
+
 export type ChromeFrameSettings = {
 	/** 线框美化：控制是否启用消息外框 patch。 */
 	enabled: boolean;
-	/** Assistant 正文线框：控制普通 assistant 回复是否包裹外框。 */
-	assistantFrame: boolean;
+	/** Assistant 正文线框样式：完整外框、仅上下边框或原生无框。 */
+	assistantFrameStyle: AssistantFrameStyle;
 	/** Tool 极简模式：未展开的 LLM tool 只显示第一条有效文本行。 */
 	toolCompactMode: boolean;
 	/** 极简下收起 edit：允许 edit tool 也按极简模式展示。 */
@@ -90,7 +92,7 @@ export type AlpsPiSettings = {
 export const DEFAULT_SETTINGS: AlpsPiSettings = {
 	chromeFrame: {
 		enabled: true,
-		assistantFrame: true,
+		assistantFrameStyle: "box",
 		toolCompactMode: true,
 		compactEditTool: false,
 	},

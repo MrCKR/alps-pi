@@ -617,7 +617,7 @@ test("wrapper 缓存会随 configVersion 变化失效且不依赖 JSON.stringify
 	try {
 		const first = wrapped.call(instance, 32);
 		const callsAfterFirst = theme.calls.length;
-		state.config.settings.chromeFrame.assistantFrame = !state.config.settings.chromeFrame.assistantFrame;
+		state.config.settings.chromeFrame.assistantFrameStyle = "horizontal";
 		const second = wrapped.call(instance, 32);
 
 		assert.equal(stripAnsi(second.join("\n")), stripAnsi(first.join("\n")));
@@ -1013,11 +1013,10 @@ test("工具 inner 返回空数组时仍有状态 box", () => {
 	assert.match(stripAnsi(lines[0]!), /TOOL read ✓/);
 });
 
-test("assistantFrame 关闭时 assistant 返回原始 render，开启时继续 box", () => {
+test("assistantFrameStyle 在 none、horizontal 和 box 间切换", () => {
 	class AssistantComponent {
 		calls: number[] = [];
 
-		// 记录调用宽度，确保关闭正文线框时不先渲染 innerWidth 再 fallback。
 		render(width: number) {
 			this.calls.push(width);
 			return ["hello"];
@@ -1025,13 +1024,24 @@ test("assistantFrame 关闭时 assistant 返回原始 render，开启时继续 b
 	}
 	const wrapped = createWrappedRender("Assistant", "assistant", AssistantComponent.prototype.render, () => createFakeTheme());
 	const state = (globalThis as any)[PATCH_KEY];
-	state.config.settings.chromeFrame.assistantFrame = false;
+
+	state.config.settings.chromeFrame.assistantFrameStyle = "none";
 	const fallbackInstance = new AssistantComponent();
 	assert.deepEqual(wrapped.call(fallbackInstance, 30), ["hello"]);
 	assert.deepEqual(fallbackInstance.calls, [30]);
-	state.config.settings.chromeFrame.assistantFrame = true;
+
+	state.config.settings.chromeFrame.assistantFrameStyle = "horizontal";
+	const horizontalInstance = new AssistantComponent();
+	const horizontalLines = wrapped.call(horizontalInstance, 30).map(stripAnsi);
+	assert.match(horizontalLines[0]!, /ASSISTANT/);
+	assert.doesNotMatch(horizontalLines[1]!, /│/);
+	assert.deepEqual(horizontalInstance.calls, [26]);
+
+	state.config.settings.chromeFrame.assistantFrameStyle = "box";
 	const framedInstance = new AssistantComponent();
-	assert.match(stripAnsi(wrapped.call(framedInstance, 30)[0]!), /ASSISTANT/);
+	const boxLines = wrapped.call(framedInstance, 30).map(stripAnsi);
+	assert.match(boxLines[0]!, /ASSISTANT/);
+	assert.match(boxLines[1]!, /^│/);
 	assert.deepEqual(framedInstance.calls, [26]);
 });
 

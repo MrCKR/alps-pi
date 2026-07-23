@@ -22,7 +22,7 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 	const state = getGlobalPatchState();
 	const persistedSettings = readPersistedSettings();
 	state.config.settings.chromeFrame.enabled = persistedSettings.chromeFrame.enabled;
-	state.config.settings.chromeFrame.assistantFrame = persistedSettings.chromeFrame.assistantFrame;
+	state.config.settings.chromeFrame.assistantFrameStyle = persistedSettings.chromeFrame.assistantFrameStyle;
 	state.config.settings.chromeFrame.toolCompactMode = persistedSettings.chromeFrame.toolCompactMode;
 	state.config.settings.chromeFrame.compactEditTool = persistedSettings.chromeFrame.compactEditTool;
 	state.config.settings.fixedBottomEditor.enabled = persistedSettings.fixedBottomEditor.enabled;

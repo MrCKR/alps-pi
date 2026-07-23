@@ -14,7 +14,7 @@ import { truncateToWidth } from "@earendil-works/pi-tui";
 import { isEmptyMessageChrome, renderCompactThinkingBox, renderNeonBox } from "./chrome.ts";
 import { isChromeFrameDebugEnabled, summarizeChromeFrameCacheKey, writeChromeFrameDebugLog, type ChromeFrameDebugBranch } from "./debug.ts";
 import { containsImageLine, isImageEscapeLine } from "./image.ts";
-import { cloneDefaultSettings, type AlpsPiSettings } from "../../settings.ts";
+import { cloneDefaultSettings, type AlpsPiSettings, type AssistantFrameStyle } from "../../settings.ts";
 import { sanitizeTerminalText } from "../../terminal-sanitizer.ts";
 import { DEFAULT_CONFIG, getChromeStyle, type ChromeConfig, type ChromeKind, type ChromeStatus, type ThemeLike } from "./styles.ts";
 
@@ -321,6 +321,12 @@ function createTrackedObject<T extends object>(value: T, onChange: () => void): 
 	}) as T;
 }
 
+function normalizeAssistantFrameStyle(style: unknown, legacy: unknown, fallback: AssistantFrameStyle): AssistantFrameStyle {
+	if (style === "box" || style === "horizontal" || style === "none") return style;
+	if (typeof legacy === "boolean") return legacy ? "box" : "none";
+	return fallback;
+}
+
 function normalizeSettings(settings: AlpsPiSettings | any, enabled?: boolean): AlpsPiSettings {
 	if (settings?.chromeFrame) {
 		return {
@@ -328,6 +334,7 @@ function normalizeSettings(settings: AlpsPiSettings | any, enabled?: boolean): A
 				...DEFAULT_CONFIG.settings.chromeFrame,
 				...settings.chromeFrame,
 				enabled: typeof enabled === "boolean" ? enabled : Boolean(settings.chromeFrame.enabled ?? DEFAULT_CONFIG.settings.chromeFrame.enabled),
+				assistantFrameStyle: normalizeAssistantFrameStyle(settings.chromeFrame.assistantFrameStyle, settings.chromeFrame.assistantFrame, DEFAULT_CONFIG.settings.chromeFrame.assistantFrameStyle),
 			},
 			fixedBottomEditor: {
 				...DEFAULT_CONFIG.settings.fixedBottomEditor,
@@ -350,7 +357,7 @@ function normalizeSettings(settings: AlpsPiSettings | any, enabled?: boolean): A
 	return {
 		chromeFrame: {
 			enabled: typeof enabled === "boolean" ? enabled : Boolean(settings?.enabled ?? DEFAULT_CONFIG.settings.chromeFrame.enabled),
-			assistantFrame: Boolean(settings?.assistantFrame ?? DEFAULT_CONFIG.settings.chromeFrame.assistantFrame),
+			assistantFrameStyle: normalizeAssistantFrameStyle(settings?.assistantFrameStyle, settings?.assistantFrame, DEFAULT_CONFIG.settings.chromeFrame.assistantFrameStyle),
 			toolCompactMode: Boolean(settings?.toolCompactMode ?? DEFAULT_CONFIG.settings.chromeFrame.toolCompactMode),
 			compactEditTool: Boolean(settings?.compactEditTool ?? DEFAULT_CONFIG.settings.chromeFrame.compactEditTool),
 		},
@@ -896,7 +903,8 @@ export function createWrappedRender(
 			}
 			const state = getGlobalPatchState();
 			const config = state.config;
-			if (kind === "assistant" && !config.settings.chromeFrame.assistantFrame) {
+			const assistantFrameStyle = config.settings.chromeFrame.assistantFrameStyle;
+			if (kind === "assistant" && assistantFrameStyle === "none") {
 				branch = "fallback";
 				const rawFallback = fallback();
 				innerLines = rawFallback;
@@ -923,6 +931,7 @@ export function createWrappedRender(
 			const timing = updateTimingState(instance, renderKind, status, timingKey);
 			const elapsedText = formatElapsedSincePrevious(timing);
 			const tokenText = formatTokenText(estimateFrameTokens(renderKind, instance));
+			const frameStyle = kind === "assistant" && assistantFrameStyle === "horizontal" ? "horizontal" : "box";
 			const cache = (instance as any)[RENDER_CACHE_KEY] as RenderCacheEntry | undefined;
 			if (cache && cache.width === numericWidth && cache.innerKey === innerKey && cache.styleKey === styleKey && cache.elapsedText === elapsedText && cache.tokenText === tokenText) {
 				branch = "cacheHit";
@@ -931,13 +940,14 @@ export function createWrappedRender(
 			const usesCompactThinking = shouldUseCompactThinkingBox(renderKind, instance);
 			branch = usesCompactThinking ? "compactThinking" : "normal";
 			const lines = usesCompactThinking
-				? renderCompactThinkingBox(displayedLines, numericWidth, getTheme(instance), config, { elapsedText, tokenText })
+				? renderCompactThinkingBox(displayedLines, numericWidth, getTheme(instance), config, { elapsedText, tokenText, frameStyle })
 				: renderNeonBox(renderKind, displayedLines, numericWidth, getTheme(instance), {
 					toolName,
 					status,
 					config,
 					elapsedText,
 					tokenText,
+					frameStyle,
 				});
 			(instance as any)[RENDER_CACHE_KEY] = { width: numericWidth, innerKey, styleKey, elapsedText, tokenText, lines } satisfies RenderCacheEntry;
 			return debugReturn ? debugReturn(lines, branch) : lines;

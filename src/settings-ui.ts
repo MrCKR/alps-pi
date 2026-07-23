@@ -2,7 +2,7 @@
 
 import { Container, Key, matchesKey, SettingsList, truncateToWidth, visibleWidth, type Component, type SettingItem, type SettingsListTheme } from "@earendil-works/pi-tui";
 import { type PatchState, disablePatch, enablePatch, getGlobalPatchState } from "./features/chrome-frame/index.ts";
-import type { AlpsPiSettings, FixedBottomEditorStatus } from "./settings.ts";
+import type { AlpsPiSettings, AssistantFrameStyle, FixedBottomEditorStatus } from "./settings.ts";
 import { ANIMATION_FPS_VALUES, ANIMATION_WIDTH_VALUES } from "./features/animations/settings.ts";
 import { getAnimationsForCategory } from "./features/animations/registry.ts";
 import { AnimationsPreviewComponent } from "./features/animations/preview.ts";
@@ -32,6 +32,7 @@ const SHORTCUT_MAX_VISIBLE = 8;
 const ON = "ON";
 const OFF = "OFF";
 const CONFIGURE = "configure";
+const ASSISTANT_FRAME_STYLE_VALUES = ["BOX", "HORIZONTAL", "NONE"];
 
 const SHORTCUT_DESCRIPTIONS: Record<BottomInputShortcutKey, string> = {
 	stashEditor: "暂存或恢复当前输入框内容",
@@ -50,7 +51,7 @@ const SHORTCUT_DESCRIPTIONS: Record<BottomInputShortcutKey, string> = {
 
 type MainSettingId =
 	| "chromeFrame.enabled"
-	| "chromeFrame.assistantFrame"
+	| "chromeFrame.assistantFrameStyle"
 	| "chromeFrame.toolCompactMode"
 	| "chromeFrame.compactEditTool"
 	| "fixedBottomEditor.enabled"
@@ -74,6 +75,16 @@ function booleanLabel(value: boolean): string {
 
 function booleanValue(value: string): boolean {
 	return value === ON;
+}
+
+function assistantFrameStyleLabel(value: AssistantFrameStyle): string {
+	return value.toUpperCase();
+}
+
+function assistantFrameStyleValue(value: string): AssistantFrameStyle {
+	if (value === "HORIZONTAL") return "horizontal";
+	if (value === "NONE") return "none";
+	return "box";
 }
 
 function isShortcutKey(value: unknown): value is BottomInputShortcutKey {
@@ -244,11 +255,11 @@ export class AlpsPiSettingsComponent extends Container {
 				values: [ON, OFF],
 			},
 			{
-				id: "chromeFrame.assistantFrame",
+				id: "chromeFrame.assistantFrameStyle",
 				label: "Assistant Frame",
-				description: "控制 assistant 正文回复是否包线框",
-				currentValue: booleanLabel(settings.chromeFrame.assistantFrame),
-				values: [ON, OFF],
+				description: "设置 assistant 正文为完整框、仅上下边框或无框",
+				currentValue: assistantFrameStyleLabel(settings.chromeFrame.assistantFrameStyle),
+				values: ASSISTANT_FRAME_STYLE_VALUES,
 			},
 			{
 				id: "chromeFrame.toolCompactMode",
@@ -306,8 +317,8 @@ export class AlpsPiSettingsComponent extends Container {
 				}
 				this.syncMainValue(id, state.config.settings.chromeFrame.enabled);
 				return;
-			case "chromeFrame.assistantFrame":
-				state.config.settings.chromeFrame.assistantFrame = booleanValue(newValue);
+			case "chromeFrame.assistantFrameStyle":
+				state.config.settings.chromeFrame.assistantFrameStyle = assistantFrameStyleValue(newValue);
 				this.ops.onSettingsChanged(state.config.settings);
 				return;
 			case "chromeFrame.toolCompactMode":
@@ -339,15 +350,15 @@ export class AlpsPiSettingsComponent extends Container {
 	private syncAllMainValues(): void {
 		const settings = this.ops.getState().config.settings;
 		this.syncMainValue("chromeFrame.enabled", settings.chromeFrame.enabled);
-		this.syncMainValue("chromeFrame.assistantFrame", settings.chromeFrame.assistantFrame);
+		this.syncMainValue("chromeFrame.assistantFrameStyle", settings.chromeFrame.assistantFrameStyle);
 		this.syncMainValue("chromeFrame.toolCompactMode", settings.chromeFrame.toolCompactMode);
 		this.syncMainValue("chromeFrame.compactEditTool", settings.chromeFrame.compactEditTool);
 		this.syncMainValue("fixedBottomEditor.enabled", settings.fixedBottomEditor.enabled);
 		this.syncMainValue("beautifiedInput.enabled", settings.beautifiedInput.enabled);
 	}
 
-	private syncMainValue(id: MainSettingId, value: boolean): void {
-		this.settingsList.updateValue(id, booleanLabel(value));
+	private syncMainValue(id: MainSettingId, value: boolean | AssistantFrameStyle): void {
+		this.settingsList.updateValue(id, typeof value === "boolean" ? booleanLabel(value) : assistantFrameStyleLabel(value));
 	}
 
 	private hasActiveSubmenu(): boolean {
@@ -460,9 +471,10 @@ class AnimationsSettingsSubmenu extends Container {
 	}
 
 	private listThemeToTheme(): ThemeLike {
-		// 预览组件只需要 fg 能力；这里复用 SettingsListTheme 的色彩函数，保持设置页内视觉一致。
+		// 预览组件只消费 fg；bg 保持透明以满足完整主题接口。
 		return {
 			fg: (token: string, text: string) => token === "dim" ? this.listTheme.description(text) : this.listTheme.value(text, false),
+			bg: (_token: string, text: string) => text,
 		};
 	}
 

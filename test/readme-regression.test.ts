@@ -31,7 +31,7 @@ test("README 说明设置面板项目", async () => {
 	const readme = await readReadme();
 
 	assert.match(readme, /Message Frame\s+控制消息、工具与 bash 外框，默认 ON/);
-	assert.match(readme, /Assistant Frame\s+控制 assistant 正文回复是否包线框，默认 ON/);
+	assert.match(readme, /Assistant Frame\s+控制 assistant 正文的 box\/horizontal\/none 样式，默认 BOX/);
 	assert.match(readme, /Compact Tools\s+未展开 tool 只显示第一条有效文本行，默认 ON/);
 	assert.match(readme, /Compact Edit\s+允许 edit tool 也按极简模式展示，默认 OFF/);
 	assert.match(readme, /Fixed Input\s+控制实验性底部固定编辑器 runtime，默认 ON/);
