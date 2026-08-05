@@ -54,7 +54,17 @@ export type BottomInputFrameStatus = {
 	thinking: string | null;
 	context: string | null;
 	elapsed: string | null;
+	tokens: string | null;
 };
+
+export type SessionUsageTotals = {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+};
+
+export const EMPTY_SESSION_USAGE_TOTALS: SessionUsageTotals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
 export type BottomInputStatusRender = {
 	/** 输入框上方状态行；当前由线框内嵌状态承载，保持为空。 */
@@ -106,6 +116,7 @@ export function renderBottomInputStatus(input: BottomInputStatusState): BottomIn
 	const usage = readContextUsageSnapshot(input.ctx, input.isStreaming, input.liveUsage, input.latestAssistantUsage);
 	const modelName = readModelName(input.ctx);
 	const thinking = readThinkingLevel(input.ctx) ?? input.currentThinkingLevel ?? readThinkingLevelFromSession(input.ctx);
+	const totals = readSessionUsageTotals(input.ctx, { excludeLatest: input.isStreaming });
 	const cacheKey = JSON.stringify({
 		width: safeWidth,
 		beautifiedInputEnabled: enabled,
@@ -116,25 +127,72 @@ export function renderBottomInputStatus(input: BottomInputStatusState): BottomIn
 		lastPrompt: input.lastPrompt,
 		extensionStatuses,
 		icons,
+		totals,
+		liveUsage: input.liveUsage,
+		isStreaming: input.isStreaming,
 	});
 
 	return {
 		topLines: [],
 		secondaryLines: renderExtensionStatusLines(extensionStatuses, safeWidth, input.theme),
 		lastPromptLines: renderLastPromptLines(input.lastPrompt, safeWidth, input.theme),
-		frameStatus: renderFrameStatus({ ...input, width: safeWidth, icons }, modelName, thinking, usage),
+		frameStatus: renderFrameStatus({ ...input, width: safeWidth, icons }, modelName, thinking, usage, totals),
 		cacheKey,
 	};
 }
 
 /** 渲染输入框边框要嵌入的 model/thinking/context/elapsed。 */
-export function renderFrameStatus(input: BottomInputStatusState & { icons?: BottomInputIconSet }, modelName = readModelName(input.ctx), thinkingLevel = readThinkingLevel(input.ctx) ?? input.currentThinkingLevel ?? readThinkingLevelFromSession(input.ctx), usage = readContextUsageSnapshot(input.ctx, input.isStreaming, input.liveUsage, input.latestAssistantUsage)): BottomInputFrameStatus {
+export function renderFrameStatus(input: BottomInputStatusState & { icons?: BottomInputIconSet }, modelName = readModelName(input.ctx), thinkingLevel = readThinkingLevel(input.ctx) ?? input.currentThinkingLevel ?? readThinkingLevelFromSession(input.ctx), usage = readContextUsageSnapshot(input.ctx, input.isStreaming, input.liveUsage, input.latestAssistantUsage), totals = readSessionUsageTotals(input.ctx, { excludeLatest: input.isStreaming })): BottomInputFrameStatus {
 	return {
 		model: renderModelSegment(modelName, input.theme, input.icons ?? getBottomInputIcons()),
 		thinking: renderThinkingSegment(thinkingLevel, input.theme),
 		context: renderContextSegment(usage),
 		elapsed: renderElapsedSegment(input.theme, input.sessionStartTime, input.now, input.icons ?? getBottomInputIcons()),
+		tokens: renderTokensSegment(totals, input.isStreaming ? input.liveUsage : null, input.theme),
 	};
+}
+
+export function readSessionUsageTotals(ctx: any, options: { excludeLatest?: boolean } = {}): SessionUsageTotals {
+	const totals: SessionUsageTotals = { ...EMPTY_SESSION_USAGE_TOTALS };
+	const entries = readBranchEntries(ctx);
+	let latestAssistantEntry: any = null;
+	if (options.excludeLatest) {
+		for (const entry of entries) {
+			if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message) || entry.message.role !== "assistant") continue;
+			if (entry.message.stopReason === "error" || entry.message.stopReason === "aborted") continue;
+			latestAssistantEntry = entry;
+		}
+	}
+	for (const entry of entries) {
+		if (!isRecord(entry) || entry === latestAssistantEntry) continue;
+		if (entry.type === "message" && isRecord(entry.message) && entry.message.role === "assistant") {
+			if (entry.message.stopReason === "error" || entry.message.stopReason === "aborted") continue;
+			if (isAssistantUsage(entry.message.usage)) addUsage(totals, entry.message.usage);
+		} else if (entry.type === "compaction" && isAssistantUsage(entry.usage)) {
+			addUsage(totals, entry.usage);
+		}
+	}
+	return totals;
+}
+
+function renderTokensSegment(totals: SessionUsageTotals, liveUsage: AssistantUsage | null, theme: ThemeLike): string | null {
+	const input = totals.input + (liveUsage ? liveUsage.input : 0);
+	const output = totals.output + (liveUsage ? liveUsage.output : 0);
+	const cacheRead = totals.cacheRead + (liveUsage ? liveUsage.cacheRead : 0);
+	if (input + output + cacheRead <= 0) return null;
+	const parts = [
+		safeFg(theme, "muted", `↓${formatTokens(input)}`),
+		safeFg(theme, "accent", `↑${formatTokens(output)}`),
+	];
+	if (cacheRead > 0) parts.push(safeFg(theme, "dim", `⚡${formatTokens(cacheRead)}`));
+	return parts.join(" ");
+}
+
+function addUsage(totals: SessionUsageTotals, usage: AssistantUsage): void {
+	totals.input += usage.input;
+	totals.output += usage.output;
+	totals.cacheRead += usage.cacheRead;
+	totals.cacheWrite += usage.cacheWrite;
 }
 
 /** 渲染输入框下方 extension statuses 聚合行。 */
@@ -226,7 +284,7 @@ export function readContextUsageSnapshot(
 }
 
 function emptyFrameStatus(): BottomInputFrameStatus {
-	return { model: null, thinking: null, context: null, elapsed: null };
+	return { model: null, thinking: null, context: null, elapsed: null, tokens: null };
 }
 
 function renderModelSegment(modelName: string | null, theme: ThemeLike, _icons: BottomInputIconSet): string | null {

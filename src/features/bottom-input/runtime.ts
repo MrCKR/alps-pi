@@ -992,7 +992,7 @@ function isActiveAlpsFooterComponent(component: any): boolean {
 }
 
 function createEmptyStatusLayout(): StatusLayout {
-	return { topLines: [], secondaryLines: [], lastPromptLines: [], frameStatus: { model: null, thinking: null, context: null, elapsed: null } };
+	return { topLines: [], secondaryLines: [], lastPromptLines: [], frameStatus: { model: null, thinking: null, context: null, elapsed: null, tokens: null } };
 }
 
 /** 旧 generation 的 editor factory 被 Pi 迟到调用时返回空组件，避免旧 owner 重新接管 UI。 */
