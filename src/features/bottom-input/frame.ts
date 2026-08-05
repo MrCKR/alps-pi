@@ -28,7 +28,7 @@ export function renderBeautifiedEditorFrame(input: BeautifiedEditorFrameInput): 
 	return [
 		buildTopBorder(width, input.theme, input.status),
 		...editorLines.map((line) => renderContentLine(line, width, input.theme)),
-		buildBottomBorder(width, input.theme, input.status.elapsed),
+		buildBottomBorder(width, input.theme, input.status.elapsed, input.status.tokens),
 	];
 }
 
@@ -45,12 +45,13 @@ function buildTopBorder(width: number, theme: ThemeLike, status: BottomInputFram
 	});
 }
 
-function buildBottomBorder(width: number, theme: ThemeLike, elapsed: string | null): string {
+function buildBottomBorder(width: number, theme: ThemeLike, elapsed: string | null, tokens: string | null): string {
 	return buildBorderLine({
 		width,
 		theme,
 		leftCorner: "╰",
 		rightCorner: "╯",
+		leftLabel: tokens?.trim() || "",
 		rightLabel: elapsed?.trim() || "",
 	});
 }
