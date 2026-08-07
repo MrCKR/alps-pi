@@ -6,12 +6,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/MrCKR/alps-pi.git"
+    "url": "git+https://github.com/ThomasZJ/alps-pi.git"
   },
   "bugs": {
-    "url": "https://github.com/MrCKR/alps-pi/issues"
+    "url": "https://github.com/ThomasZJ/alps-pi/issues"
   },
-  "homepage": "https://github.com/MrCKR/alps-pi#readme",
+  "homepage": "https://github.com/ThomasZJ/alps-pi#readme",
   "keywords": [
     "pi-package",
     "pi-extension",
