@@ -13,9 +13,9 @@ test("package.json 声明 pi 扩展入口且不依赖本机 file 路径", async 
 	assert.match(packageJson.description, /Personal pi beautification extension/);
 	assert.equal(packageJson.private, undefined);
 	assert.equal(packageJson.license, "MIT");
-	assert.equal(packageJson.repository?.url, "git+https://github.com/MrCKR/alps-pi.git");
-	assert.equal(packageJson.homepage, "https://github.com/MrCKR/alps-pi#readme");
-	assert.equal(packageJson.bugs?.url, "https://github.com/MrCKR/alps-pi/issues");
+	assert.equal(packageJson.repository?.url, "git+https://github.com/ThomasZJ/alps-pi.git");
+	assert.equal(packageJson.homepage, "https://github.com/ThomasZJ/alps-pi#readme");
+	assert.equal(packageJson.bugs?.url, "https://github.com/ThomasZJ/alps-pi/issues");
 	assert.ok(packageJson.keywords?.includes("pi-package"));
 	assert.ok(packageJson.keywords?.includes("pi-extension"));
 	assert.ok(packageJson.files?.includes("index.ts"));
@@ -26,8 +26,8 @@ test("package.json 声明 pi 扩展入口且不依赖本机 file 路径", async 
 	assert.deepEqual(packageJson.pi?.themes, ["./themes"]);
 	assert.equal(packageJson.dependencies?.["@earendil-works/pi-coding-agent"], undefined);
 	assert.equal(packageJson.dependencies?.["@earendil-works/pi-tui"], undefined);
-	assert.equal(packageJson.peerDependencies?.["@earendil-works/pi-coding-agent"], ">=0.75.5 <0.76.0");
-	assert.equal(packageJson.peerDependencies?.["@earendil-works/pi-tui"], ">=0.75.5 <0.76.0");
+	assert.match(packageJson.peerDependencies?.["@earendil-works/pi-coding-agent"], /^>=0\.75\.5/);
+	assert.match(packageJson.peerDependencies?.["@earendil-works/pi-tui"], /^>=0\.75\.5/);
 });
 
 test("package 包含 alps 主题且主题 token 完整", async () => {

@@ -2,7 +2,7 @@
 
 import * as PiAgent from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { FixedBottomEditorStatus } from "../../settings.ts";
+import type { FixedBottomEditorStatus, FooterSettings } from "../../settings.ts";
 import { renderFixedEditorCluster } from "./cluster.ts";
 import {
 	FixedBottomEditorCompositor,
@@ -38,13 +38,15 @@ export type BottomInputRuntime = {
 	/** 启用或禁用 fixed editor 总开关。 */
 	setEnabled(enabled: boolean): FixedBottomEditorStatus;
 	/** 同步美化输入框与 fixed editor 两个独立开关。 */
-	configure?(settings: { fixedEnabled?: boolean; beautifiedInputEnabled?: boolean }): FixedBottomEditorStatus;
+	configure?(settings: { fixedEnabled?: boolean; beautifiedInputEnabled?: boolean; footerEnabled?: boolean }): FixedBottomEditorStatus;
 	/** 释放所有运行时资源；重复调用安全。 */
 	dispose(): void;
 	/** 读取 fixed editor 状态快照。 */
 	getStatus(): FixedBottomEditorStatus;
 	/** 切换输入框线框美化。 */
 	setBeautifiedInputEnabled?(enabled: boolean): void;
+	/** 切换 footer 模块开关；关闭后 alps-pi 不再接管 footer。 */
+	setFooterEnabled?(enabled: boolean): FixedBottomEditorStatus;
 	/** 当前 UI session 重新开始计时。 */
 	resetSessionStartTime(): void;
 	/** 记录 latest prompt。 */
@@ -113,6 +115,8 @@ type BottomInputRuntimeOptions = {
 	shortcuts?: Partial<BottomInputShortcuts>;
 	/** 测试注入点：生产环境使用 Pi 内置剪贴板 API。 */
 	copyToClipboard?: (text: string) => Promise<void> | void;
+	/** 初始 footer 模块开关；默认 true。 */
+	footerEnabled?: boolean;
 };
 
 const FALLBACK_EDITOR_THEME = {
@@ -141,6 +145,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	private generation = 0;
 	private enabled = false;
 	private beautifiedInputEnabled = true;
+	private footerEnabled = true;
 	private installed = false;
 	private failure: string | undefined;
 	private layoutInstalled = false;
@@ -178,6 +183,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		this.copyToClipboardImpl = options.copyToClipboard ?? ((PiAgent as { copyToClipboard?: (text: string) => Promise<void> | void }).copyToClipboard ?? (() => undefined));
 		this.sessionStartTime = this.now();
 		this.shortcuts = resolveBottomInputShortcuts(options.shortcuts);
+		this.footerEnabled = options.footerEnabled !== false;
 	}
 
 	/** 保存当前 UI session context；无 UI 的子代理事件不得覆盖或释放当前输入框布局。 */
@@ -215,12 +221,15 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		return this.configure({ fixedEnabled: enabled });
 	}
 
-	configure(settings: { fixedEnabled?: boolean; beautifiedInputEnabled?: boolean }): FixedBottomEditorStatus {
+	configure(settings: { fixedEnabled?: boolean; beautifiedInputEnabled?: boolean; footerEnabled?: boolean }): FixedBottomEditorStatus {
 		if (typeof settings.beautifiedInputEnabled === "boolean") {
 			this.beautifiedInputEnabled = settings.beautifiedInputEnabled;
 		}
+		if (typeof settings.footerEnabled === "boolean") {
+			this.footerEnabled = settings.footerEnabled;
+		}
 		const fixedEnabled = settings.fixedEnabled ?? this.enabled;
-		return this.syncLayout(fixedEnabled, this.beautifiedInputEnabled);
+		return this.syncLayout(fixedEnabled, this.beautifiedInputEnabled, this.footerEnabled);
 	}
 
 	dispose(): void {
@@ -251,6 +260,10 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 
 	setBeautifiedInputEnabled(enabled: boolean): void {
 		this.configure({ beautifiedInputEnabled: enabled });
+	}
+
+	setFooterEnabled(enabled: boolean): FixedBottomEditorStatus {
+		return this.configure({ footerEnabled: enabled });
 	}
 
 	resetSessionStartTime(): void {
@@ -397,11 +410,12 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	}
 
 	/** 同步 editor layer 与 fixed compositor layer；两个开关互不隐式改写。 */
-	private syncLayout(fixedEnabled: boolean, beautifiedInputEnabled: boolean): FixedBottomEditorStatus {
+	private syncLayout(fixedEnabled: boolean, beautifiedInputEnabled: boolean, footerEnabled: boolean): FixedBottomEditorStatus {
 		this.enabled = fixedEnabled;
 		this.beautifiedInputEnabled = beautifiedInputEnabled;
+		this.footerEnabled = footerEnabled;
 		this.resetLayoutCache();
-		this.debug("sync_layout", this.ctx, { details: { fixedEnabled, beautifiedInputEnabled } });
+		this.debug("sync_layout", this.ctx, { details: { fixedEnabled, beautifiedInputEnabled, footerEnabled } });
 
 		const needsLayout = fixedEnabled || beautifiedInputEnabled;
 		if (!needsLayout) return this.disable();
@@ -430,13 +444,15 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 				this.installInputListener();
 				this.startClockTimer();
 
-				this.creatingFooter = true;
-				try {
-					const footerFactory = this.createFooterFactory(layoutGeneration);
-					this.footerFactory = footerFactory;
-					ui.setFooter!(footerFactory);
-				} finally {
-					this.creatingFooter = false;
+				if (footerEnabled) {
+					this.creatingFooter = true;
+					try {
+						const footerFactory = this.createFooterFactory(layoutGeneration);
+						this.footerFactory = footerFactory;
+						ui.setFooter!(footerFactory);
+					} finally {
+						this.creatingFooter = false;
+					}
 				}
 			} else if (fixedEnabled && this.tui && !this.installed) {
 				this.installCompositor(this.tui);
@@ -464,6 +480,23 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 				} else {
 					this.tui?.requestRender?.(true);
 				}
+			} else if (footerEnabled && !this.footerComponent && this.layoutInstalled) {
+				// footer 从禁用切换回启用：重新安装 footer factory。
+				this.creatingFooter = true;
+				try {
+					const footerFactory = this.createFooterFactory(this.layoutOwnerGeneration ?? this.generation);
+					this.footerFactory = footerFactory;
+					ui.setFooter!(footerFactory);
+				} finally {
+					this.creatingFooter = false;
+				}
+			} else if (!footerEnabled && this.footerComponent) {
+				// footer 从启用切换为禁用：释放 footer 所有权。
+				this.clearFooterIfOwned(ui);
+				this.footerFactory = undefined;
+				this.footerComponent = undefined;
+				this.restoreFooterDataHook();
+				this.footerData = undefined;
 			}
 			this.requestRender();
 			return this.toStatus();
@@ -515,7 +548,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		if (typeof ui.getEditorComponent !== "function") {
 			throw new Error("bottom input expected ctx.ui.getEditorComponent() to exist");
 		}
-		if (typeof ui.setFooter !== "function") {
+		if (this.footerEnabled && typeof ui.setFooter !== "function") {
 			throw new Error("bottom input expected ctx.ui.setFooter(factory) to exist");
 		}
 	}

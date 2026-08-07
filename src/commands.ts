@@ -93,6 +93,10 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 				getGlobalPatchState().config.settings.beautifiedInput.enabled = enabled;
 				return undefined;
 			});
+			const setFooterEnabled = ops.setFooterEnabled ?? ((enabled: boolean) => {
+				getGlobalPatchState().config.settings.footer.enabled = enabled;
+				return undefined;
+			});
 			const onSettingsChanged = ops.onSettingsChanged ?? ((settings: AlpsPiSettings) => {
 				getGlobalPatchState().config.settings.shortcuts = { ...settings.shortcuts };
 			});
@@ -159,7 +163,13 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 									refocusSettingsOverlay();
 									return result;
 								},
-								setBeautifiedInputEnabled: (enabled) => {
+								setFooterEnabled: (enabled) => {
+								// footer 模块切换依赖当前 interactive session；ctx stale 时当前设置面板回调失效。
+								const result = runIfActive(() => setFooterEnabled(enabled, ctx));
+								refocusSettingsOverlay();
+								return result;
+							},
+							setBeautifiedInputEnabled: (enabled) => {
 									const result = runIfActive(() => setBeautifiedInputEnabled(enabled, ctx));
 									refocusSettingsOverlay();
 									return result;

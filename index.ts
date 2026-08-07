@@ -27,6 +27,7 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 	state.config.settings.chromeFrame.compactEditTool = persistedSettings.chromeFrame.compactEditTool;
 	state.config.settings.fixedBottomEditor.enabled = persistedSettings.fixedBottomEditor.enabled;
 	state.config.settings.beautifiedInput.enabled = persistedSettings.beautifiedInput.enabled;
+	state.config.settings.footer.enabled = persistedSettings.footer.enabled;
 	state.config.settings.animations = { ...persistedSettings.animations };
 	state.config.settings.shortcuts = { ...persistedSettings.shortcuts };
 	configureBottomInputDebug(undefined);
@@ -52,6 +53,7 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 				? bottomInputRuntime.configure({
 					fixedEnabled: enabled,
 					beautifiedInputEnabled: state.config.settings.beautifiedInput.enabled,
+					footerEnabled: state.config.settings.footer.enabled,
 				})
 				: bottomInputRuntime.setEnabled(enabled);
 			if (!bottomInputRuntime.configure) bottomInputRuntime.setBeautifiedInputEnabled?.(state.config.settings.beautifiedInput.enabled);
@@ -65,8 +67,21 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 			const status = bottomInputRuntime.configure?.({
 				fixedEnabled: state.config.settings.fixedBottomEditor.enabled,
 				beautifiedInputEnabled: enabled,
+				footerEnabled: state.config.settings.footer.enabled,
 			});
 			if (!bottomInputRuntime.configure) bottomInputRuntime.setBeautifiedInputEnabled?.(enabled);
+			writePersistedSettings(state.config.settings);
+			return status;
+		},
+		setFooterEnabled: (enabled, ctx) => {
+			const state = getGlobalPatchState();
+			state.config.settings.footer.enabled = enabled;
+			bottomInputRuntime.bindSession(ctx);
+			const status = bottomInputRuntime.configure?.({
+				fixedEnabled: state.config.settings.fixedBottomEditor.enabled,
+				beautifiedInputEnabled: state.config.settings.beautifiedInput.enabled,
+				footerEnabled: enabled,
+			});
 			writePersistedSettings(state.config.settings);
 			return status;
 		},
@@ -91,6 +106,7 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 			? bottomInputRuntime.configure({
 				fixedEnabled: state.config.settings.fixedBottomEditor.enabled,
 				beautifiedInputEnabled: state.config.settings.beautifiedInput.enabled,
+				footerEnabled: state.config.settings.footer.enabled,
 			})
 			: bottomInputRuntime.setEnabled(state.config.settings.fixedBottomEditor.enabled);
 		if (!bottomInputRuntime.configure) bottomInputRuntime.setBeautifiedInputEnabled?.(state.config.settings.beautifiedInput.enabled);
@@ -177,6 +193,7 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 			state.config.settings.chromeFrame.compactEditTool = persisted.chromeFrame.compactEditTool;
 			state.config.settings.fixedBottomEditor.enabled = persisted.fixedBottomEditor.enabled;
 			state.config.settings.beautifiedInput.enabled = persisted.beautifiedInput.enabled;
+			state.config.settings.footer.enabled = persisted.footer.enabled;
 			state.config.settings.animations = { ...persisted.animations };
 			state.config.settings.shortcuts = { ...persisted.shortcuts };
 			writePersistedSettings(state.config.settings);

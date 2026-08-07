@@ -6,12 +6,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/MrCKR/alps-pi.git"
+    "url": "git+https://github.com/ThomasZJ/alps-pi.git"
   },
   "bugs": {
-    "url": "https://github.com/MrCKR/alps-pi/issues"
+    "url": "https://github.com/ThomasZJ/alps-pi/issues"
   },
-  "homepage": "https://github.com/MrCKR/alps-pi#readme",
+  "homepage": "https://github.com/ThomasZJ/alps-pi#readme",
   "keywords": [
     "pi-package",
     "pi-extension",
@@ -39,11 +39,11 @@
     "test:watch": "node --test --watch --experimental-strip-types test/**/*.test.ts"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.75.5 <0.76.0",
-    "@earendil-works/pi-tui": ">=0.75.5 <0.76.0"
+    "@earendil-works/pi-coding-agent": ">=0.75.5",
+    "@earendil-works/pi-tui": ">=0.75.5"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.75.5",
-    "@earendil-works/pi-tui": "^0.75.5"
+    "@earendil-works/pi-coding-agent": "^0.84.1",
+    "@earendil-works/pi-tui": "^0.80.10"
   }
 }

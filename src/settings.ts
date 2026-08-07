@@ -65,6 +65,11 @@ export type BottomInputShortcutSettings = {
 	jumpChatBottom: string;
 };
 
+export type FooterSettings = {
+	/** Footer 模块开关；禁用后 alps-pi 不再接管 footer，避免与 pi-open-tui 等扩展冲突。 */
+	enabled: boolean;
+};
+
 export type FixedBottomEditorStatus = {
 	/** 用户期望的运行时开关状态。 */
 	enabled: boolean;
@@ -81,6 +86,8 @@ export type AlpsPiSettings = {
 	fixedBottomEditor: FixedBottomEditorSettings;
 	/** 输入框线框美化配置。 */
 	beautifiedInput: BeautifiedInputSettings;
+	/** Footer 模块配置。 */
+	footer: FooterSettings;
 	/** 内置 Animations 配置。 */
 	animations: AnimationsSettings;
 	/** 底部输入框快捷键配置。 */
@@ -98,6 +105,9 @@ export const DEFAULT_SETTINGS: AlpsPiSettings = {
 		enabled: true,
 	},
 	beautifiedInput: {
+		enabled: true,
+	},
+	footer: {
 		enabled: true,
 	},
 	animations: {
@@ -130,6 +140,7 @@ export function cloneDefaultSettings(): AlpsPiSettings {
 		chromeFrame: { ...DEFAULT_SETTINGS.chromeFrame },
 		fixedBottomEditor: { ...DEFAULT_SETTINGS.fixedBottomEditor },
 		beautifiedInput: { ...DEFAULT_SETTINGS.beautifiedInput },
+		footer: { ...DEFAULT_SETTINGS.footer },
 		animations: { ...DEFAULT_SETTINGS.animations },
 		shortcuts: { ...DEFAULT_SETTINGS.shortcuts },
 	};

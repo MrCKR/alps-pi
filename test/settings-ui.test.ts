@@ -322,11 +322,11 @@ test("快捷键设置保存后关闭捕获并返回快捷键页", () => {
 });
 
 function openAnimationsSettings(component: AlpsPiSettingsComponent): void {
-	for (let i = 0; i < 6; i++) component.handleInput("\x1b[B");
+	for (let i = 0; i < 7; i++) component.handleInput("\x1b[B");
 	component.handleInput(" ");
 }
 
 function openShortcutSettings(component: AlpsPiSettingsComponent): void {
-	for (let i = 0; i < 7; i++) component.handleInput("\x1b[B");
+	for (let i = 0; i < 8; i++) component.handleInput("\x1b[B");
 	component.handleInput(" ");
 }

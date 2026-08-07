@@ -22,6 +22,7 @@ export type SettingsPanelOps = {
 	disableChromeFrame?: () => PatchState;
 	setFixedBottomEditorEnabled?: (enabled: boolean) => FixedBottomEditorStatus | void;
 	setBeautifiedInputEnabled?: (enabled: boolean) => FixedBottomEditorStatus | void;
+	setFooterEnabled?: (enabled: boolean) => FixedBottomEditorStatus | void;
 	onSettingsChanged?: (settings: AlpsPiSettings) => void;
 	requestRender?: () => void;
 };
@@ -55,6 +56,7 @@ type MainSettingId =
 	| "chromeFrame.compactEditTool"
 	| "fixedBottomEditor.enabled"
 	| "beautifiedInput.enabled"
+	| "footer.enabled"
 	| "animations"
 	| "shortcuts";
 
@@ -201,6 +203,7 @@ export class AlpsPiSettingsComponent extends Container {
 			disableChromeFrame: ops.disableChromeFrame ?? (() => disablePatch()),
 			setFixedBottomEditorEnabled: ops.setFixedBottomEditorEnabled ?? (() => undefined),
 			setBeautifiedInputEnabled: ops.setBeautifiedInputEnabled ?? (() => undefined),
+			setFooterEnabled: ops.setFooterEnabled ?? (() => undefined),
 			onSettingsChanged: ops.onSettingsChanged ?? (() => undefined),
 			requestRender: ops.requestRender ?? (() => undefined),
 		};
@@ -278,6 +281,13 @@ export class AlpsPiSettingsComponent extends Container {
 				currentValue: booleanLabel(settings.beautifiedInput.enabled),
 				values: [ON, OFF],
 			},
+		{
+				id: "footer.enabled",
+				label: "Footer",
+				description: "控制 footer 模块；禁用后不接管 footer，避免与其他扩展冲突",
+				currentValue: booleanLabel(settings.footer.enabled),
+				values: [ON, OFF],
+			},
 			{
 				id: "animations",
 				label: "Animations",
@@ -333,6 +343,12 @@ export class AlpsPiSettingsComponent extends Container {
 				this.syncMainValue("fixedBottomEditor.enabled", state.config.settings.fixedBottomEditor.enabled);
 				return;
 			}
+			case "footer.enabled": {
+				state.config.settings.footer.enabled = booleanValue(newValue);
+				this.ops.setFooterEnabled(state.config.settings.footer.enabled);
+				this.syncMainValue(id, state.config.settings.footer.enabled);
+				return;
+			}
 		}
 	}
 
@@ -344,6 +360,7 @@ export class AlpsPiSettingsComponent extends Container {
 		this.syncMainValue("chromeFrame.compactEditTool", settings.chromeFrame.compactEditTool);
 		this.syncMainValue("fixedBottomEditor.enabled", settings.fixedBottomEditor.enabled);
 		this.syncMainValue("beautifiedInput.enabled", settings.beautifiedInput.enabled);
+		this.syncMainValue("footer.enabled", settings.footer.enabled);
 	}
 
 	private syncMainValue(id: MainSettingId, value: boolean): void {
