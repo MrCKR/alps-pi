@@ -257,7 +257,7 @@ test("设置页内 Animations Preview 使用 overlay tui.requestRender 驱动动
 	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
 	await Promise.resolve();
 	const component = harness.customCalls[0].component;
-	for (let i = 0; i < 6; i++) component.handleInput("\x1b[B");
+	for (let i = 0; i < 7; i++) component.handleInput("\x1b[B");
 	component.handleInput(" ");
 	for (let i = 0; i < 7; i++) component.handleInput("\x1b[B");
 	component.handleInput(" ");

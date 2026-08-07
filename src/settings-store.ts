@@ -16,6 +16,7 @@ export function cloneStartupSettings(): AlpsPiSettings {
 	settings.chromeFrame.enabled = true;
 	settings.fixedBottomEditor.enabled = true;
 	settings.beautifiedInput.enabled = true;
+	settings.footer.enabled = true;
 	settings.animations.enabled = true;
 	return settings;
 }
@@ -87,6 +88,7 @@ export function cloneSettings(settings: AlpsPiSettings): AlpsPiSettings {
 		chromeFrame: { ...settings.chromeFrame },
 		fixedBottomEditor: { ...settings.fixedBottomEditor },
 		beautifiedInput: { ...settings.beautifiedInput },
+		footer: { ...settings.footer },
 		animations: { ...settings.animations },
 		shortcuts: { ...settings.shortcuts },
 	};
@@ -153,6 +155,9 @@ function normalizeSettings(value: unknown, defaults: AlpsPiSettings): AlpsPiSett
 		},
 		beautifiedInput: {
 			enabled: readBoolean(raw.beautifiedInput, "enabled", defaults.beautifiedInput.enabled),
+		},
+		footer: {
+			enabled: readBoolean(raw.footer, "enabled", defaults.footer.enabled),
 		},
 		animations: normalizeAnimationsSettings(raw.animations, defaults.animations),
 		shortcuts: normalizeShortcutSettings(raw.shortcuts, defaults.shortcuts),

@@ -337,6 +337,10 @@ function normalizeSettings(settings: AlpsPiSettings | any, enabled?: boolean): A
 				...DEFAULT_CONFIG.settings.beautifiedInput,
 				...(settings.beautifiedInput ?? {}),
 			},
+			footer: {
+				...DEFAULT_CONFIG.settings.footer,
+				...(settings.footer ?? {}),
+			},
 			animations: {
 				...DEFAULT_CONFIG.settings.animations,
 				...(settings.animations ?? {}),
@@ -360,6 +364,9 @@ function normalizeSettings(settings: AlpsPiSettings | any, enabled?: boolean): A
 		beautifiedInput: {
 			enabled: Boolean(settings?.beautifiedInput?.enabled ?? DEFAULT_CONFIG.settings.beautifiedInput.enabled),
 		},
+		footer: {
+			enabled: Boolean(settings?.footer?.enabled ?? DEFAULT_CONFIG.settings.footer.enabled),
+		},
 		animations: {
 			...DEFAULT_CONFIG.settings.animations,
 			...(settings?.animations ?? {}),
@@ -380,6 +387,7 @@ function createTrackedSettings(settings: AlpsPiSettings, onChange: () => void, e
 	normalized.chromeFrame = createTrackedObject(normalized.chromeFrame, onChange);
 	normalized.fixedBottomEditor = createTrackedObject(normalized.fixedBottomEditor, onChange);
 	normalized.beautifiedInput = createTrackedObject(normalized.beautifiedInput, onChange);
+	normalized.footer = createTrackedObject(normalized.footer, onChange);
 	normalized.animations = createTrackedObject(normalized.animations, onChange);
 	normalized.shortcuts = createTrackedObject(normalized.shortcuts, onChange);
 	return createTrackedObject(normalized, onChange);

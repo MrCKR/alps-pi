@@ -29,6 +29,7 @@ test("cloneDefaultSettings 返回包含固定输入框和美化输入框的新�
 	assert.notEqual(cloned.chromeFrame, DEFAULT_SETTINGS.chromeFrame);
 	assert.notEqual(cloned.fixedBottomEditor, DEFAULT_SETTINGS.fixedBottomEditor);
 	assert.notEqual(cloned.beautifiedInput, DEFAULT_SETTINGS.beautifiedInput);
+	assert.notEqual(cloned.footer, DEFAULT_SETTINGS.footer);
 	assert.notEqual(cloned.animations, DEFAULT_SETTINGS.animations);
 	assert.notEqual(cloned.shortcuts, DEFAULT_SETTINGS.shortcuts);
 	assert.equal("bottomStatus" in cloned, false);
@@ -43,6 +44,9 @@ test("cloneDefaultSettings 返回包含固定输入框和美化输入框的新�
 			enabled: true,
 		},
 		beautifiedInput: {
+			enabled: true,
+		},
+		footer: {
 			enabled: true,
 		},
 		animations: {
