@@ -1,15 +1,15 @@
 /** 功能：提供 /alps-pi 官方 SettingsList 设置界面，集中管理功能开关与底部输入框快捷键 实现者：alps 实现日期：2026-05-28 */
 
 import { Container, Key, matchesKey, SettingsList, truncateToWidth, visibleWidth, type Component, type SettingItem, type SettingsListTheme } from "@earendil-works/pi-tui";
-import { type PatchState, disablePatch, enablePatch, getGlobalPatchState } from "./features/chrome-frame/index.ts";
-import type { AlpsPiSettings, FixedBottomEditorStatus } from "./settings.ts";
+import { type PatchState, getGlobalPatchState, setChromeFramePreference } from "./features/chrome-frame/index.ts";
+import type { AlpsPiSettings } from "./settings.ts";
 import { ANIMATION_FPS_VALUES, ANIMATION_WIDTH_VALUES } from "./features/animations/settings.ts";
 import { getAnimationsForCategory } from "./features/animations/registry.ts";
 import { AnimationsPreviewComponent } from "./features/animations/preview.ts";
 import type { ThemeLike } from "./features/chrome-frame/styles.ts";
 import {
 	DEFAULT_BOTTOM_INPUT_SHORTCUTS,
-	SHORTCUT_KEYS,
+	EDITABLE_BOTTOM_INPUT_SHORTCUT_KEYS,
 	SHORTCUT_LABELS,
 	shortcutFromRawInput,
 	validateShortcutChange,
@@ -20,8 +20,7 @@ export type SettingsPanelOps = {
 	getState?: () => PatchState;
 	enableChromeFrame?: () => PatchState;
 	disableChromeFrame?: () => PatchState;
-	setFixedBottomEditorEnabled?: (enabled: boolean) => FixedBottomEditorStatus | void;
-	setBeautifiedInputEnabled?: (enabled: boolean) => FixedBottomEditorStatus | void;
+	setBeautifiedInputEnabled?: (enabled: boolean) => void;
 	onSettingsChanged?: (settings: AlpsPiSettings) => void;
 	requestRender?: () => void;
 };
@@ -53,7 +52,6 @@ type MainSettingId =
 	| "chromeFrame.assistantFrame"
 	| "chromeFrame.toolCompactMode"
 	| "chromeFrame.compactEditTool"
-	| "fixedBottomEditor.enabled"
 	| "beautifiedInput.enabled"
 	| "animations"
 	| "shortcuts";
@@ -77,7 +75,7 @@ function booleanValue(value: string): boolean {
 }
 
 function isShortcutKey(value: unknown): value is BottomInputShortcutKey {
-	return typeof value === "string" && (SHORTCUT_KEYS as readonly string[]).includes(value);
+	return typeof value === "string" && (EDITABLE_BOTTOM_INPUT_SHORTCUT_KEYS as readonly string[]).includes(value);
 }
 
 function createNativeSettingsListTheme(theme: ThemeLike): SettingsListTheme {
@@ -197,9 +195,8 @@ export class AlpsPiSettingsComponent extends Container {
 		this.done = done;
 		this.ops = {
 			getState: ops.getState ?? getGlobalPatchState,
-			enableChromeFrame: ops.enableChromeFrame ?? (() => enablePatch()),
-			disableChromeFrame: ops.disableChromeFrame ?? (() => disablePatch()),
-			setFixedBottomEditorEnabled: ops.setFixedBottomEditorEnabled ?? (() => undefined),
+			enableChromeFrame: ops.enableChromeFrame ?? (() => setChromeFramePreference(true)),
+			disableChromeFrame: ops.disableChromeFrame ?? (() => setChromeFramePreference(false)),
 			setBeautifiedInputEnabled: ops.setBeautifiedInputEnabled ?? (() => undefined),
 			onSettingsChanged: ops.onSettingsChanged ?? (() => undefined),
 			requestRender: ops.requestRender ?? (() => undefined),
@@ -265,13 +262,6 @@ export class AlpsPiSettingsComponent extends Container {
 				values: [ON, OFF],
 			},
 			{
-				id: "fixedBottomEditor.enabled",
-				label: "Fixed Input",
-				description: "控制底部固定编辑器 runtime",
-				currentValue: booleanLabel(settings.fixedBottomEditor.enabled),
-				values: [ON, OFF],
-			},
-			{
 				id: "beautifiedInput.enabled",
 				label: "Beautified Input",
 				description: "控制输入框线框与嵌入边框状态",
@@ -318,19 +308,10 @@ export class AlpsPiSettingsComponent extends Container {
 				state.config.settings.chromeFrame.compactEditTool = booleanValue(newValue);
 				this.ops.onSettingsChanged(state.config.settings);
 				return;
-			case "fixedBottomEditor.enabled": {
-				const nextEnabled = booleanValue(newValue);
-				// 开关显示用户偏好；runtime failure 仅作为状态返回，不回滚为 OFF。
-				state.config.settings.fixedBottomEditor.enabled = nextEnabled;
-				this.ops.setFixedBottomEditorEnabled(nextEnabled);
-				this.syncMainValue(id, state.config.settings.fixedBottomEditor.enabled);
-				return;
-			}
 			case "beautifiedInput.enabled": {
 				state.config.settings.beautifiedInput.enabled = booleanValue(newValue);
 				this.ops.setBeautifiedInputEnabled(state.config.settings.beautifiedInput.enabled);
 				this.syncMainValue(id, state.config.settings.beautifiedInput.enabled);
-				this.syncMainValue("fixedBottomEditor.enabled", state.config.settings.fixedBottomEditor.enabled);
 				return;
 			}
 		}
@@ -342,7 +323,6 @@ export class AlpsPiSettingsComponent extends Container {
 		this.syncMainValue("chromeFrame.assistantFrame", settings.chromeFrame.assistantFrame);
 		this.syncMainValue("chromeFrame.toolCompactMode", settings.chromeFrame.toolCompactMode);
 		this.syncMainValue("chromeFrame.compactEditTool", settings.chromeFrame.compactEditTool);
-		this.syncMainValue("fixedBottomEditor.enabled", settings.fixedBottomEditor.enabled);
 		this.syncMainValue("beautifiedInput.enabled", settings.beautifiedInput.enabled);
 	}
 
@@ -463,6 +443,7 @@ class AnimationsSettingsSubmenu extends Container {
 		// 预览组件只需要 fg 能力；这里复用 SettingsListTheme 的色彩函数，保持设置页内视觉一致。
 		return {
 			fg: (token: string, text: string) => token === "dim" ? this.listTheme.description(text) : this.listTheme.value(text, false),
+			bg: (_token: string, text: string) => text,
 		};
 	}
 
@@ -570,7 +551,7 @@ class ShortcutSettingsSubmenu extends Container {
 
 	private createShortcutItems(): SettingItem[] {
 		const shortcuts = this.ops.getState().config.settings.shortcuts;
-		return SHORTCUT_KEYS.map((key) => ({
+		return EDITABLE_BOTTOM_INPUT_SHORTCUT_KEYS.map((key) => ({
 			id: key,
 			label: SHORTCUT_LABELS[key],
 			description: SHORTCUT_DESCRIPTIONS[key],

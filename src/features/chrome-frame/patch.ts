@@ -1,6 +1,15 @@
 /** 功能：实现可回滚、幂等的 pi TUI component monkey patch 生命周期 实现者：alps 实现日期：2026-05-26 */
 
-import {
+import { truncateToWidth } from "@earendil-works/pi-tui";
+import { PI_COMPONENTS, inspectPiRuntimeCapabilities, type PiRuntimeCapabilities } from "../../pi-compat.ts";
+import { isEmptyMessageChrome, renderCompactThinkingBox, renderNeonBox } from "./chrome.ts";
+import { isChromeFrameDebugEnabled, summarizeChromeFrameCacheKey, writeChromeFrameDebugLog, type ChromeFrameDebugBranch } from "./debug.ts";
+import { containsImageLine, isImageEscapeLine } from "./image.ts";
+import { cloneDefaultSettings, type AlpsPiSettings } from "../../settings.ts";
+import { sanitizeTerminalText } from "../../terminal-sanitizer.ts";
+import { DEFAULT_CONFIG, getChromeStyle, type ChromeConfig, type ChromeKind, type ChromeStatus, type ThemeLike } from "./styles.ts";
+
+const {
 	AssistantMessageComponent,
 	BashExecutionComponent,
 	BranchSummaryMessageComponent,
@@ -9,18 +18,12 @@ import {
 	SkillInvocationMessageComponent,
 	ToolExecutionComponent,
 	UserMessageComponent,
-} from "@earendil-works/pi-coding-agent";
-import { truncateToWidth } from "@earendil-works/pi-tui";
-import { isEmptyMessageChrome, renderCompactThinkingBox, renderNeonBox } from "./chrome.ts";
-import { isChromeFrameDebugEnabled, summarizeChromeFrameCacheKey, writeChromeFrameDebugLog, type ChromeFrameDebugBranch } from "./debug.ts";
-import { containsImageLine, isImageEscapeLine } from "./image.ts";
-import { cloneDefaultSettings, type AlpsPiSettings } from "../../settings.ts";
-import { sanitizeTerminalText } from "../../terminal-sanitizer.ts";
-import { DEFAULT_CONFIG, getChromeStyle, type ChromeConfig, type ChromeKind, type ChromeStatus, type ThemeLike } from "./styles.ts";
+} = PI_COMPONENTS;
 
 export const PATCH_KEY = Symbol.for("alps.pi.patch.v1");
 
 export type PatchState = {
+	/** 实际 runtime patch 是否已安装；不等同于持久化用户偏好。 */
 	enabled: boolean;
 	originals: Map<string, Function>;
 	patched: Set<string>;
@@ -371,10 +374,6 @@ function normalizeSettings(settings: AlpsPiSettings | any, enabled?: boolean): A
 	};
 }
 
-function syncChromeFrameEnabled(state: PatchState): void {
-	state.config.settings.chromeFrame.enabled = state.enabled;
-}
-
 function createTrackedSettings(settings: AlpsPiSettings, onChange: () => void, enabled?: boolean): AlpsPiSettings {
 	const normalized = normalizeSettings(settings, enabled);
 	normalized.chromeFrame = createTrackedObject(normalized.chromeFrame, onChange);
@@ -532,6 +531,7 @@ function extractMarkdownTextFromChildren(value: unknown, seen = new Set<object>(
 
 /** 估算 user frame 对应的原始用户消息字符数。 */
 function estimateUserContentChars(instance: any): number | undefined {
+	if (typeof instance?.text === "string") return instance.text.length;
 	const direct = estimateTextAndImageContentChars(instance?.message?.content);
 	if (direct !== undefined) return direct;
 	return extractMarkdownTextFromChildren(instance)?.length;
@@ -543,19 +543,6 @@ function estimateToolContentChars(instance: any): number | undefined {
 	const resultChars = estimateTextAndImageContentChars(instance?.result?.content);
 	if (resultChars !== undefined) chars += resultChars;
 	return chars;
-}
-
-/** 估算 bash frame 的命令与上下文输出字符数，排除 !! 命令。 */
-function estimateBashContentChars(instance: any): number | undefined {
-	if (instance?.excludeFromContext === true || instance?.message?.excludeFromContext === true) return 0;
-	const command = typeof instance?.command === "string" ? instance.command : undefined;
-	const output = typeof instance?.output === "string"
-		? instance.output
-		: Array.isArray(instance?.outputLines)
-			? instance.outputLines.map(String).join("\n")
-			: undefined;
-	if (command === undefined && output === undefined) return undefined;
-	return (command?.length ?? 0) + (output?.length ?? 0);
 }
 
 /** 估算 compaction/branch summary 的摘要字符数。 */
@@ -590,8 +577,8 @@ export function estimateFrameTokens(kind: ChromeKind, instance: any): number | u
 			chars = estimateToolContentChars(instance);
 			break;
 		case "bash":
-			chars = estimateBashContentChars(instance);
-			break;
+			// Pi 0.84.4 未公开 excludeFromContext；无法可靠区分 ! 与 !!，因此不显示估算 token。
+			return undefined;
 		case "custom":
 			chars = estimateTextAndImageContentChars(instance?.message?.content);
 			break;
@@ -905,15 +892,16 @@ export function createWrappedRender(
 			}
 			innerWidth = Math.max(1, numericWidth - 4);
 			innerLines = asLines(originalRender.call(instance, innerWidth));
+			if (Boolean(extra.forceImageFallback) && containsImageLine(innerLines)) {
+				branch = "imageFallback";
+				const rawFallback = fallback();
+				displayedLines = rawFallback;
+				return debugReturn ? debugReturn(rawFallback, branch) : rawFallback;
+			}
 			displayedLines = shouldCompactTool(renderKind, toolName, instance, config) ? compactToolLines(innerLines, instance) : innerLines;
 			if (isEmptyMessageChrome(renderKind, displayedLines)) {
 				branch = "empty";
 				return debugReturn ? debugReturn([], branch) : [];
-			}
-			if (Boolean(extra.forceImageFallback) && containsImageLine(displayedLines)) {
-				branch = "imageFallback";
-				const rawFallback = fallback();
-				return debugReturn ? debugReturn(rawFallback, branch) : rawFallback;
 			}
 			const innerKey = displayedLines.join("\n");
 			const styleKey = createStyleSignature(id, renderKind, status, toolName, config, state.configVersion, Boolean(instance?.expanded));
@@ -964,9 +952,19 @@ function validateTarget(target: ComponentTarget): string | undefined {
 	return undefined;
 }
 
-export function enablePatch(targets: readonly ComponentTarget[] = createRuntimeTargets()): PatchState {
+export function enablePatch(
+	targets: readonly ComponentTarget[] = createRuntimeTargets(),
+	capabilities: PiRuntimeCapabilities = inspectPiRuntimeCapabilities(),
+): PatchState {
 	const state = getGlobalPatchState();
 	state.failures.clear();
+	if (!capabilities.chromeFrame.supported) {
+		disablePatch(targets);
+		state.failures.clear();
+		for (const [id, reason] of capabilities.chromeFrame.failures) state.failures.set(`compat:${id}`, reason);
+		state.enabled = false;
+		return state;
+	}
 
 	for (const target of targets) {
 		try {
@@ -976,7 +974,6 @@ export function enablePatch(targets: readonly ComponentTarget[] = createRuntimeT
 				if (target.core) {
 					disablePatch(targets);
 					state.enabled = false;
-					syncChromeFrameEnabled(state);
 					return state;
 				}
 				continue;
@@ -989,7 +986,6 @@ export function enablePatch(targets: readonly ComponentTarget[] = createRuntimeT
 				if (target.core) {
 					disablePatch(targets);
 					state.enabled = false;
-					syncChromeFrameEnabled(state);
 					return state;
 				}
 				continue;
@@ -1017,14 +1013,12 @@ export function enablePatch(targets: readonly ComponentTarget[] = createRuntimeT
 			if (target.core) {
 				disablePatch(targets);
 				state.enabled = false;
-				syncChromeFrameEnabled(state);
 				return state;
 			}
 		}
 	}
 
 	state.enabled = state.patched.size > 0;
-	syncChromeFrameEnabled(state);
 	return state;
 }
 
@@ -1057,8 +1051,14 @@ export function disablePatch(targets: readonly ComponentTarget[] = createRuntime
 		}
 	}
 	state.enabled = state.patched.size > 0;
-	syncChromeFrameEnabled(state);
 	return state;
+}
+
+/** 修改用户偏好并同步 runtime；生命周期 cleanup 应直接调用 disablePatch，避免覆盖偏好。 */
+export function setChromeFramePreference(enabled: boolean, targets: readonly ComponentTarget[] = createRuntimeTargets()): PatchState {
+	const state = getGlobalPatchState();
+	state.config.settings.chromeFrame.enabled = enabled;
+	return enabled ? enablePatch(targets) : disablePatch(targets);
 }
 
 export function createRuntimeTargets(themeOverride?: ThemeLike): ComponentTarget[] {

@@ -39,18 +39,18 @@ pi install git:https://github.com/MrCKR/alps-pi
 
 ## 这是什么
 
-`alps-pi` 是我的 pi 美化扩展。目前它会给 pi 内置的主要消息块加统一外框，让对话、工具调用和执行结果在终端里更容易区分；也提供默认开启的固定底部输入框、输入框线框美化、内置 Animations 和内置 `alps` 主题。
+`alps-pi` 是面向 Pi 0.84.4+ 的 TUI 美化扩展。它会给 Pi 内置主要消息块加统一外框，让对话、工具调用和执行结果更容易区分，并提供输入框线框美化、内置 Animations 和 `alps` 主题。固定底部输入框由 Pi 原生 fullscreen TUI 提供。
 
 扩展特点：
 
 - 消息线框默认启用，无需每次手动打开。
-- 固定底部输入框默认开启，可以在 `/alps-pi` 设置界面关闭。
+- Pi `/settings` 中选择 `TUI mode: fullscreen` 后，使用 Pi 原生固定 editor/status/widget/footer dock。
 - 美化输入框默认开启，会显示完整输入框线框，并把模型、thinking、上下文进度和耗时嵌入边框。
 - 内置 Animations 默认开启，会完整替代外部 `pi-animations` 的底部 Working/Thinking/Tool 动画，并兼容替换 Pi hidden thinking 的 `Thinking...`。
-- `/alps-pi` 设置会持久化到 Pi 原生 `~/.pi/agent/settings.json` 的 `"alps-pi"` 字段，`/reload` 或新会话后会按上次设置恢复。
+- `/alps-pi` 设置持久化到独立的 `~/.pi/agent/alps-pi/settings.json`，`/reload` 或新会话后按上次设置恢复。首次升级按“独立主文件 → Pi settings 的 `alps-pi` namespace → `~/.pi/agent/alps-pi.json` → 默认值”读取，并保留原 namespace 供回滚。
 - `/alps-pi` 提供设置界面。
 - 内置 `alps` theme，基于 Synthwave '84 配色整理进本包。
-- 运行期 monkey patch 和固定输入框 runtime 可回滚。
+- 消息组件 monkey patch 可回滚；输入美化只使用 Pi 公开 UI API。
 - 普通空消息不会渲染成空白框。
 - 消息正文不铺大面积背景色，只渲染边框、标题和正文颜色。
 - 可关闭 assistant 正文线框，方便复制回复内容。
@@ -62,17 +62,16 @@ pi install git:https://github.com/MrCKR/alps-pi
 /alps-pi preview     预览美化线框样式
 ```
 
-`/alps-pi` 设置界面目前保留六个开关、一个 Animations 配置项和一个快捷键配置项：
+`/alps-pi` 设置界面包含五个开关、一个 Animations 配置项和一个快捷键配置项：
 
 ```text
 Message Frame       控制消息、工具与 bash 外框，默认 ON
 Assistant Frame     控制 assistant 正文回复是否包线框，默认 ON
 Compact Tools       未展开 tool 只显示第一条有效文本行，默认 ON
 Compact Edit        允许 edit tool 也按极简模式展示，默认 OFF
-Fixed Input         控制实验性底部固定编辑器 runtime，默认 ON
 Beautified Input    控制输入框线框与嵌入边框状态，默认 ON
 Animations          配置底部 Working/Thinking/Tool 与 hidden thinking 内置动画，默认 ON
-Shortcuts           管理底部输入框快捷键
+Shortcuts           管理暂存、复制、剪切和 editor 光标快捷键
 ```
 
 操作方式：
@@ -104,7 +103,7 @@ Esc/q 关闭
 - header
 - overlay
 
-开启 `固定输入框` 后，扩展会临时接管 editor/footer 和 terminal 绘制，以实现“聊天区在上方滚动、输入框固定在底部”。这属于实验性绘制接管，也是独占 editor/footer 的能力：如果其它扩展同时接管 editor/footer，可能互斥；检测到必要 UI API 缺失或安装失败时会 fail closed 并自动关闭 Fixed Input。关闭开关或 `session_shutdown` 时会恢复 Pi 默认 editor/footer，并重置终端滚动区域和光标状态；reload/session replacement 的旧 runtime 不会清理新 session 已安装的 UI。当前 Pi 只对 editor 暴露可确认 owner 的 getter，footer 缺少公开 getter/owner token/disposable handle；alps-pi 会用保存的 footer component active sentinel 做保守清理，不能确认仍属 alps-pi 时会跳过清理，这是不改 picore 前提下的 partial mitigation。
+`alps-pi 0.2.0` 不再接管 terminal viewport。需要固定输入框时，请在 Pi `/settings` 中将 `TUI mode` 设为 `fullscreen`；滚动、选区、鼠标、粘贴和 dock 布局全部由 Pi 原生 TUI 管理。`regular` 模式仍保留消息线框、Beautified Input、状态、Animations 和输入框快捷键，但不会模拟固定 dock。旧 `fixedBottomEditor.enabled` 以及 transcript 滚动/跳转快捷键字段仅原样保留，供回滚到 `0.1.5`，现代 runtime 不读取或执行。
 
 开启 `美化输入框` 后，扩展会把 editor 包装成完整线框：顶部左侧显示模型与 thinking，顶部右侧显示 10 字符上下文进度和百分比/窗口，底部右侧显示本次对话耗时。extension statuses 与上一个问题保持在线框下方，不塞进边框。缺失的数据不会显示占位。`Alt+S` 对齐原版行为：有输入时暂存并清空输入框，输入框为空时恢复暂存内容。
 
@@ -152,27 +151,22 @@ toolError.border     error
 
 ## 安全策略
 
-- 扩展默认启用消息线框 patch；固定输入框、美化输入框和内置 Animations 默认开启。
+- 扩展默认启用消息线框 patch、美化输入框和内置 Animations。
 - 设置界面里的线框美化开关会恢复原始 render 方法；如果 render 已被后续扩展接管，alps-pi 会跳过恢复，避免覆盖其它 wrapper。
 - patch 是幂等的，重复启用不会重复包裹。
 - 核心组件 patch 失败时会自动回滚。
 - 用户 prompt、extension status、消息正文进入 terminal 展示前会剥离 OSC/DCS/APC/PM 与非 SGR CSI；主题层生成的 SGR 颜色仍保留。
-- 固定输入框启用失败会 fail closed，并回滚 editor/footer/compositor，同时把 Fixed Input 设置同步为 OFF。
-- 固定输入框会接管 `terminal.write`、`terminal.rows`、`tui.render`、`tui.doRender` 和滚动区域；关闭或 shutdown 时会尽力恢复。
+- Beautified Input 仅通过 Pi 公开的 editor/footer/input API 安装；能力缺失时只关闭对应运行时功能，不回滚用户偏好。
+- Alps 不覆盖 `terminal.write`、`terminal.rows`、`tui.render` 或 `tui.doRender`，也不发送 alternate-screen/mouse-reporting 控制序列。
 - image escape 行会回退或跳过包装，避免破坏终端图片协议。
 - assistant / user / custom / skill / compaction / branch 空内容不会渲染空框。
 - tool / bash / working 即使正文为空也保留外框，因为标题和状态本身有信息价值。
 
 ## 兼容性
 
-当前测试版本窗口：
+正式运行基线为 Pi `>=0.84.4`。Pi 核心包按官方 package 规则声明为 wildcard peer，开发与发布验证使用 `0.84.4`。
 
-```text
-@earendil-works/pi-coding-agent >=0.75.5 <0.76.0
-@earendil-works/pi-tui          >=0.75.5 <0.76.0
-```
-
-`alps-pi` 的 Message Frame、Fixed Input 与 Beautified Input 依赖 Pi 当前导出的 TUI component、`render(width)`、`ctx.ui.setEditorComponent`、`ctx.ui.setFooter`、terminal descriptor 等内部 UI 能力。不在上述窗口内的 Pi 版本不再声明兼容；运行时如果发现关键字段或方法缺失，对应功能会 fail closed 或跳过 patch，而不是继续覆盖原型或 editor/footer。
+Message Frame 仍依赖 Pi 导出的消息组件与 `render(width)`；Beautified Input 只依赖 `ctx.ui.setEditorComponent`、`ctx.ui.setFooter` 和 `ctx.ui.onTerminalInput`。运行时集中检测组件、Animations 和 TUI mode 能力，缺失时按功能 fail closed 并输出诊断，不修改持久化用户偏好。旧 Pi 用户可回滚到 `alps-pi 0.1.5`。
 
 ## 开发
 
@@ -196,4 +190,4 @@ C:/Users/Administrator/AppData/Local/nvm/v22.22.3/npm.cmd test
 
 ## 注意
 
-本扩展依赖 Pi 当前的内置 TUI 组件导出。升级 pi 后如果内置组件名称、构造方式或 `render(width)` 行为变化，需要重新跑测试并同步适配；验证通过后再扩大 peer dependency 窗口。
+本扩展依赖 Pi 当前的内置 TUI 组件导出。升级 Pi 后如果组件名称、构造方式或 `render(width)` 行为变化，集中 capability gate 会按功能 fail closed；发布前仍必须重新运行真实组件、stable proxy、lifecycle、图片与 Windows Terminal 门禁。

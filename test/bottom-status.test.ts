@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { setImmediate as flushMicrotasks } from "node:timers/promises";
 import test from "node:test";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { CURSOR_MARKER, visibleWidth } from "@earendil-works/pi-tui";
 import {
 	createBottomInputRuntime,
 	renderBeautifiedEditorFrame,
@@ -14,7 +14,6 @@ import {
 } from "../src/features/bottom-input/index.ts";
 import { sanitizeTerminalText } from "../src/terminal-sanitizer.ts";
 import { isStashShortcutInput } from "../src/features/bottom-status/index.ts";
-import { FIXED_EDITOR_CURSOR_MARKER, renderFixedEditorCluster } from "../src/features/fixed-bottom-editor/cluster.ts";
 import { createFakeTheme, stripAnsi } from "./helpers.test.ts";
 
 function createCtx(options: { footerData?: any } = {}) {
@@ -25,6 +24,7 @@ function createCtx(options: { footerData?: any } = {}) {
 	let editorFactory: any;
 	let editorText = "";
 	const ctx: any = {
+		mode: "tui",
 		hasUI: true,
 		model: { name: "GPT-5.5", reasoning: true, contextWindow: 272000 },
 		getThinkingLevel: () => "medium",
@@ -77,10 +77,10 @@ function createCtx(options: { footerData?: any } = {}) {
 		setEditorText(text: string) {
 			editorText = text;
 		},
-		instantiateEditor(tui: any = { terminal: { columns: 40, rows: 12, write() {} } }, theme: any = createFakeTheme()) {
+		instantiateEditor(tui: any = { mode: "regular", terminal: { columns: 40, rows: 12, write() {} }, requestRender() {}, hasOverlay: () => false }, theme: any = createFakeTheme()) {
 			return editorFactory?.(tui, theme, { matches: () => false });
 		},
-		instantiateFooter(tui: any = { terminal: { columns: 40, rows: 12, write() {} } }, theme: any = createFakeTheme()) {
+		instantiateFooter(tui: any = { mode: "regular", terminal: { columns: 40, rows: 12, write() {} }, requestRender() {}, hasOverlay: () => false }, theme: any = createFakeTheme()) {
 			return footerFactory?.(tui, theme, options.footerData ?? {});
 		},
 	};
@@ -305,7 +305,7 @@ test("Alt+S 有输入时暂存并清空，空输入时恢复", () => {
 	const harness = createCtx();
 	const runtime = createBottomInputRuntime({ startClock: false });
 	runtime.bindSession(harness.ctx);
-	runtime.setEnabled(true);
+	runtime.configure({ beautifiedInputEnabled: true });
 	harness.setEditorText("hello");
 
 	assert.deepEqual(harness.input("\x1bs"), { consume: true });
@@ -336,7 +336,7 @@ test("copy/cut editor 等待异步剪贴板成功，失败时 cut 不清空输�
 		},
 	});
 	runtime.bindSession(harness.ctx);
-	runtime.setEnabled(true);
+	runtime.configure({ beautifiedInputEnabled: true });
 	harness.setEditorText("copy me");
 
 	runtime.copyEditorText?.();
@@ -358,7 +358,7 @@ test("copy/cut editor 等待异步剪贴板成功，失败时 cut 不清空输�
 		},
 	});
 	failingRuntime.bindSession(harness.ctx);
-	failingRuntime.setEnabled(true);
+	failingRuntime.configure({ beautifiedInputEnabled: true });
 	harness.setEditorText("keep me");
 	failingRuntime.cutEditorText?.();
 	await flushMicrotasks();
@@ -371,7 +371,7 @@ test("dispose 移除 input listener 并清理 stash 状态", () => {
 	const runtime = createBottomInputRuntime({ startClock: false });
 
 	runtime.bindSession(harness.ctx);
-	runtime.setEnabled(true);
+	runtime.configure({ beautifiedInputEnabled: true });
 	assert.equal(harness.getInputHandlerCount(), 1);
 	runtime.dispose();
 
@@ -405,6 +405,7 @@ test("renderBottomInputEditorLines 美化普通 editor 且不保留原生上下�
 		theme: createFakeTheme(),
 		state: {
 			beautifiedInputEnabled: true,
+			getTheme: () => createFakeTheme(),
 			getFrameStatus: () => ({ model: "GPT-5.5", thinking: "med", context: null, elapsed: "◷ 1s" }),
 		},
 	}).map(stripAnsi);
@@ -446,8 +447,9 @@ test("美化 editor 使用 footer 捕获的完整主题渲染边框", () => {
 
 	runtime.bindSession(harness.ctx);
 	runtime.setBeautifiedInputEnabled?.(true);
-	const editor = harness.instantiateEditor({ terminal: { columns: 40, rows: 12, write() {} } }, editorTheme);
-	harness.instantiateFooter({ terminal: { columns: 40, rows: 12, write() {} } }, footerTheme);
+	const tui = { mode: "regular", terminal: { columns: 40, rows: 12, write() {} }, requestRender() {}, hasOverlay: () => false };
+	const editor = harness.instantiateEditor(tui, editorTheme);
+	harness.instantiateFooter(tui, footerTheme);
 	const lines = editor.render(24);
 
 	assert.match(lines[0], /\x1b\[38;5;6m╭/);
@@ -478,24 +480,19 @@ test("线框边框裁剪 ANSI 状态时保持闭合且不泄漏转义文本", ()
 });
 
 test("线框内容窄宽裁剪时保留 cursor marker", () => {
-	const marker = FIXED_EDITOR_CURSOR_MARKER;
 	const framed = renderBeautifiedEditorFrame({
-		editorLines: [`0123456789${marker}abcdef`],
+		editorLines: [`0123456789${CURSOR_MARKER}abcdef`],
 		width: 12,
 		theme: createFakeTheme(),
 		status: { model: null, thinking: null, context: null, elapsed: null },
 	});
-	const cluster = renderFixedEditorCluster({ editorLines: framed, width: 12, maxHeight: 4 });
 
-	assert.equal(cluster.lines.some((line) => line.includes(marker)), false);
-	assert.ok(cluster.cursor, "cursor should survive line-frame clipping");
-	assert.equal(cluster.cursor?.row, 1);
-	assert.ok(cluster.cursor!.col >= 2 && cluster.cursor!.col <= 10);
-	assert.ok(cluster.lines.every((line) => visibleWidth(line) <= 12));
+	assert.equal(framed[1].includes(CURSOR_MARKER), true);
+	assert.ok(framed.every((line) => visibleWidth(line) <= 12));
 });
 
 test("线框内容裁剪不拆分 ANSI 与 emoji grapheme", () => {
-	const marker = FIXED_EDITOR_CURSOR_MARKER;
+	const marker = CURSOR_MARKER;
 	const framed = renderBeautifiedEditorFrame({
 		editorLines: [`👨‍👩‍👧‍👦abcdef\x1b[31m012345${marker}xyz\x1b[0m`],
 		width: 14,
@@ -509,7 +506,7 @@ test("线框内容裁剪不拆分 ANSI 与 emoji grapheme", () => {
 });
 
 test("线框内容裁剪会重置未闭合 SGR，避免输入颜色污染右边框", () => {
-	const marker = FIXED_EDITOR_CURSOR_MARKER;
+	const marker = CURSOR_MARKER;
 	const framed = renderBeautifiedEditorFrame({
 		editorLines: [`\x1b[31m0123456789${marker}abcdef\x1b[0m`],
 		width: 12,
@@ -521,135 +518,47 @@ test("线框内容裁剪会重置未闭合 SGR，避免输入颜色污染右边�
 	assert.ok(visibleWidth(framed[1]) <= 12);
 });
 
-test("美化输入框 ON 时线框包含边框状态，extension statuses 和 last prompt 在线框下方", () => {
+test("美化输入框通过公开 editor/footer API 渲染状态与 last prompt", () => {
 	const footerData = {
 		getExtensionStatuses: () => new Map([["watcher", "CodeGraph watcher active"], ["stash", "stash"]]),
+		onBranchChange: () => () => undefined,
 	};
 	const harness = createCtx({ footerData });
-	let capturedRenderCluster: ((width: number, terminalRows: number) => any) | undefined;
 	const runtime = createBottomInputRuntime({
 		startClock: false,
 		now: (() => {
 			let calls = 0;
 			return () => calls++ < 2 ? 1_000 : 378_000;
 		})(),
-		createCompositor(options) {
-			capturedRenderCluster = options.renderCluster;
-			return {
-				install() {},
-				dispose() {},
-				hideRenderable() {},
-				renderHidden(container: any, width: number) {
-					return container?.kind === "editor" ? [`> hello ${container.marker ?? ""}`] : [];
-				},
-				requestRepaint() {},
-				setKeyboardScrollShortcuts() {},
-				jumpToPreviousRootTarget() { return false; },
-				jumpToNextRootTarget() { return false; },
-				jumpToRootBottom() { return false; },
-			};
-		},
 	});
-
 	runtime.bindSession(harness.ctx);
 	runtime.setLastPrompt("上一个问题");
-	runtime.setEnabled(true);
-	const tui = { terminal: { columns: 80, rows: 20, write() {} }, editorContainer: { kind: "editor", render: () => [] } };
-	harness.instantiateEditor(tui, createFakeTheme());
-	harness.instantiateFooter(tui, createFakeTheme());
-	runtime.setBeautifiedInputEnabled?.(true);
-	const cluster = capturedRenderCluster?.(80, 20);
-	const lines = cluster.lines.map(stripAnsi);
+	const status = runtime.configure({ beautifiedInputEnabled: true });
+	const tui = { mode: "fullscreen", terminal: { columns: 80, rows: 20 }, requestRender() {}, hasOverlay: () => false };
+	const editor = harness.instantiateEditor(tui, { borderColor: (text: string) => text, selectList: {} });
+	const footer = harness.instantiateFooter(tui, createFakeTheme());
+	editor.setText("hello");
+	const editorLines = editor.render(80).map(stripAnsi);
+	const footerLines = footer.render(80).map(stripAnsi);
 
-	assert.match(lines[0], /^> hello /);
-	assert.match(lines[1], /CodeGraph watcher active.*stash/);
-	assert.match(lines[2], /↳ 上一个问题/);
+	assert.equal(status.installed, true);
+	assert.match(editorLines[0], /^╭/);
+	assert.match(editorLines.at(-1) ?? "", /^╰/);
+	assert.match(footerLines[0], /CodeGraph watcher active.*stash/);
+	assert.match(footerLines[1], /↳ 上一个问题/);
 });
 
-test("美化输入框 OFF 时不渲染输入框线框和嵌入状态", () => {
-	const footerData = {
-		getExtensionStatuses: () => new Map([["watcher", "CodeGraph watcher active"]]),
-	};
-	const harness = createCtx({ footerData });
-	let capturedRenderCluster: ((width: number, terminalRows: number) => any) | undefined;
-	const runtime = createBottomInputRuntime({
-		startClock: false,
-		createCompositor(options) {
-			capturedRenderCluster = options.renderCluster;
-			return {
-				install() {},
-				dispose() {},
-				hideRenderable() {},
-				renderHidden(container: any) {
-					return container?.kind === "editor" ? ["> hello"] : [];
-				},
-				requestRepaint() {},
-				setKeyboardScrollShortcuts() {},
-				jumpToPreviousRootTarget() { return false; },
-				jumpToNextRootTarget() { return false; },
-				jumpToRootBottom() { return false; },
-			};
-		},
-	});
-
-	runtime.bindSession(harness.ctx);
-	runtime.setLastPrompt("上一个问题");
-	runtime.setEnabled(true);
-	const tui = { terminal: { columns: 80, rows: 20, write() {} }, editorContainer: { kind: "editor", render: () => [] } };
-	harness.instantiateEditor(tui, createFakeTheme());
-	harness.instantiateFooter(tui, createFakeTheme());
-	runtime.setBeautifiedInputEnabled?.(false);
-	const lines = capturedRenderCluster?.(80, 20).lines.map(stripAnsi) ?? [];
-
-	assert.deepEqual(lines, ["> hello", " CodeGraph watcher active ", " ↳ 上一个问题"]);
-	assert.equal(lines.some((line) => /[╭╮╰╯│]/.test(line)), false);
-	assert.equal(lines.some((line) => /GPT-5\.5|69\.9%|◷/.test(line)), false);
-});
-
-test("美化输入框 OFF 时 runtime 渲染 cluster 不读取 context usage 但保留下方附属信息", () => {
-	const footerData = {
-		getExtensionStatuses: () => new Map([["watcher", "CodeGraph watcher active"]]),
-	};
-	const harness = createCtx({ footerData });
+test("美化输入框 OFF 时不安装自定义 editor/footer 且不读取 context usage", () => {
+	const harness = createCtx();
 	harness.ctx.getContextUsage = () => {
 		throw new Error("should not read context usage");
 	};
-	let capturedRenderCluster: ((width: number, terminalRows: number) => any) | undefined;
-	const runtime = createBottomInputRuntime({
-		startClock: false,
-		createCompositor(options) {
-			capturedRenderCluster = options.renderCluster;
-			return {
-				install() {},
-				dispose() {},
-				hideRenderable() {},
-				renderHidden(container: any) {
-					return container?.kind === "editor" ? ["editor"] : [];
-				},
-				requestRepaint() {},
-				setKeyboardScrollShortcuts() {},
-				jumpToPreviousRootTarget() {
-					return false;
-				},
-				jumpToNextRootTarget() {
-					return false;
-				},
-				jumpToRootBottom() {
-					return false;
-				},
-			};
-		},
-	});
-
+	const runtime = createBottomInputRuntime({ startClock: false });
 	runtime.bindSession(harness.ctx);
-	runtime.setLastPrompt("上一个问题");
-	runtime.setEnabled(true);
-	const tui = { terminal: { columns: 40, rows: 12, write() {} }, editorContainer: { kind: "editor", render: () => [] } };
-	harness.instantiateEditor(tui, createFakeTheme());
-	harness.instantiateFooter(tui, createFakeTheme());
-	runtime.setBeautifiedInputEnabled?.(false);
+	const status = runtime.configure({ beautifiedInputEnabled: false });
 
-	assert.doesNotThrow(() => capturedRenderCluster?.(40, 12));
-	const lines = capturedRenderCluster?.(40, 12).lines.map(stripAnsi) ?? [];
-	assert.deepEqual(lines, ["editor", " CodeGraph watcher active ", " ↳ 上一个问题"]);
+	assert.equal(status.enabled, false);
+	assert.equal(status.installed, false);
+	assert.equal(harness.instantiateEditor(), undefined);
+	assert.equal(harness.instantiateFooter(), undefined);
 });

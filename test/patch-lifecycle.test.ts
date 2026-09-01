@@ -9,6 +9,7 @@ import {
 	disablePatch,
 	enablePatch,
 	getGlobalPatchState,
+	setChromeFramePreference,
 	type ComponentTarget,
 } from "../src/features/chrome-frame/patch.ts";
 import { createFakeTheme, stripAnsi } from "./helpers.test.ts";
@@ -68,6 +69,20 @@ test("初始状态 disabled 且保存在 Symbol.for 下", () => {
 	assert.equal((globalThis as any)[Symbol.for("alps.pi.patch.v1")], state);
 });
 
+test("缺少 render 能力时 chrome-frame 独立 fail closed 且不修改偏好", () => {
+	const state = getGlobalPatchState();
+	state.config.settings.chromeFrame.enabled = true;
+	const result = enablePatch(targets(), {
+		chromeFrame: { supported: false, failures: new Map([["UserMessageComponent", "prototype.render missing"]]) },
+		animations: { supported: true },
+		tui: { supported: true },
+	});
+
+	assert.equal(result.enabled, false);
+	assert.equal(result.config.settings.chromeFrame.enabled, true);
+	assert.equal(result.failures.get("compat:UserMessageComponent"), "prototype.render missing");
+});
+
 test("enablePatch 保存原始 render 并替换 prototype render", () => {
 	const list = targets();
 	const original = UserFake.prototype.render;
@@ -88,15 +103,29 @@ test("重复 enablePatch 不会重复包裹", () => {
 	assert.equal(getGlobalPatchState().originals.size, originalCount);
 });
 
-test("disablePatch 会恢复原始 render，重复 disable 不抛异常", () => {
+test("disablePatch 会恢复原始 render，重复 disable 不抛异常且不修改用户偏好", () => {
 	const list = targets();
 	const original = UserFake.prototype.render;
+	const state = getGlobalPatchState();
+	state.config.settings.chromeFrame.enabled = true;
 	enablePatch(list);
 	disablePatch(list);
 	assert.equal(UserFake.prototype.render, original);
-	assert.equal(getGlobalPatchState().enabled, false);
-	assert.equal(getGlobalPatchState().patched.size, 0);
+	assert.equal(state.enabled, false);
+	assert.equal(state.patched.size, 0);
+	assert.equal(state.config.settings.chromeFrame.enabled, true);
 	assert.doesNotThrow(() => disablePatch(list));
+});
+
+test("setChromeFramePreference 显式修改偏好并同步 runtime", () => {
+	const list = targets();
+	const state = setChromeFramePreference(false, list);
+	assert.equal(state.config.settings.chromeFrame.enabled, false);
+	assert.equal(state.enabled, false);
+
+	setChromeFramePreference(true, list);
+	assert.equal(state.config.settings.chromeFrame.enabled, true);
+	assert.equal(state.enabled, true);
 });
 
 test("disablePatch 遇到后续第三方 wrapper 时跳过恢复，避免覆盖其它扩展", () => {

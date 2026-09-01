@@ -1,161 +1,199 @@
-/** 功能：验证 Alps Pi 设置持久化读写 实现者：alps 实现日期：2026-05-27 */
+/** 功能：验证 0.2.0 独立设置的优先级、迁移、锁与原子写入。 */
 
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
-import { cloneStartupSettings, PI_SETTINGS_NAMESPACE, readNamespacedPiSettings, readPersistedSettings, writeNamespacedPiSettings, writePersistedSettings } from "../src/settings-store.ts";
+import {
+	PI_SETTINGS_NAMESPACE,
+	cloneStartupSettings,
+	readPersistedSettings,
+	readPersistedSettingsFromPaths,
+	writePersistedSettings,
+} from "../src/settings-store.ts";
 import { DEFAULT_SETTINGS } from "../src/settings.ts";
 
-test("启动默认设置固定输入框、美化输入框和 Animations 开启", () => {
-	const settings = cloneStartupSettings();
+function tempPaths() {
+	const dir = mkdtempSync(join(tmpdir(), "alps-pi-settings-"));
+	return {
+		dir,
+		primary: join(dir, "alps-pi", "settings.json"),
+		piSettings: join(dir, "settings.json"),
+		legacy: join(dir, "alps-pi.json"),
+	};
+}
 
+function writeJson(path: string, value: unknown) {
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, JSON.stringify(value, null, 2), "utf-8");
+}
+
+function readJson(path: string) {
+	return JSON.parse(readFileSync(path, "utf-8"));
+}
+
+test("启动默认设置保留 legacy fixed 字段且现代功能默认开启", () => {
+	const settings = cloneStartupSettings();
 	assert.equal(settings.chromeFrame.enabled, true);
-	assert.equal(settings.chromeFrame.toolCompactMode, true);
-	assert.equal(settings.chromeFrame.compactEditTool, false);
 	assert.equal(settings.fixedBottomEditor.enabled, true);
 	assert.equal(settings.beautifiedInput.enabled, true);
 	assert.equal(settings.animations.enabled, true);
-	assert.equal(settings.animations.thinking, "shimmer");
 	assert.equal("bottomStatus" in settings, false);
 });
 
-test("读写持久化设置并合并缺失字段", () => {
-	const dir = mkdtempSync(join(tmpdir(), "alps-pi-settings-"));
-	const file = join(dir, "settings.json");
+test("显式独立路径读写使用锁与原子 JSON 并合并缺失字段", () => {
+	const { dir, primary } = tempPaths();
 	try {
 		const settings = cloneStartupSettings();
 		settings.chromeFrame.toolCompactMode = false;
-		settings.chromeFrame.compactEditTool = true;
 		settings.fixedBottomEditor.enabled = false;
 		settings.beautifiedInput.enabled = false;
-		settings.animations.enabled = false;
 		settings.animations.thinking = "aurora";
-		writePersistedSettings(settings, file);
-
-		const raw = JSON.parse(readFileSync(file, "utf-8"));
+		writePersistedSettings(settings, primary);
+		const raw = readJson(primary);
 		assert.equal(raw.bottomStatus, undefined);
-		const loaded = readPersistedSettings(file);
+		assert.equal(existsSync(`${primary}.lock`), false);
+		assert.equal(readPersistedSettings(primary).fixedBottomEditor.enabled, false);
+		assert.equal(readPersistedSettings(primary).animations.thinking, "aurora");
+		assert.equal(readPersistedSettings(primary).chromeFrame.assistantFrame, true);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("四级读取优先级严格为 primary → namespace → legacy → defaults", () => {
+	for (const source of ["primary", "namespace", "legacy", "defaults"] as const) {
+		const paths = tempPaths();
+		try {
+			writeJson(paths.piSettings, {
+				theme: "alps",
+				[PI_SETTINGS_NAMESPACE]: { beautifiedInput: { enabled: source === "namespace" ? false : true } },
+			});
+			writeJson(paths.legacy, { beautifiedInput: { enabled: source === "legacy" ? false : true } });
+			if (source === "primary") writeJson(paths.primary, { beautifiedInput: { enabled: false } });
+			if (source === "legacy" || source === "defaults") writeJson(paths.piSettings, { theme: "alps" });
+			if (source === "defaults") rmSync(paths.legacy, { force: true });
+			const piBefore = readFileSync(paths.piSettings, "utf-8");
+
+			const loaded = readPersistedSettingsFromPaths(paths);
+			assert.equal(loaded.beautifiedInput.enabled, source === "defaults" ? true : false, source);
+			assert.equal(readFileSync(paths.piSettings, "utf-8"), piBefore);
+			if (source === "namespace" || source === "legacy") assert.equal(readJson(paths.primary).beautifiedInput.enabled, false);
+			if (source === "defaults") assert.equal(existsSync(paths.primary), false);
+		} finally {
+			rmSync(paths.dir, { recursive: true, force: true });
+		}
+	}
+});
+
+test("primary 存在时不读取或改写 namespace/legacy", () => {
+	const paths = tempPaths();
+	try {
+		writeJson(paths.primary, { fixedBottomEditor: { enabled: false }, beautifiedInput: { enabled: false } });
+		writeJson(paths.piSettings, { [PI_SETTINGS_NAMESPACE]: { fixedBottomEditor: { enabled: true }, beautifiedInput: { enabled: true } } });
+		writeJson(paths.legacy, { fixedBottomEditor: { enabled: true }, beautifiedInput: { enabled: true } });
+		const beforePi = readFileSync(paths.piSettings, "utf-8");
+		const beforeLegacy = readFileSync(paths.legacy, "utf-8");
+		const loaded = readPersistedSettingsFromPaths(paths);
 		assert.equal(loaded.fixedBottomEditor.enabled, false);
 		assert.equal(loaded.beautifiedInput.enabled, false);
-		assert.equal(loaded.animations.enabled, false);
-		assert.equal(loaded.animations.thinking, "aurora");
-		assert.equal("bottomStatus" in loaded, false);
-		assert.equal(loaded.chromeFrame.assistantFrame, true);
-		assert.equal(loaded.chromeFrame.toolCompactMode, false);
-		assert.equal(loaded.chromeFrame.compactEditTool, true);
+		assert.equal(readFileSync(paths.piSettings, "utf-8"), beforePi);
+		assert.equal(readFileSync(paths.legacy, "utf-8"), beforeLegacy);
 	} finally {
-		rmSync(dir, { recursive: true, force: true });
+		rmSync(paths.dir, { recursive: true, force: true });
 	}
 });
 
-test("读取持久化快捷键时过滤保留键、重复键和不支持的 Super 键", () => {
-	const dir = mkdtempSync(join(tmpdir(), "alps-pi-settings-"));
-	const file = join(dir, "settings.json");
+test("同进程两个陈旧快照只合并各自改变字段", () => {
+	const { dir, primary } = tempPaths();
 	try {
-		writeFileSync(file, JSON.stringify({
-			shortcuts: {
-				copyEditor: "ctrl+c",
-				cutEditor: "ctrl+alt+c",
-				scrollChatUp: "super+a",
-				jumpChatBottom: "ctrl+alt+g",
-				jumpNextUserMessage: "ctrl+shift+p",
-				jumpNextAssistantMessage: "shift+ctrl+o",
-			},
-		}), "utf-8");
-
-		const loaded = readPersistedSettings(file);
-		assert.equal(loaded.shortcuts.copyEditor, DEFAULT_SETTINGS.shortcuts.copyEditor);
-		assert.equal(loaded.shortcuts.cutEditor, DEFAULT_SETTINGS.shortcuts.cutEditor);
-		assert.equal(loaded.shortcuts.scrollChatUp, DEFAULT_SETTINGS.shortcuts.scrollChatUp);
-		assert.equal(loaded.shortcuts.jumpChatBottom, "ctrl+alt+g");
-		assert.equal(loaded.shortcuts.jumpNextUserMessage, DEFAULT_SETTINGS.shortcuts.jumpNextUserMessage);
-		assert.equal(loaded.shortcuts.jumpNextAssistantMessage, DEFAULT_SETTINGS.shortcuts.jumpNextAssistantMessage);
-	} finally {
-		rmSync(dir, { recursive: true, force: true });
-	}
-});
-
-test("完整默认快捷键持久化不会被误拒绝", () => {
-	const dir = mkdtempSync(join(tmpdir(), "alps-pi-settings-"));
-	const file = join(dir, "settings.json");
-	try {
-		writeFileSync(file, JSON.stringify({ shortcuts: DEFAULT_SETTINGS.shortcuts }), "utf-8");
-
-		const loaded = readPersistedSettings(file);
-		assert.deepEqual(loaded.animations, DEFAULT_SETTINGS.animations);
-		assert.deepEqual(loaded.shortcuts, DEFAULT_SETTINGS.shortcuts);
-	} finally {
-		rmSync(dir, { recursive: true, force: true });
-	}
-});
-
-test("Pi 原生 settings 的 alps-pi 命名空间可读写且保留其它字段并丢弃 bottomStatus", () => {
-	const dir = mkdtempSync(join(tmpdir(), "alps-pi-settings-"));
-	const file = join(dir, "settings.json");
-	try {
-		writeFileSync(file, JSON.stringify({ theme: "dark", showHardwareCursor: true }), "utf-8");
-		const settings = cloneStartupSettings();
-		settings.beautifiedInput.enabled = false;
-
-		writeNamespacedPiSettings(settings, file);
-
-		const root = JSON.parse(readFileSync(file, "utf-8"));
-		assert.equal(root.theme, "dark");
-		assert.equal(root.showHardwareCursor, true);
-		assert.equal(root[PI_SETTINGS_NAMESPACE].beautifiedInput.enabled, false);
-		assert.equal(root[PI_SETTINGS_NAMESPACE].bottomStatus, undefined);
-		assert.equal(root.alpsPi, undefined);
-		assert.equal(readNamespacedPiSettings(file).beautifiedInput.enabled, false);
-	} finally {
-		rmSync(dir, { recursive: true, force: true });
-	}
-});
-
-test("Pi 原生 settings 缺少 alps-pi 时从独立文件迁移并忽略 bottomStatus", () => {
-	const dir = mkdtempSync(join(tmpdir(), "alps-pi-settings-"));
-	const piFile = join(dir, "settings.json");
-	const legacyFile = join(dir, "legacy-settings.json");
-	try {
-		writeFileSync(piFile, JSON.stringify({ theme: "dark" }), "utf-8");
-		writeFileSync(legacyFile, JSON.stringify({ fixedBottomEditor: { enabled: false }, beautifiedInput: { enabled: false }, bottomStatus: { enabled: true } }), "utf-8");
-
-		const loaded = readNamespacedPiSettings(piFile, legacyFile);
-
-		assert.equal(loaded.fixedBottomEditor.enabled, false);
+		writePersistedSettings(cloneStartupSettings(), primary);
+		const first = readPersistedSettings(primary);
+		const second = readPersistedSettings(primary);
+		first.chromeFrame.assistantFrame = false;
+		second.beautifiedInput.enabled = false;
+		writePersistedSettings(first, primary);
+		writePersistedSettings(second, primary);
+		const loaded = readPersistedSettings(primary);
+		assert.equal(loaded.chromeFrame.assistantFrame, false);
 		assert.equal(loaded.beautifiedInput.enabled, false);
-		assert.deepEqual(loaded.animations, DEFAULT_SETTINGS.animations);
-		assert.equal("bottomStatus" in loaded, false);
-		const root = JSON.parse(readFileSync(piFile, "utf-8"));
-		assert.equal(root.theme, "dark");
-		assert.equal(root[PI_SETTINGS_NAMESPACE].fixedBottomEditor.enabled, false);
-		assert.equal(root[PI_SETTINGS_NAMESPACE].beautifiedInput.enabled, false);
-		assert.equal(root[PI_SETTINGS_NAMESPACE].bottomStatus, undefined);
+		assert.equal(loaded.fixedBottomEditor.enabled, true);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
 
-test("测试隔离路径存在时不碰 Pi 原生 settings 文件", () => {
-	const dir = mkdtempSync(join(tmpdir(), "alps-pi-settings-"));
-	const isolatedFile = join(dir, "isolated.json");
-	const piFile = join(dir, "settings.json");
+test("多进程压力写入保留每个独立字段且不留 lock/tmp", async () => {
+	const { dir, primary } = tempPaths();
+	try {
+		const worker = resolve(import.meta.dirname, "settings-writer-worker.ts");
+		const specs = [
+			["chromeFrame", "assistantFrame", "false"],
+			["beautifiedInput", "enabled", "false"],
+			["animations", "randomMode", "true"],
+			["animations", "fps", "24"],
+			["shortcuts", "copyEditor", "\"ctrl+alt+g\""],
+		] as const;
+		for (let round = 0; round < 3; round += 1) {
+			writeJson(primary, cloneStartupSettings());
+			const go = join(dir, `go-${round}`);
+			const children = specs.map(([section, key, value], index) => {
+				const ready = join(dir, `ready-${round}-${index}`);
+				const child = spawn(process.execPath, ["--experimental-strip-types", worker, primary, ready, go, section, key, value], { stdio: "inherit" });
+				return { child, ready };
+			});
+			const waitArray = new Int32Array(new SharedArrayBuffer(4));
+			const deadline = Date.now() + 15_000;
+			while (children.some(({ ready }) => !existsSync(ready)) && Date.now() < deadline) Atomics.wait(waitArray, 0, 0, 20);
+			assert.ok(children.every(({ ready }) => existsSync(ready)), `round ${round} workers did not reach shared baseline`);
+			writeFileSync(go, "go", "utf-8");
+			await Promise.all(children.map(({ child }) => new Promise<void>((resolvePromise, reject) => {
+				child.once("error", reject);
+				child.once("exit", (code) => code === 0 ? resolvePromise() : reject(new Error(`worker exit ${code}`)));
+			})));
+			const raw = readJson(primary);
+			assert.equal(raw.chromeFrame.assistantFrame, false);
+			assert.equal(raw.beautifiedInput.enabled, false);
+			assert.equal(raw.animations.randomMode, true);
+			assert.equal(raw.animations.fps, 24);
+			assert.equal(raw.shortcuts.copyEditor, "ctrl+alt+g");
+			assert.equal(raw.fixedBottomEditor.enabled, true);
+			assert.equal(existsSync(`${primary}.lock`), false);
+			assert.equal(readdirSync(dirname(primary)).some((name) => name.endsWith(".tmp")), false);
+		}
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("测试隔离路径只写独立文件，不触碰 Pi settings", () => {
+	const paths = tempPaths();
 	const previous = process.env.ALPS_PI_SETTINGS_PATH;
 	try {
-		process.env.ALPS_PI_SETTINGS_PATH = isolatedFile;
-		writeFileSync(piFile, JSON.stringify({ theme: "dark" }), "utf-8");
+		process.env.ALPS_PI_SETTINGS_PATH = paths.primary;
+		writeJson(paths.piSettings, { theme: "dark" });
 		const settings = cloneStartupSettings();
 		settings.beautifiedInput.enabled = false;
-
 		writePersistedSettings(settings);
-
-		assert.equal(existsSync(isolatedFile), true);
-		assert.equal(JSON.parse(readFileSync(isolatedFile, "utf-8")).bottomStatus, undefined);
-		assert.deepEqual(JSON.parse(readFileSync(piFile, "utf-8")), { theme: "dark" });
+		assert.equal(readJson(paths.primary).beautifiedInput.enabled, false);
+		assert.deepEqual(readJson(paths.piSettings), { theme: "dark" });
 	} finally {
 		if (previous === undefined) delete process.env.ALPS_PI_SETTINGS_PATH;
 		else process.env.ALPS_PI_SETTINGS_PATH = previous;
+		rmSync(paths.dir, { recursive: true, force: true });
+	}
+});
+
+test("旧快捷键字段保持可读但 UI 只使用现代 editor/input 子集", () => {
+	const { dir, primary } = tempPaths();
+	try {
+		writeJson(primary, { shortcuts: { ...DEFAULT_SETTINGS.shortcuts, jumpChatBottom: "ctrl+alt+g" } });
+		const loaded = readPersistedSettings(primary);
+		assert.equal(loaded.shortcuts.jumpChatBottom, "ctrl+alt+g");
+		assert.equal(loaded.shortcuts.stashEditor, DEFAULT_SETTINGS.shortcuts.stashEditor);
+	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
 });

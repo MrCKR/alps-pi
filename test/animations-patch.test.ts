@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AssistantMessageComponent, initTheme } from "@earendil-works/pi-coding-agent";
-import { bindAnimationsSession, enableAnimationsPatch, getAnimationsPatchState, configureAnimations, configureAnimationsRenderRequest, disposeAnimations, getAnimationsRuntimeState, handleAnimationsAgentEnd, handleAnimationsAgentStart, handleAnimationsMessageEnd, handleAnimationsMessageUpdate, handleAnimationsToolExecutionEnd, handleAnimationsToolExecutionStart, pauseAnimationsRuntime, resumeAnimationsRuntime } from "../src/features/animations/index.ts";
+import { AnimatedThinkingComponent, bindAnimationsSession, enableAnimationsPatch, getAnimationsPatchState, configureAnimations, configureAnimationsRenderRequest, disposeAnimations, getAnimationsRuntimeState, handleAnimationsAgentEnd, handleAnimationsAgentStart, handleAnimationsMessageEnd, handleAnimationsMessageUpdate, handleAnimationsToolExecutionEnd, handleAnimationsToolExecutionStart, pauseAnimationsRuntime, resumeAnimationsRuntime } from "../src/features/animations/index.ts";
 import { DEFAULT_SETTINGS } from "../src/settings.ts";
 import { stripAnsi } from "./helpers.test.ts";
 
@@ -19,6 +19,7 @@ function createMessage(thinking = "hidden thought") {
 	return { content: [{ type: "thinking", thinking }] } as any;
 }
 
+
 test.afterEach(() => {
 	disposeAnimations();
 });
@@ -32,6 +33,80 @@ test("流式 hidden thinking label 被替换为动画 component", () => {
 	const component = new AssistantMessageComponent(message, true) as any;
 
 	assert.equal(component.contentContainer.children.some((child: any) => child.constructor?.name === "AnimatedThinkingComponent"), true);
+});
+
+test("缺少 updateContent 能力时 Animations 独立 fail closed 并给出诊断", () => {
+	const state = enableAnimationsPatch({
+		chromeFrame: { supported: true, failures: new Map() },
+		animations: { supported: false, failure: "AssistantMessageComponent.prototype.updateContent missing" },
+		tui: { supported: true },
+	});
+
+	assert.equal(state.enabled, false);
+	assert.equal(state.failure, "AssistantMessageComponent.prototype.updateContent missing");
+});
+
+test("updateContent 完整透传 isStreaming true→false 给 Pi Markdown transformer", () => {
+	ensurePiTheme();
+	configureAnimations(DEFAULT_SETTINGS.animations);
+	const streamingStates: boolean[] = [];
+	const transformer = (markdown: string, context: { isStreaming: boolean }) => {
+		streamingStates.push(context.isStreaming);
+		return markdown;
+	};
+	const component = new AssistantMessageComponent(undefined, false, undefined, "Thinking...", 1, [transformer]) as any;
+	streamingStates.length = 0;
+	component.updateContent({ content: [{ type: "text", text: "streaming" }] }, true);
+	component.render(80);
+	component.updateContent({ content: [{ type: "text", text: "done" }], stopReason: "stop" }, false);
+	component.render(80);
+
+	assert.ok(streamingStates.includes(true));
+	assert.ok(streamingStates.includes(false));
+});
+
+test("每次 native update 先 dispose 旧 thinking component 再创建替代", () => {
+	configureAnimations(DEFAULT_SETTINGS.animations);
+	resumeAnimationsRuntime();
+	const firstMessage = createMessage("first");
+	handleAnimationsMessageUpdate({ message: firstMessage, assistantMessageEvent: { type: "thinking_delta" } });
+	const component = new AssistantMessageComponent(firstMessage, true) as any;
+	const state = getAnimationsRuntimeState();
+	const firstOwned = [...state.activeComponents][0];
+	assert.ok(firstOwned);
+
+	const secondMessage = createMessage("second");
+	handleAnimationsMessageUpdate({ message: secondMessage, assistantMessageEvent: { type: "thinking_delta" } });
+	component.updateContent(secondMessage, true);
+	assert.equal(state.activeComponents.has(firstOwned!), false);
+	assert.equal(state.activeComponents.size, 1);
+});
+
+test("关闭 Animations 会 dispose orphan components，重开不复活历史", () => {
+	configureAnimations(DEFAULT_SETTINGS.animations);
+	resumeAnimationsRuntime();
+	const state = getAnimationsRuntimeState();
+	const animated = new AnimatedThinkingComponent(state);
+	assert.equal(state.activeComponents.has(animated), true);
+	configureAnimations({ ...DEFAULT_SETTINGS.animations, enabled: false });
+	assert.equal(state.activeComponents.size, 0);
+	configureAnimations(DEFAULT_SETTINGS.animations);
+	assert.equal(state.activeComponents.size, 0);
+});
+
+test("AnimatedThinking outputPad=0/1 同时适用于动态与完成态", () => {
+	configureAnimations(DEFAULT_SETTINGS.animations);
+	const state = getAnimationsRuntimeState();
+	const dynamic0 = new AnimatedThinkingComponent(state, "shimmer", false, undefined, 0);
+	const done0 = new AnimatedThinkingComponent(state, "shimmer", true, "done", 0);
+	const dynamic1 = new AnimatedThinkingComponent(state, "shimmer", false, undefined, 1);
+	const done1 = new AnimatedThinkingComponent(state, "shimmer", true, "done", 1);
+	assert.doesNotMatch(dynamic0.render(40)[0], /^ | $/);
+	assert.equal(done0.render(40)[0], "done");
+	assert.match(dynamic1.render(40)[0], /^ .* $/);
+	assert.equal(done1.render(40)[0], " done ");
+	dynamic0.dispose();
+	dynamic1.dispose();
 });
 
 test("disable 后恢复原始 updateContent", () => {
@@ -77,7 +152,7 @@ test("已完成 hidden thinking 显示静态完成文案但不进入动画集合
 	ensurePiTheme();
 	configureAnimations(DEFAULT_SETTINGS.animations);
 	const state = getAnimationsRuntimeState();
-	const component = new AssistantMessageComponent({ content: [{ type: "thinking", thinking: "done" }, { type: "text", text: "answer" }] }, true) as any;
+	const component = new AssistantMessageComponent({ content: [{ type: "thinking", thinking: "done" }, { type: "text", text: "answer" }] } as any, true) as any;
 
 	assert.equal(component.contentContainer.children.some((child: any) => child.constructor?.name === "AnimatedThinkingComponent"), false);
 	assert.match(stripAnsi(component.render(80).join("\n")), /Thinking complete/);
@@ -365,6 +440,24 @@ test("隐藏型动画在 pause、settings disable 和 dispose 时恢复原生 sp
 		else disposeAnimations();
 		assert.equal(workingMessages.at(-1), undefined);
 		assert.equal(indicators.at(-1), undefined);
+	}
+});
+
+test("retry、overflow compaction 与 queued continuation 均按 attempt 在 agent_end 清理并可重启", () => {
+	for (const scenario of ["retry", "overflow-compaction", "queued-continuation"]) {
+		configureAnimations({ ...DEFAULT_SETTINGS.animations, working: "matrix3", width: "default" });
+		const writes: Array<string | undefined> = [];
+		const ctx = { id: scenario, ui: { setWorkingMessage: (message?: string) => writes.push(message), setWorkingIndicator() {} } };
+		handleAnimationsAgentStart({ scenario }, ctx);
+		const state = getAnimationsRuntimeState();
+		assert.equal(state.animating, true, scenario);
+		handleAnimationsAgentEnd({ scenario }, ctx);
+		assert.equal(state.animating, false, scenario);
+		assert.equal(state.timer, undefined, scenario);
+		handleAnimationsAgentStart({ scenario: `${scenario}-next` }, ctx);
+		assert.equal(state.animating, true, scenario);
+		handleAnimationsAgentEnd({}, ctx);
+		assert.equal(state.animating, false, scenario);
 	}
 });
 

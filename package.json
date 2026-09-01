@@ -1,8 +1,8 @@
 {
   "name": "alps-pi",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "type": "module",
-  "description": "Personal pi beautification extension with runtime TUI message frames, fixed bottom input, animations, and theme support.",
+  "description": "Personal Pi 0.84.4+ TUI beautification extension with message frames, input styling, animations, and theme support.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -36,14 +36,21 @@
   ],
   "scripts": {
     "test": "node --test --experimental-strip-types test/**/*.test.ts",
-    "test:watch": "node --test --watch --experimental-strip-types test/**/*.test.ts"
+    "test:watch": "node --test --watch --experimental-strip-types test/**/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "proper-lockfile": "^4.1.2"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.75.5 <0.76.0",
-    "@earendil-works/pi-tui": ">=0.75.5 <0.76.0"
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.75.5",
-    "@earendil-works/pi-tui": "^0.75.5"
+    "@earendil-works/pi-coding-agent": "^0.84.4",
+    "@earendil-works/pi-tui": "^0.84.4",
+    "@types/node": "^22.15.0",
+    "@types/proper-lockfile": "^4.1.4",
+    "typescript": "^5.9.3"
   }
 }

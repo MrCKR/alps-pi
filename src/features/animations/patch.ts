@@ -1,15 +1,17 @@
 /** 功能：独立 patch AssistantMessageComponent hidden thinking label 为 alps 内置动画。 实现者：alps 实现日期：2026-05-29 */
 
-import { AssistantMessageComponent } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { PI_COMPONENTS, inspectPiRuntimeCapabilities, type PiRuntimeCapabilities } from "../../pi-compat.ts";
 import { AnimatedThinkingComponent, THINKING_DONE_LABEL, getAnimationsRuntimeState } from "./runtime.ts";
 
+const { AssistantMessageComponent } = PI_COMPONENTS;
 const ANIMATIONS_PATCH_KEY = Symbol.for("alps.pi.animations.patch.v1");
 
 export type AnimationsPatchState = {
 	enabled: boolean;
 	originalUpdateContent?: Function;
 	wrappedUpdateContent?: Function;
+	failure?: string;
 };
 
 export function getAnimationsPatchState(): AnimationsPatchState {
@@ -20,21 +22,30 @@ export function getAnimationsPatchState(): AnimationsPatchState {
 	return state;
 }
 
-export function enableAnimationsPatch(): AnimationsPatchState {
+export function enableAnimationsPatch(capabilities: PiRuntimeCapabilities = inspectPiRuntimeCapabilities()): AnimationsPatchState {
 	const state = getAnimationsPatchState();
 	const proto = AssistantMessageComponent.prototype as any;
+	state.failure = undefined;
+	if (!capabilities.animations.supported) {
+		state.enabled = false;
+		state.failure = capabilities.animations.failure ?? "animations capability unavailable";
+		return state;
+	}
 	if (state.enabled && proto.updateContent === state.wrappedUpdateContent) return state;
-	if (typeof proto.updateContent !== "function") return state;
+	if (typeof proto.updateContent !== "function") {
+		state.failure = "AssistantMessageComponent.prototype.updateContent missing";
+		return state;
+	}
 	const original = state.originalUpdateContent ?? proto.updateContent;
 	state.originalUpdateContent = original;
-	state.wrappedUpdateContent = function patchedUpdateContent(this: any, message: any) {
-		const runtimeState = getAnimationsRuntimeState();
+	state.wrappedUpdateContent = function patchedUpdateContent(this: any, ...args: any[]) {
+		const message = args[0];
 		try {
-			if (runtimeState.settings.enabled && this.__alpsPiAnimatedThinkingApplied) disposeExistingAnimatedThinking(this);
+			if (this.__alpsPiAnimatedThinkingApplied) disposeExistingAnimatedThinking(this);
 		} catch {
 			// 清理旧动画组件失败不能阻断 Pi 原生渲染。
 		}
-		original.call(this, message);
+		Reflect.apply(original, this, args);
 		try {
 			replaceHiddenThinkingLabels(this, message);
 		} catch (error) {
@@ -55,6 +66,7 @@ export function disableAnimationsPatch(): AnimationsPatchState {
 	state.enabled = false;
 	state.wrappedUpdateContent = undefined;
 	state.originalUpdateContent = undefined;
+	state.failure = undefined;
 	return state;
 }
 
@@ -79,10 +91,10 @@ function replaceHiddenThinkingLabels(instance: any, message: any): void {
 		const child = children[index];
 		if (!isHiddenThinkingText(instance, child)) continue;
 		if (shouldAnimate) {
-			children[index] = new AnimatedThinkingComponent(runtimeState, undefined, false, readStyledCompletionLabel(child));
+			children[index] = new AnimatedThinkingComponent(runtimeState, undefined, false, readStyledCompletionLabel(child), readOutputPad(instance));
 			instance.__alpsPiAnimatedThinkingApplied = true;
 		} else if (shouldFreezeHiddenThinking(message)) {
-			children[index] = createCompletedThinkingText(child);
+			children[index] = createCompletedThinkingText(child, readOutputPad(instance));
 		}
 	}
 }
@@ -100,9 +112,13 @@ function shouldAnimateHiddenThinking(runtimeState: ReturnType<typeof getAnimatio
 	return runtimeState.animating && runtimeState.currentAssistantMessage === message && !shouldFreezeHiddenThinking(message);
 }
 
-function createCompletedThinkingText(child: any): Text {
+function createCompletedThinkingText(child: any, outputPad: number): Text {
 	// 完成态保持原生 Text 组件，避免历史消息进入动画 timer/activeComponents 集合。
-	return new Text(readStyledCompletionLabel(child) ?? THINKING_DONE_LABEL, 1, 0);
+	return new Text(readStyledCompletionLabel(child) ?? THINKING_DONE_LABEL, outputPad, 0);
+}
+
+function readOutputPad(instance: any): number {
+	return instance?.outputPad === 0 ? 0 : 1;
 }
 
 function readStyledCompletionLabel(child: any): string | undefined {

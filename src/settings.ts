@@ -12,7 +12,7 @@ export type ChromeFrameSettings = {
 };
 
 export type FixedBottomEditorSettings = {
-	/** 固定输入框：只控制编辑器是否固定在底部。 */
+	/** 0.1.x 回滚兼容字段；0.2.0 runtime 不读取或改写。 */
 	enabled: boolean;
 };
 
@@ -45,39 +45,30 @@ export type BottomInputShortcutSettings = {
 	copyEditor: string;
 	/** 剪切输入框文本。 */
 	cutEditor: string;
-	/** 聊天区向上滚动。 */
+	/** 0.1.x 回滚兼容字段；现代 runtime 由 Pi 管理 transcript 滚动。 */
 	scrollChatUp: string;
-	/** 聊天区向下滚动。 */
+	/** 0.1.x 回滚兼容字段；现代 runtime 由 Pi 管理 transcript 滚动。 */
 	scrollChatDown: string;
 	/** 编辑器光标到开头。 */
 	editorStart: string;
 	/** 编辑器光标到末尾。 */
 	editorEnd: string;
-	/** 跳到上一条用户消息。 */
+	/** 0.1.x 回滚兼容字段；现代 runtime 不执行 transcript 跳转。 */
 	jumpPreviousUserMessage: string;
-	/** 跳到下一条用户消息。 */
+	/** 0.1.x 回滚兼容字段；现代 runtime 不执行 transcript 跳转。 */
 	jumpNextUserMessage: string;
-	/** 跳到上一条助手消息。 */
+	/** 0.1.x 回滚兼容字段；现代 runtime 不执行 transcript 跳转。 */
 	jumpPreviousAssistantMessage: string;
-	/** 跳到下一条助手消息。 */
+	/** 0.1.x 回滚兼容字段；现代 runtime 不执行 transcript 跳转。 */
 	jumpNextAssistantMessage: string;
-	/** 回到聊天底部。 */
+	/** 0.1.x 回滚兼容字段；现代 runtime 不执行 transcript 跳转。 */
 	jumpChatBottom: string;
-};
-
-export type FixedBottomEditorStatus = {
-	/** 用户期望的运行时开关状态。 */
-	enabled: boolean;
-	/** runtime 是否已完成 editor/footer/compositor 安装。 */
-	installed: boolean;
-	/** runtime 启停失败原因；失败时必须 fail closed。 */
-	failure?: string;
 };
 
 export type AlpsPiSettings = {
 	/** 线框美化功能配置。 */
 	chromeFrame: ChromeFrameSettings;
-	/** 固定底部输入框功能配置。 */
+	/** 仅为 0.1.x 回滚保留的 legacy 配置，不参与现代 runtime。 */
 	fixedBottomEditor: FixedBottomEditorSettings;
 	/** 输入框线框美化配置。 */
 	beautifiedInput: BeautifiedInputSettings;

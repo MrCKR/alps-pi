@@ -1,15 +1,14 @@
 /** 功能：注册 /alps-pi 命令并实现 settings/preview 契约 实现者：alps 实现日期：2026-05-26 */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createPreviewComponent, disablePatch, enablePatch, getGlobalPatchState, getRuntimeTheme, type PatchState } from "./features/chrome-frame/index.ts";
+import { createPreviewComponent, getGlobalPatchState, getRuntimeTheme, setChromeFramePreference, type PatchState } from "./features/chrome-frame/index.ts";
 import { createSettingsComponent } from "./settings-ui.ts";
-import type { AlpsPiSettings, FixedBottomEditorStatus } from "./settings.ts";
+import type { AlpsPiSettings } from "./settings.ts";
 
 export type CommandOps = {
 	enable?: () => PatchState;
 	disable?: () => PatchState;
-	setFixedBottomEditorEnabled?: (enabled: boolean, ctx: any) => FixedBottomEditorStatus | void;
-	setBeautifiedInputEnabled?: (enabled: boolean, ctx: any) => FixedBottomEditorStatus | void;
+	setBeautifiedInputEnabled?: (enabled: boolean, ctx: any) => void;
 	onSettingsChanged?: (settings: AlpsPiSettings, ctx: any) => void;
 };
 
@@ -87,8 +86,8 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 		handler: async (args: string, ctx: any) => {
 			const trimmedArgs = (args ?? "").trim();
 			const action = trimmedArgs === "" ? "" : trimmedArgs.split(/\s+/)[0]!;
-			const enableFn = ops.enable ?? (() => enablePatch());
-			const disableFn = ops.disable ?? (() => disablePatch());
+			const enableFn = ops.enable ?? (() => setChromeFramePreference(true));
+			const disableFn = ops.disable ?? (() => setChromeFramePreference(false));
 			const setBeautifiedInputEnabled = ops.setBeautifiedInputEnabled ?? ((enabled: boolean) => {
 				getGlobalPatchState().config.settings.beautifiedInput.enabled = enabled;
 				return undefined;
@@ -96,17 +95,6 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 			const onSettingsChanged = ops.onSettingsChanged ?? ((settings: AlpsPiSettings) => {
 				getGlobalPatchState().config.settings.shortcuts = { ...settings.shortcuts };
 			});
-			const setFixedEnabled = ops.setFixedBottomEditorEnabled ?? ((enabled: boolean) => {
-				const state = getGlobalPatchState();
-				// 默认 fallback 也只更新用户偏好；runtime 不存在时返回 failure，不把显式 ON 回滚成 OFF。
-				state.config.settings.fixedBottomEditor.enabled = enabled;
-				const status: FixedBottomEditorStatus = { enabled: false, installed: false };
-				if (enabled) {
-					status.failure = "fixed bottom editor runtime ops not registered";
-				}
-				return status;
-			});
-
 			switch (action) {
 				case "": {
 					const ui = readCommandUI(ctx);
@@ -153,12 +141,6 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 									onSettingsChanged(result.config.settings, ctx);
 									return result;
 								}) ?? getGlobalPatchState(),
-								setFixedBottomEditorEnabled: (enabled) => {
-									// 固定输入框依赖当前 interactive session；ctx stale 时当前设置面板回调失效。
-									const result = runIfActive(() => setFixedEnabled(enabled, ctx));
-									refocusSettingsOverlay();
-									return result;
-								},
 								setBeautifiedInputEnabled: (enabled) => {
 									const result = runIfActive(() => setBeautifiedInputEnabled(enabled, ctx));
 									refocusSettingsOverlay();

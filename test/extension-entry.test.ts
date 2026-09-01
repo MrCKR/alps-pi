@@ -10,8 +10,11 @@ import { createInitialPatchState, PATCH_KEY } from "../src/features/chrome-frame
 import { configureAnimations, disposeAnimations, getAnimationsPatchState, getAnimationsRuntimeState } from "../src/features/animations/index.ts";
 import type { BottomInputRuntime } from "../src/features/bottom-input/index.ts";
 import { DEFAULT_SETTINGS } from "../src/settings.ts";
+import type { PiRuntimeCapabilities } from "../src/pi-compat.ts";
 
-function createHarness(options: { failEnable?: boolean; configureFailure?: boolean } = {}) {
+const TUI_OWNER_KEY = Symbol.for("alps.pi.tui-owner.v1");
+
+function createHarness(options: { failEnable?: boolean; configureFailure?: boolean; capabilities?: PiRuntimeCapabilities } = {}) {
 	const handlers = new Map<string, Function[]>();
 	const commands = new Map<string, any>();
 	const runtimeCalls: string[] = [];
@@ -20,15 +23,6 @@ function createHarness(options: { failEnable?: boolean; configureFailure?: boole
 	const runtime: BottomInputRuntime = {
 		bindSession(ctx: any) {
 			runtimeCalls.push(`bind:${ctx.id}`);
-		},
-		setEnabled(nextEnabled: boolean) {
-			runtimeCalls.push(`set:${nextEnabled}`);
-			if (options.failEnable && nextEnabled) {
-				enabled = false;
-				return { enabled: false, installed: false, failure: "boom" };
-			}
-			enabled = nextEnabled;
-			return { enabled, installed: enabled };
 		},
 		dispose() {
 			// 记录 dispose 当下的 patch 状态，强约束 shutdown 必须先释放 runtime 再 disablePatch。
@@ -39,14 +33,13 @@ function createHarness(options: { failEnable?: boolean; configureFailure?: boole
 		getStatus() {
 			return { enabled, installed: enabled };
 		},
-		configure(settings: { fixedEnabled?: boolean; beautifiedInputEnabled?: boolean }) {
+		configure(settings: { beautifiedInputEnabled?: boolean }) {
 			if (typeof settings.beautifiedInputEnabled === "boolean") runtimeCalls.push(`beautified:${settings.beautifiedInputEnabled}`);
-			if (typeof settings.fixedEnabled === "boolean") runtimeCalls.push(`set:${settings.fixedEnabled}`);
-			if (options.configureFailure && settings.fixedEnabled) {
+			if (options.configureFailure && settings.beautifiedInputEnabled) {
 				enabled = false;
-				return { enabled: false, installed: false, failure: "boom" };
+				return { enabled: true, installed: false, failure: "boom" };
 			}
-			if (typeof settings.fixedEnabled === "boolean") enabled = settings.fixedEnabled;
+			if (typeof settings.beautifiedInputEnabled === "boolean") enabled = settings.beautifiedInputEnabled;
 			return { enabled, installed: enabled };
 		},
 		setBeautifiedInputEnabled(nextEnabled: boolean) {
@@ -94,7 +87,10 @@ function createHarness(options: { failEnable?: boolean; configureFailure?: boole
 		},
 	};
 
-	registerAlpsPiExtension(pi as any, { bottomInputRuntime: runtime });
+	registerAlpsPiExtension(pi as any, {
+		bottomInputRuntime: runtime,
+		inspectCapabilities: options.capabilities ? () => options.capabilities! : undefined,
+	});
 
 	return {
 		commands,
@@ -102,8 +98,11 @@ function createHarness(options: { failEnable?: boolean; configureFailure?: boole
 		handlers,
 		runtimeCalls,
 		emit(event: string, ctx: any = { id: "ctx" }, payload: any = {}) {
+			const eventCtx = event === "session_start" && ctx?.mode === undefined && ctx?.hasUI === undefined
+				? { ...ctx, mode: "tui", hasUI: true }
+				: ctx;
 			for (const handler of handlers.get(event) ?? []) {
-				handler(payload, ctx);
+				handler(payload, eventCtx);
 			}
 		},
 	};
@@ -111,21 +110,12 @@ function createHarness(options: { failEnable?: boolean; configureFailure?: boole
 
 const settingsDirs: string[] = [];
 
-function readPersistedFixedEnabled(): boolean | null {
-	const file = process.env.ALPS_PI_SETTINGS_PATH!;
-	try {
-		const raw = JSON.parse(readFileSync(file, "utf-8"));
-		return raw?.fixedBottomEditor?.enabled ?? raw?.["alps-pi"]?.fixedBottomEditor?.enabled ?? null;
-	} catch {
-		return null;
-	}
-}
-
 test.beforeEach(() => {
 	const dir = mkdtempSync(join(tmpdir(), "alps-pi-entry-"));
 	settingsDirs.push(dir);
 	process.env.ALPS_PI_SETTINGS_PATH = join(dir, "settings.json");
 	(globalThis as any)[PATCH_KEY] = createInitialPatchState();
+	delete (globalThis as any)[TUI_OWNER_KEY];
 });
 
 test.afterEach(() => {
@@ -147,29 +137,52 @@ test("extension load 后注册 session_start、动画事件和 session_shutdown"
 	assert.equal(harness.handlers.get("agent_end")?.length, 1);
 	assert.equal(harness.handlers.get("session_shutdown")?.length, 1);
 	assert.ok(harness.commands.has("shortcut:alt+s"));
+	assert.equal((globalThis as any)[PATCH_KEY].enabled, false);
+	assert.deepEqual(harness.runtimeCalls, []);
+});
+
+test("Pi 0.84+ 仅 mode=tui 取得 owner，缺 mode 与 RPC 均 fail closed", () => {
+	const missingMode = createHarness();
+	missingMode.emit("session_start", { id: "missing-mode", hasUI: true });
+	assert.equal((globalThis as any)[PATCH_KEY].enabled, false);
+	assert.deepEqual(missingMode.runtimeCalls, []);
+
+	const rpc = createHarness();
+	rpc.emit("session_start", { id: "rpc", mode: "rpc", hasUI: true });
+	assert.equal((globalThis as any)[PATCH_KEY].enabled, false);
+	assert.deepEqual(rpc.runtimeCalls, []);
+});
+
+test("chrome-frame 能力缺失时只关闭 runtime 且保留用户偏好", () => {
+	const harness = createHarness({
+		capabilities: {
+			chromeFrame: { supported: false, failures: new Map([["UserMessageComponent", "prototype.render missing"]]) },
+			animations: { supported: true },
+			tui: { supported: true },
+		},
+	});
+	harness.emit("session_start", { id: "capability-failure" });
+
+	const state = (globalThis as any)[PATCH_KEY];
+	assert.equal(state.enabled, false);
+	assert.equal(state.config.settings.chromeFrame.enabled, true);
+	assert.equal(state.failures.get("compat:UserMessageComponent"), "prototype.render missing");
+	assert.equal(harness.runtimeCalls.includes("beautified:true"), true);
+	harness.emit("session_shutdown", { id: "capability-failure", mode: "tui", hasUI: true });
 });
 
 test("session_start 配置 animations 并调用统一 runtime", () => {
 	const harness = createHarness();
 	harness.emit("session_start", { id: "one" });
 
-	assert.deepEqual(harness.runtimeCalls, ["shortcuts", "beautified:true", "bind:one", "resetTime", "prompt:", "shortcuts", "beautified:true", "set:true"]);
+	assert.deepEqual(harness.runtimeCalls, ["bind:one", "resetTime", "prompt:", "shortcuts", "beautified:true"]);
 	assert.equal(getAnimationsRuntimeState().currentEventCtx.id, "one");
 	assert.equal(getAnimationsPatchState().enabled, true);
 });
 
-test("若设置为 true，session_start 尝试安装 runtime", () => {
+test("TUI owner session_shutdown 先 dispose runtime、保留用户偏好，再 disablePatch", () => {
 	const harness = createHarness();
-	(globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled = true;
-
-	harness.emit("session_start", { id: "two" });
-
-	assert.ok(harness.runtimeCalls.includes("set:true"));
-	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, true);
-});
-
-test("session_shutdown 先 dispose runtime、保留 fixedBottomEditor/beautifiedInput 设置，再 disablePatch", () => {
-	const harness = createHarness();
+	harness.emit("session_start", { id: "owner" });
 	(globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled = true;
 	(globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled = false;
 	assert.equal((globalThis as any)[PATCH_KEY].enabled, true);
@@ -184,39 +197,78 @@ test("session_shutdown 先 dispose runtime、保留 fixedBottomEditor/beautified
 	assert.equal("bottomStatus" in (globalThis as any)[PATCH_KEY].config.settings, false);
 	assert.equal(getAnimationsPatchState().enabled, false);
 	assert.equal((globalThis as any)[PATCH_KEY].enabled, false);
+	assert.equal((globalThis as any)[PATCH_KEY].config.settings.chromeFrame.enabled, true);
 });
 
-test("shutdown 后下一次 session_start 会按持久化设置恢复 fixed editor 和 beautified input", () => {
+test("无 UI 子 session 的事件和 shutdown 不得释放父 TUI runtime", () => {
+	const parent = createHarness();
+	const child = createHarness();
+	parent.emit("session_start", { id: "parent" });
+	const parentCallsBeforeChild = parent.runtimeCalls.length;
+	const childCtx = { id: "child", mode: "json", hasUI: false };
+
+	child.emit("session_start", childCtx);
+	child.emit("agent_start", childCtx);
+	child.emit("session_shutdown", childCtx);
+
+	const state = (globalThis as any)[PATCH_KEY];
+	assert.equal(state.enabled, true);
+	assert.equal(state.config.settings.chromeFrame.enabled, true);
+	assert.ok(state.patched.size > 0);
+	assert.equal(getAnimationsPatchState().enabled, true);
+	assert.deepEqual(child.runtimeCalls, []);
+	assert.equal(parent.runtimeCalls.length, parentCallsBeforeChild);
+	assert.deepEqual(parent.disposePatchEnabledSnapshots, []);
+
+	parent.emit("session_shutdown", { id: "parent", mode: "tui", hasUI: true });
+});
+
+test("陈旧 TUI owner 的 shutdown 不得释放新 owner 的 runtime", () => {
+	const previousOwner = createHarness();
+	const currentOwner = createHarness();
+	previousOwner.emit("session_start", { id: "previous" });
+	currentOwner.emit("session_start", { id: "current" });
+
+	previousOwner.emit("session_shutdown", { id: "previous", mode: "tui", hasUI: true });
+	assert.equal((globalThis as any)[PATCH_KEY].enabled, true);
+	assert.deepEqual(previousOwner.disposePatchEnabledSnapshots, []);
+
+	currentOwner.emit("session_shutdown", { id: "current", mode: "tui", hasUI: true });
+	assert.equal((globalThis as any)[PATCH_KEY].enabled, false);
+	assert.equal((globalThis as any)[PATCH_KEY].config.settings.chromeFrame.enabled, true);
+	assert.deepEqual(currentOwner.disposePatchEnabledSnapshots, [true]);
+});
+
+test("shutdown 后下一次 TUI session_start 会按持久化设置恢复 fixed editor 和 beautified input", () => {
 	const harness = createHarness();
+	harness.emit("session_start", { id: "current" });
 	(globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled = true;
 	(globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled = false;
 
 	harness.emit("session_shutdown");
 	harness.emit("session_start", { id: "next" });
 
-	assert.deepEqual(harness.runtimeCalls.slice(-6), ["bind:next", "resetTime", "prompt:", "shortcuts", "beautified:false", "set:true"]);
+	assert.deepEqual(harness.runtimeCalls.slice(-5), ["bind:next", "resetTime", "prompt:", "shortcuts", "beautified:false"]);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, true);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled, false);
 });
 
-test("session_start 会按设置切换 beautified input", () => {
+test("session_start 会按持久化设置切换 beautified input", () => {
+	const file = process.env.ALPS_PI_SETTINGS_PATH!;
+	writeFileSync(file, JSON.stringify({ beautifiedInput: { enabled: false } }), "utf-8");
 	const harness = createHarness();
-	(globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled = false;
 
 	harness.emit("session_start", { id: "beautified" });
 
 	assert.equal(harness.runtimeCalls.includes("beautified:false"), true);
 });
 
-test("session_start 安装失败时保留 fixedBottomEditor 用户偏好 true", () => {
+test("Beautified Input 安装失败时保留用户偏好 true", () => {
 	const harness = createHarness({ configureFailure: true });
-	(globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled = true;
-
 	harness.emit("session_start", { id: "fail" });
 
-	assert.equal(harness.runtimeCalls.includes("set:true"), true);
-	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, true);
-	assert.equal(readPersistedFixedEnabled(), null);
+	assert.equal(harness.runtimeCalls.includes("beautified:true"), true);
+	assert.equal((globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled, true);
 });
 
 test("扩展启动时读取持久化设置", () => {
@@ -253,6 +305,7 @@ test("tool_execution_update 默认关闭 debug 时只记录诊断且不改变 an
 	delete process.env.ALPS_PI_ANIM_DEBUG_LOG;
 	try {
 		const harness = createHarness();
+		harness.emit("session_start", { id: "owner" });
 		const state = getAnimationsRuntimeState();
 		const workingMessages: string[] = [];
 		const originalCtx = {
@@ -277,6 +330,7 @@ test("tool_execution_update 默认关闭 debug 时只记录诊断且不改变 an
 
 test("message_update 绑定 animations ctx，turn_end 不停止动画且 agent_end 清理", () => {
 	const harness = createHarness();
+	harness.emit("session_start", { id: "owner" });
 	const workingMessages: Array<string | undefined> = [];
 	const indicators: Array<unknown> = [];
 	const animCtx = {
@@ -329,6 +383,8 @@ test("message_update 绑定 animations ctx，turn_end 不停止动画且 agent_e
 
 test("模型、thinking 与消息事件会刷新统一 runtime", () => {
 	const harness = createHarness();
+	harness.emit("session_start", { id: "owner" });
+	harness.runtimeCalls.length = 0;
 
 	harness.emit("model_select", { id: "model" });
 	harness.emit("thinking_level_select", { id: "think" }, { level: "high" });
@@ -338,7 +394,7 @@ test("模型、thinking 与消息事件会刷新统一 runtime", () => {
 	harness.emit("message_end", { id: "end" });
 	harness.emit("turn_end", { id: "turn" });
 
-	assert.deepEqual(harness.runtimeCalls.slice(2), [
+	assert.deepEqual(harness.runtimeCalls, [
 		"bind:model",
 		"render",
 		"bind:think",
@@ -362,20 +418,16 @@ test("Alt+S shortcut 调用统一 runtime 暂存逻辑", async () => {
 	assert.equal(harness.runtimeCalls.includes("stash"), true);
 });
 
-test("命令层 fixed/beautified ops 使用入口创建的统一 runtime 并用命令 ctx 懒绑定 session", async () => {
+test("命令层只切换 Beautified Input，并原样持久化 legacy fixed 偏好", async () => {
 	const harness = createHarness();
+	(globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled = true;
 	const ctx = {
 		id: "command-ctx",
 		hasUI: true,
 		ui: {
 			custom(factory: any) {
 				const component = factory({}, undefined, {}, () => {});
-				component.handleInput("\x1b[B");
-				component.handleInput("\x1b[B");
-				component.handleInput("\x1b[B");
-				component.handleInput("\x1b[B");
-				component.handleInput(" ");
-				component.handleInput("\x1b[B");
+				for (let i = 0; i < 4; i++) component.handleInput("\x1b[B");
 				component.handleInput(" ");
 				component.handleInput("q");
 				return Promise.resolve();
@@ -385,106 +437,9 @@ test("命令层 fixed/beautified ops 使用入口创建的统一 runtime 并用�
 	};
 
 	await harness.commands.get("alps-pi").handler("", ctx);
-	assert.equal(harness.runtimeCalls.includes("bind:command-ctx"), true);
-	assert.equal(harness.runtimeCalls.includes("set:false"), true);
-	assert.equal(harness.runtimeCalls.includes("beautified:false"), true);
-});
-
-test("美化输入框切换 fixed fail-closed 时保留 fixed 用户偏好", async () => {
-	const harness = createHarness({ configureFailure: true });
-	(globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled = true;
-	const ctx = {
-		id: "command-ctx",
-		hasUI: true,
-		ui: {
-			custom(factory: any) {
-				const component = factory({}, undefined, {}, () => {});
-				for (let i = 0; i < 5; i++) component.handleInput("\x1b[B");
-				component.handleInput(" ");
-				return Promise.resolve();
-			},
-			notify() {},
-		},
-	};
-
-	await harness.commands.get("alps-pi").handler("", ctx);
+	assert.deepEqual(harness.runtimeCalls, ["bind:command-ctx", "beautified:false"]);
+	assert.equal((globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled, false);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, true);
-	assert.equal(readPersistedFixedEnabled(), true);
-});
-
-test("显式打开 Fixed Input 失败时持久化用户偏好 true", async () => {
-	const harness = createHarness({ configureFailure: true });
-	(globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled = false;
-	const ctx = {
-		id: "command-ctx",
-		hasUI: true,
-		ui: {
-			custom(factory: any) {
-				const component = factory({}, undefined, {}, () => {});
-				for (let i = 0; i < 4; i++) component.handleInput("\x1b[B");
-				component.handleInput(" ");
-				return Promise.resolve();
-			},
-			notify() {},
-		},
-	};
-
-	await harness.commands.get("alps-pi").handler("", ctx);
-	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, true);
-	assert.equal(readPersistedFixedEnabled(), true);
-});
-
-test("显式关闭 Fixed Input 持久化用户偏好 false", async () => {
-	const harness = createHarness();
-	(globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled = true;
-	const ctx = {
-		id: "command-ctx",
-		hasUI: true,
-		ui: {
-			custom(factory: any) {
-				const component = factory({}, undefined, {}, () => {});
-				for (let i = 0; i < 4; i++) component.handleInput("\x1b[B");
-				component.handleInput(" ");
-				return Promise.resolve();
-			},
-			notify() {},
-		},
-	};
-
-	await harness.commands.get("alps-pi").handler("", ctx);
-	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, false);
-	assert.equal(readPersistedFixedEnabled(), false);
-});
-
-test("重启读取 fixed true 后即使上次失败也会重试安装", () => {
-	const file = process.env.ALPS_PI_SETTINGS_PATH!;
-	writeFileSync(file, JSON.stringify({ fixedBottomEditor: { enabled: true }, beautifiedInput: { enabled: true } }), "utf-8");
-	const harness = createHarness({ configureFailure: true });
-
-	harness.emit("session_start", { id: "retry" });
-
-	assert.equal(harness.runtimeCalls.includes("set:true"), true);
-	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, true);
-	assert.equal(readPersistedFixedEnabled(), true);
-});
-
-test("美化输入框切换不强行安装 fixed runtime", async () => {
-	const harness = createHarness();
-	(globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled = false;
-	const ctx = {
-		id: "command-ctx",
-		hasUI: true,
-		ui: {
-			custom(factory: any) {
-				const component = factory({}, undefined, {}, () => {});
-				for (let i = 0; i < 5; i++) component.handleInput("\x1b[B");
-				component.handleInput(" ");
-				return Promise.resolve();
-			},
-			notify() {},
-		},
-	};
-
-	await harness.commands.get("alps-pi").handler("", ctx);
-	assert.deepEqual(harness.runtimeCalls, ["shortcuts", "beautified:true", "bind:command-ctx", "beautified:false", "set:false"]);
+	const persisted = JSON.parse(readFileSync(process.env.ALPS_PI_SETTINGS_PATH!, "utf-8"));
+	assert.equal(persisted.fixedBottomEditor.enabled, true);
 });

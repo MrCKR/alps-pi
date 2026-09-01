@@ -483,7 +483,20 @@ test("wrapper 右下角 token 使用原始 assistant content 估算", () => {
 	assert.doesNotMatch(stripAnsi(lines.at(-1)!), /\[ 10 \]/);
 });
 
-test("wrapper 右下角 token 可从 UserMessage 的 Markdown 原文估算", () => {
+test("wrapper 右下角 token 优先读取 Pi 0.84 UserMessage.text", () => {
+	class ModernUserComponent {
+		text = "u".repeat(24);
+		render(_width: number) {
+			return ["short rendered"];
+		}
+	}
+	const wrapped = createWrappedRender("ModernUser", "user", ModernUserComponent.prototype.render, () => createFakeTheme());
+	const lines = wrapped.call(new ModernUserComponent(), 42);
+
+	assert.match(stripAnsi(lines[0]!), /USER ─ \[ 6 \]/);
+});
+
+test("wrapper 右下角 token 保留旧 Markdown children fallback", () => {
 	class FakeMarkdown {
 		text = "u".repeat(20);
 	}
@@ -523,21 +536,20 @@ test("wrapper 右下角 token 使用原始 tool args/result，忽略极简渲染
 	assert.doesNotMatch(stripAnsi(lines.at(-1)!), /\[ 31 \]/);
 });
 
-test("excludeFromContext bash frame 显示 0", () => {
-	class ExcludedBashComponent {
+test("Bash frame 在缺少稳定 excludeFromContext 能力时不显示 token", () => {
+	class BashComponent {
 		command = "echo hidden";
 		outputLines = ["secret output"];
-		excludeFromContext = true;
 		status = "complete";
 		render(_width: number) {
 			return ["$ echo hidden", "secret output"];
 		}
 	}
-	const wrapped = createWrappedRender("ExcludedBash", "bash", ExcludedBashComponent.prototype.render, () => createFakeTheme());
-	const lines = wrapped.call(new ExcludedBashComponent(), 44);
+	const wrapped = createWrappedRender("Bash", "bash", BashComponent.prototype.render, () => createFakeTheme());
+	const lines = wrapped.call(new BashComponent(), 44);
 
-	assert.match(stripAnsi(lines[0]!), /BASH ─ \[ 0 \]/);
-	assert.doesNotMatch(stripAnsi(lines.at(-1)!), /\[ 0 \]/);
+	assert.match(stripAnsi(lines[0]!), /BASH/);
+	assert.doesNotMatch(stripAnsi(lines.join("\n")), /\[ \d/);
 });
 
 test("token 数超过千位时向上进位显示", () => {
@@ -644,7 +656,7 @@ class MultiLineComponent {
 function renderToolInstance(instance: any, kind: any = "tool", width = 48) {
 	const original = Object.getPrototypeOf(instance).render;
 	const theme = createFakeTheme();
-	const wrapped = createWrappedRender("ToolFake", kind, original, () => theme);
+	const wrapped = createWrappedRender("ToolFake", kind, original, () => theme, { forceImageFallback: kind === "tool" });
 	return { lines: wrapped.call(instance, width), instance, theme };
 }
 
@@ -761,7 +773,7 @@ test("toolName=bash 的 LLM tool 极简时优先显示命令关键行", () => {
 	assert.doesNotMatch(body, /stdout line/);
 });
 
-test("Tool 极简模式跳过 OSC、空行与图片行并保留 ANSI 文本", () => {
+test("Tool 极简模式遇到 Kitty 图片时完整回退原生 renderer 且 payload 仅一次", () => {
 	const kitty = "\x1b_Gf=100,a=T;AAAA\x1b\\";
 	class ComplexTool {
 		toolName = "read";
@@ -773,30 +785,29 @@ test("Tool 极简模式跳过 OSC、空行与图片行并保留 ANSI 文本", ()
 	}
 	const { lines } = renderToolInstance(new ComplexTool());
 	const joined = lines.join("\n");
-	const body = bodyText(lines);
 
-	assert.ok(joined.includes("\x1b[32mgreen first\x1b[39m"));
-	assert.match(body, /green first/);
-	assert.doesNotMatch(body, /second/);
-	assert.equal(joined.includes(kitty), false);
+	assert.equal(joined.split(kitty).length - 1, 1);
+	assert.ok(joined.includes("green first"));
+	assert.ok(joined.includes("second"));
+	assert.doesNotMatch(stripAnsi(lines[0] ?? ""), /TOOL read/);
 });
 
-test("Tool 极简模式原始内容只有图片时保留空 tool 外框", () => {
-	const kitty = "\x1b_Gf=100,a=T;AAAA\x1b\\";
+test("Tool 极简模式遇到 iTerm 图片时完整回退且 payload 仅一次", () => {
+	const iterm = "\x1b]1337;File=name=test.png;inline=1:AAAA\x07";
 	class ImageOnlyTool {
 		toolName = "image";
 		isPartial = false;
 		result = { isError: false };
 		render(_width: number) {
-			return [kitty];
+			return [iterm];
 		}
 	}
 	const { lines } = renderToolInstance(new ImageOnlyTool());
 	const joined = lines.join("\n");
 
-	assert.equal(lines.length, 3);
-	assert.match(stripAnsi(lines[0]!), /TOOL image ✓/);
-	assert.equal(joined.includes(kitty), false);
+	assert.equal(lines.length, 1);
+	assert.equal(joined.split(iterm).length - 1, 1);
+	assert.doesNotMatch(stripAnsi(joined), /TOOL image/);
 });
 
 test("Tool 极简模式优先显示有参数的关键调用行", () => {

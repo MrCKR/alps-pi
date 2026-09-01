@@ -66,12 +66,14 @@ export class AnimatedThinkingComponent implements Component {
 	private readonly state: AnimationRuntimeState;
 	private readonly animationName: string | undefined;
 	private readonly completionLabel: string | undefined;
+	private readonly outputPad: number;
 	private frozen = false;
 
-	constructor(state = getAnimationsRuntimeState(), animationName?: string, frozen = false, completionLabel?: string) {
+	constructor(state = getAnimationsRuntimeState(), animationName?: string, frozen = false, completionLabel?: string, outputPad = 1) {
 		this.state = state;
 		this.animationName = animationName;
 		this.completionLabel = completionLabel;
+		this.outputPad = outputPad === 0 ? 0 : 1;
 		this.frozen = frozen;
 		if (!this.frozen) {
 			this.state.activeComponents.add(this);
@@ -94,12 +96,13 @@ export class AnimatedThinkingComponent implements Component {
 	}
 
 	render(width: number): string[] {
-		if (!this.state.settings.enabled) return [" Thinking... "];
-		if (this.frozen) return [` ${this.completionLabel ?? renderThinkingCompleteLabel()} `];
+		const pad = " ".repeat(this.outputPad);
+		if (!this.state.settings.enabled) return [`${pad}Thinking...${pad}`];
+		if (this.frozen) return [`${pad}${this.completionLabel ?? renderThinkingCompleteLabel()}${pad}`];
 		const terminalWidth = Math.max(1, Math.floor(width));
-		const animationWidth = Math.min(resolveAnimationWidth(this.state.settings.width, terminalWidth), Math.max(1, terminalWidth - 2));
+		const animationWidth = Math.min(resolveAnimationWidth(this.state.settings.width, terminalWidth), Math.max(1, terminalWidth - this.outputPad * 2));
 		const name = this.animationName ?? resolveAnimationNameForPhase(this.state, "thinking");
-		return renderAnimationFrame(name, this.state.frame, animationWidth, "thinking").map((line) => ` ${line} `);
+		return renderAnimationFrame(name, this.state.frame, animationWidth, "thinking").map((line) => `${pad}${line}${pad}`);
 	}
 
 	invalidate(): void {}
@@ -187,6 +190,8 @@ export function configureAnimationsRuntime(settings: AnimationsSettings): void {
 	if (previousRandomMode !== state.settings.randomMode) resetRandomAnimations(state);
 	if (!state.settings.enabled) {
 		stopTimer(state);
+		for (const component of [...state.activeComponents]) component.dispose();
+		state.activeComponents.clear();
 		resetRandomAnimations(state);
 		clearWorkingAnimation(state);
 		resetHiddenThinkingLabel(state);

@@ -10,12 +10,20 @@ async function readReadme(): Promise<string> {
 	return readFile(resolve(import.meta.dirname, "..", "README.md"), "utf-8");
 }
 
-test("README 说明固定输入框默认开启且设置持久化", async () => {
+test("README 说明固定输入由 Pi fullscreen 原生提供", async () => {
 	const readme = await readReadme();
 
-	assert.match(readme, /固定底部输入框默认开启/);
-	assert.match(readme, /Fixed Input\s+控制实验性底部固定编辑器 runtime，默认 ON/);
-	assert.match(readme, /设置会持久化/);
+	assert.match(readme, /固定底部输入框由 Pi 原生 fullscreen TUI 提供/);
+	assert.match(readme, /`\/settings` 中将 `TUI mode` 设为 `fullscreen`/);
+	assert.match(readme, /regular.*不会模拟固定 dock/);
+});
+
+test("README 说明独立设置路径、迁移优先级与 namespace 回滚保留", async () => {
+	const readme = await readReadme();
+
+	assert.match(readme, /~\/\.pi\/agent\/alps-pi\/settings\.json/);
+	assert.match(readme, /独立主文件.*Pi settings.*namespace.*alps-pi\.json.*默认值/);
+	assert.match(readme, /保留原 namespace 供回滚/);
 });
 
 test("README 说明内置 alps 主题", async () => {
@@ -34,10 +42,10 @@ test("README 说明设置面板项目", async () => {
 	assert.match(readme, /Assistant Frame\s+控制 assistant 正文回复是否包线框，默认 ON/);
 	assert.match(readme, /Compact Tools\s+未展开 tool 只显示第一条有效文本行，默认 ON/);
 	assert.match(readme, /Compact Edit\s+允许 edit tool 也按极简模式展示，默认 OFF/);
-	assert.match(readme, /Fixed Input\s+控制实验性底部固定编辑器 runtime，默认 ON/);
+	assert.doesNotMatch(readme, /Fixed Input\s+控制/);
 	assert.match(readme, /Beautified Input\s+控制输入框线框与嵌入边框状态，默认 ON/);
 	assert.match(readme, /Animations\s+配置底部 Working\/Thinking\/Tool 与 hidden thinking 内置动画，默认 ON/);
-	assert.match(readme, /Shortcuts\s+管理底部输入框快捷键/);
+	assert.match(readme, /Shortcuts\s+管理暂存、复制、剪切和 editor 光标快捷键/);
 	assert.doesNotMatch(readme, /底部状态栏\s+显示模型/);
 });
 
@@ -59,10 +67,10 @@ test("README 说明 Animations 多行动画和 hidden thinking 完成态", async
 	assert.match(readme, /thinking 文案配色/);
 });
 
-test("README 说明固定输入框绘制接管风险", async () => {
+test("README 说明 Alps 不再接管 terminal viewport", async () => {
 	const readme = await readReadme();
 
-	assert.match(readme, /接管 editor\/footer 和 terminal 绘制/);
-	assert.match(readme, /聊天区在上方滚动、输入框固定在底部/);
-	assert.match(readme, /session_shutdown/);
+	assert.match(readme, /不再接管 terminal viewport/);
+	assert.match(readme, /滚动、选区、鼠标、粘贴和 dock 布局全部由 Pi 原生 TUI 管理/);
+	assert.match(readme, /不覆盖 `terminal\.write`、`terminal\.rows`、`tui\.render` 或 `tui\.doRender`/);
 });

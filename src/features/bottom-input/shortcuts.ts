@@ -54,6 +54,15 @@ export const SHORTCUT_LABELS: Record<BottomInputShortcutKey, string> = {
 
 export const SHORTCUT_KEYS = Object.keys(DEFAULT_BOTTOM_INPUT_SHORTCUTS) as BottomInputShortcutKey[];
 
+/** 0.2.0 仅暴露 editor/input 快捷键；旧 transcript 字段继续参与持久化但不再执行。 */
+export const EDITABLE_BOTTOM_INPUT_SHORTCUT_KEYS = [
+	"stashEditor",
+	"copyEditor",
+	"cutEditor",
+	"editorStart",
+	"editorEnd",
+] as const satisfies readonly BottomInputShortcutKey[];
+
 const SUPER_SHORTCUT_PATTERNS = new Map<string, RegExp>([
 	["super+up", /^\x1b\[(?:1;9(?::[12])?[AH]|574(?:19|23);9(?::[12])?u|7;9(?::[12])?~|27;9;65~)$/],
 	["super+down", /^\x1b\[(?:1;9(?::[12])?[BF]|574(?:20|24);9(?::[12])?u|8;9(?::[12])?~|27;9;66~)$/],
@@ -156,7 +165,7 @@ export function matchesConfiguredShortcut(data: string, shortcut: string): boole
 	if (shortcutUsesSuper(normalizedShortcut)) {
 		return SUPER_SHORTCUT_PATTERNS.get(normalizedShortcut)?.test(data) ?? false;
 	}
-	return matchesKey(data, normalizedShortcut);
+	return matchesKey(data, normalizedShortcut as Parameters<typeof matchesKey>[1]);
 }
 
 /** Alt+S 多编码匹配；配置为 alt+s 时也匹配原版特殊输入。 */

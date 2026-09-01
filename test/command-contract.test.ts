@@ -5,7 +5,7 @@ import test from "node:test";
 import { createInitialPatchState, PATCH_KEY } from "../src/features/chrome-frame/patch.ts";
 import { registerAlpsPiCommand } from "../src/commands.ts";
 
-function createHarness(options: { fixedFailure?: string } = {}) {
+function createHarness() {
 	const commands = new Map<string, any>();
 	const notifications: Array<{ message: string; level: string }> = [];
 	const customCalls: any[] = [];
@@ -16,10 +16,8 @@ function createHarness(options: { fixedFailure?: string } = {}) {
 	let focusedComponent: any = previousEditor;
 	let customResult: Promise<any> = Promise.resolve(undefined);
 	const patchCalls: string[] = [];
-	const fixedCalls: boolean[] = [];
 	const beautifiedInputCalls: boolean[] = [];
 	const settingsChangedCalls: any[] = [];
-	let fixedInstalled = false;
 	const pi = {
 		registerCommand(name: string, options: any) {
 			commands.set(name, options);
@@ -109,17 +107,6 @@ function createHarness(options: { fixedFailure?: string } = {}) {
 			state.patched.clear();
 			return state;
 		},
-		setFixedBottomEditorEnabled: (enabled: boolean) => {
-			fixedCalls.push(enabled);
-			const state = (globalThis as any)[PATCH_KEY];
-			state.config.settings.fixedBottomEditor.enabled = enabled;
-			if (options.fixedFailure && enabled) {
-				fixedInstalled = false;
-				return { enabled: false, installed: false, failure: options.fixedFailure };
-			}
-			fixedInstalled = enabled;
-			return { enabled, installed: fixedInstalled };
-		},
 		setBeautifiedInputEnabled: (enabled: boolean) => {
 			beautifiedInputCalls.push(enabled);
 			(globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled = enabled;
@@ -127,7 +114,6 @@ function createHarness(options: { fixedFailure?: string } = {}) {
 		onSettingsChanged: (settings: any) => {
 			settingsChangedCalls.push({
 				chromeFrame: { ...settings.chromeFrame },
-				fixedBottomEditor: { ...settings.fixedBottomEditor },
 				beautifiedInput: { ...settings.beautifiedInput },
 			});
 		},
@@ -140,7 +126,6 @@ function createHarness(options: { fixedFailure?: string } = {}) {
 		customErrors,
 		overlayHandles,
 		patchCalls,
-		fixedCalls,
 		beautifiedInputCalls,
 		settingsChangedCalls,
 		currentEditor,
@@ -178,29 +163,11 @@ test("无参数打开 overlay 设置界面，可切换 Message Frame 与 Assista
 	await pending;
 });
 
-test("设置界面切换固定输入框调用 fixed op 且不调用 message patch", async () => {
-	const harness = createHarness();
-	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
-	await Promise.resolve();
-	const component = harness.customCalls[0].component;
-	component.handleInput("\x1b[B");
-	component.handleInput("\x1b[B");
-	component.handleInput("\x1b[B");
-	component.handleInput("\x1b[B");
-	component.handleInput(" ");
-	assert.deepEqual(harness.fixedCalls, [false]);
-	assert.deepEqual(harness.patchCalls, []);
-	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, false);
-	component.handleInput("q");
-	await pending;
-});
-
 test("设置界面切换美化输入框调用 beautified input op", async () => {
 	const harness = createHarness();
 	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
 	await Promise.resolve();
 	const component = harness.customCalls[0].component;
-	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
@@ -242,8 +209,6 @@ test("设置页关闭后显式恢复当前 editor 焦点，避免回到已替换
 	component.handleInput("\x1b[B");
 	component.handleInput("\x1b[B");
 	component.handleInput(" ");
-	component.handleInput("\x1b[B");
-	component.handleInput(" ");
 	component.handleInput("q");
 	await pending;
 
@@ -257,7 +222,7 @@ test("设置页内 Animations Preview 使用 overlay tui.requestRender 驱动动
 	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
 	await Promise.resolve();
 	const component = harness.customCalls[0].component;
-	for (let i = 0; i < 6; i++) component.handleInput("\x1b[B");
+	for (let i = 0; i < 5; i++) component.handleInput("\x1b[B");
 	component.handleInput(" ");
 	for (let i = 0; i < 7; i++) component.handleInput("\x1b[B");
 	component.handleInput(" ");
@@ -266,25 +231,6 @@ test("设置页内 Animations Preview 使用 overlay tui.requestRender 驱动动
 	assert.ok(harness.customCalls[0].fakeTui.requestRenderCalls.length > 0);
 	component.handleInput("q");
 	component.handleInput("q");
-	component.handleInput("q");
-	await pending;
-});
-
-test("设置界面 fixed op 返回 failure 时仍保留用户偏好 ON", async () => {
-	const harness = createHarness({ fixedFailure: "boom" });
-	(globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled = false;
-	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
-	await Promise.resolve();
-	const component = harness.customCalls[0].component;
-	component.handleInput("\x1b[B");
-	component.handleInput("\x1b[B");
-	component.handleInput("\x1b[B");
-	component.handleInput("\x1b[B");
-	component.handleInput(" ");
-
-	assert.deepEqual(harness.fixedCalls, [true]);
-	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, true);
-	assert.match(component.render(80).join("\n"), /Fixed Input\s+ON/);
 	component.handleInput("q");
 	await pending;
 });
@@ -318,7 +264,6 @@ test("enable/disable/config/config-ui/settings/status 已移除并返回帮助",
 		const harness = createHarness();
 		await harness.commands.get("alps-pi").handler(action, harness.ctx);
 		assert.deepEqual(harness.patchCalls, []);
-		assert.deepEqual(harness.fixedCalls, []);
 		assert.deepEqual(harness.beautifiedInputCalls, []);
 		assert.ok(harness.notifications.some((n) => /用法/.test(n.message) && /可选参数 preview/.test(n.message)), action);
 	}

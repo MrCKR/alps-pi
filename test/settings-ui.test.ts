@@ -9,10 +9,9 @@ import { validateShortcutChange } from "../src/features/bottom-input/shortcuts.t
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { createFakeTheme, stripAnsi } from "./helpers.test.ts";
 
-function createPanel(options: { fixedResult?: { enabled: boolean; installed: boolean; failure?: string } } = {}) {
+function createPanel() {
 	const state = createInitialPatchState();
 	const calls: string[] = [];
-	const fixedCalls: boolean[] = [];
 	const beautifiedInputCalls: boolean[] = [];
 	const changedCalls: string[] = [];
 	const renderCalls: boolean[] = [];
@@ -33,10 +32,6 @@ function createPanel(options: { fixedResult?: { enabled: boolean; installed: boo
 			state.config.settings.chromeFrame.enabled = false;
 			return state;
 		},
-		setFixedBottomEditorEnabled: (enabled: boolean) => {
-			fixedCalls.push(enabled);
-			return options.fixedResult ?? { enabled, installed: false };
-		},
 		setBeautifiedInputEnabled: (enabled: boolean) => {
 			beautifiedInputCalls.push(enabled);
 		},
@@ -47,7 +42,7 @@ function createPanel(options: { fixedResult?: { enabled: boolean; installed: boo
 			renderCalls.push(true);
 		},
 	});
-	return { state, calls, fixedCalls, beautifiedInputCalls, changedCalls, renderCalls, component, isClosed: () => closed };
+	return { state, calls, beautifiedInputCalls, changedCalls, renderCalls, component, isClosed: () => closed };
 }
 
 test("设置界面展示英文设置名、中文描述和主题线框", () => {
@@ -58,7 +53,7 @@ test("设置界面展示英文设置名、中文描述和主题线框", () => {
 	assert.match(plain, /Assistant Frame/);
 	assert.match(plain, /Compact Tools/);
 	assert.match(plain, /Compact Edit/);
-	assert.match(plain, /Fixed Input/);
+	assert.doesNotMatch(plain, /Fixed Input/);
 	assert.match(plain, /Beautified Input/);
 	assert.match(plain, /Animations/);
 	assert.match(plain, /Shortcuts/);
@@ -67,7 +62,6 @@ test("设置界面展示英文设置名、中文描述和主题线框", () => {
 	assert.match(plain, /Message Frame\s+ON/);
 	assert.match(plain, /Compact Tools\s+ON/);
 	assert.match(plain, /Compact Edit\s+OFF/);
-	assert.match(plain, /Fixed Input\s+ON/);
 	assert.match(plain, /Beautified Input\s+ON/);
 	assert.match(plain, /Animations\s+configure/);
 	assert.doesNotMatch(plain, /preview/i);
@@ -116,82 +110,16 @@ test("设置界面可切换 Tool 极简模式与 edit 收起", () => {
 	assert.equal(state.config.settings.chromeFrame.compactEditTool, true);
 });
 
-test("设置界面第五项切换固定输入框并调用 runtime op", () => {
-	const { state, fixedCalls, beautifiedInputCalls, component } = createPanel();
-	assert.equal(state.config.settings.fixedBottomEditor.enabled, true);
-	assert.equal(state.config.settings.beautifiedInput.enabled, true);
-	component.handleInput("\x1b[B");
-	component.handleInput("\x1b[B");
-	component.handleInput("\x1b[B");
-	component.handleInput("\x1b[B");
-	component.handleInput(" ");
-	assert.equal(state.config.settings.fixedBottomEditor.enabled, false);
-	assert.equal(state.config.settings.beautifiedInput.enabled, true);
-	assert.deepEqual(fixedCalls, [false]);
-	assert.deepEqual(beautifiedInputCalls, []);
-});
-
-test("设置界面第六项切换美化输入框并调用 runtime op", () => {
-	const { state, fixedCalls, beautifiedInputCalls, component } = createPanel();
-	assert.equal(state.config.settings.fixedBottomEditor.enabled, true);
-	assert.equal(state.config.settings.beautifiedInput.enabled, true);
-	component.handleInput("\x1b[B");
-	component.handleInput("\x1b[B");
-	component.handleInput("\x1b[B");
-	component.handleInput("\x1b[B");
-	component.handleInput("\x1b[B");
-	component.handleInput(" ");
-	assert.equal(state.config.settings.fixedBottomEditor.enabled, true);
-	assert.equal(state.config.settings.beautifiedInput.enabled, false);
-	assert.deepEqual(fixedCalls, []);
-	assert.deepEqual(beautifiedInputCalls, [false]);
-});
-
-test("设置界面固定输入框启用失败时保留用户偏好 ON", () => {
-	const state = createInitialPatchState();
-	state.config.settings.fixedBottomEditor.enabled = false;
-	const fixedCalls: boolean[] = [];
-	const component = new AlpsPiSettingsComponent(createFakeTheme(), undefined, {
-		getState: () => state,
-		setFixedBottomEditorEnabled: (enabled: boolean) => {
-			fixedCalls.push(enabled);
-			return { enabled: false, installed: false, failure: "boom" };
-		},
-	});
-	component.handleInput("\x1b[B");
-	component.handleInput("\x1b[B");
-	component.handleInput("\x1b[B");
-	component.handleInput("\x1b[B");
-	component.handleInput(" ");
-
-	assert.equal(state.config.settings.fixedBottomEditor.enabled, true);
-	assert.deepEqual(fixedCalls, [true]);
-	assert.match(stripAnsi(component.render(80).join("\n")), /Fixed Input\s+ON/);
-});
-
-
-
-test("美化输入框切换触发 fixed fail-closed 时 Fixed Input 仍显示用户偏好 ON", () => {
-	const state = createInitialPatchState();
+test("设置界面第五项切换美化输入框且不改 legacy fixed 偏好", () => {
+	const { state, beautifiedInputCalls, component } = createPanel();
 	state.config.settings.fixedBottomEditor.enabled = true;
-	state.config.settings.beautifiedInput.enabled = true;
-	const beautifiedInputCalls: boolean[] = [];
-	const component = new AlpsPiSettingsComponent(createFakeTheme(), undefined, {
-		getState: () => state,
-		setBeautifiedInputEnabled: (enabled: boolean) => {
-			beautifiedInputCalls.push(enabled);
-			return { enabled: false, installed: false, failure: "fail closed" };
-		},
-	});
-	for (let i = 0; i < 5; i++) component.handleInput("\x1b[B");
+	for (let i = 0; i < 4; i++) component.handleInput("\x1b[B");
 	component.handleInput(" ");
 
-	const plain = stripAnsi(component.render(80).join("\n"));
-	assert.deepEqual(beautifiedInputCalls, [false]);
 	assert.equal(state.config.settings.beautifiedInput.enabled, false);
 	assert.equal(state.config.settings.fixedBottomEditor.enabled, true);
-	assert.match(plain, /Fixed Input\s+ON/);
-	assert.match(plain, /Beautified Input\s+OFF/);
+	assert.deepEqual(beautifiedInputCalls, [false]);
+	assert.doesNotMatch(stripAnsi(component.render(80).join("\n")), /Fixed Input/);
 });
 
 test("Animations 二级页可修改 Enabled、Random Mode、Thinking、Working、Tool、Width、FPS，并提供预览入口", async () => {
@@ -322,11 +250,11 @@ test("快捷键设置保存后关闭捕获并返回快捷键页", () => {
 });
 
 function openAnimationsSettings(component: AlpsPiSettingsComponent): void {
-	for (let i = 0; i < 6; i++) component.handleInput("\x1b[B");
+	for (let i = 0; i < 5; i++) component.handleInput("\x1b[B");
 	component.handleInput(" ");
 }
 
 function openShortcutSettings(component: AlpsPiSettingsComponent): void {
-	for (let i = 0; i < 7; i++) component.handleInput("\x1b[B");
+	for (let i = 0; i < 6; i++) component.handleInput("\x1b[B");
 	component.handleInput(" ");
 }

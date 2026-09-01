@@ -18,7 +18,7 @@ class DebugComponent {
 	constructor(content: string[]) {
 		this.content = content;
 	}
-	render() {
+	render(_width?: number) {
 		return this.content;
 	}
 }

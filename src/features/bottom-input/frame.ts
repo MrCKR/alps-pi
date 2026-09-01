@@ -1,9 +1,8 @@
 /** 功能：为固定底部输入框渲染完整线框，实现者：alps 实现日期：2026-05-29 */
 
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { CURSOR_MARKER, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { sanitizeTerminalText } from "../../terminal-sanitizer.ts";
 import type { ThemeLike } from "../chrome-frame/styles.ts";
-import { FIXED_EDITOR_CURSOR_MARKER } from "../fixed-bottom-editor/cluster.ts";
 import type { BottomInputFrameStatus } from "./status.ts";
 
 export type BeautifiedEditorFrameInput = {
@@ -18,6 +17,7 @@ export type BeautifiedEditorFrameInput = {
 };
 
 export const MIN_FRAME_WIDTH = 8;
+const FIXED_EDITOR_CURSOR_MARKER = CURSOR_MARKER;
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 /** 包装 editor 行为完整输入框线框；宽度不足时回退原始行，避免异常。 */
