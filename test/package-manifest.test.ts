@@ -10,7 +10,7 @@ test("package.json 声明 pi 扩展入口且不依赖本机 file 路径", async 
 	const packageJson = JSON.parse(await readFile(packagePath, "utf-8"));
 
 	assert.equal(packageJson.name, "alps-pi");
-	assert.equal(packageJson.version, "0.2.0");
+	assert.equal(packageJson.version, "0.2.1");
 	assert.match(packageJson.description, /Pi 0\.84\.4\+ TUI beautification extension/);
 	assert.equal(packageJson.private, undefined);
 	assert.equal(packageJson.license, "MIT");
