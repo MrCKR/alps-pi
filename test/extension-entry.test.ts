@@ -19,7 +19,8 @@ function createHarness(options: { failEnable?: boolean; configureFailure?: boole
 	const commands = new Map<string, any>();
 	const runtimeCalls: string[] = [];
 	const disposePatchEnabledSnapshots: boolean[] = [];
-	let enabled = false;
+	let beautifiedEnabled = false;
+	let footerEnabled = false;
 	const runtime: BottomInputRuntime = {
 		bindSession(ctx: any) {
 			runtimeCalls.push(`bind:${ctx.id}`);
@@ -28,21 +29,36 @@ function createHarness(options: { failEnable?: boolean; configureFailure?: boole
 			// 记录 dispose 当下的 patch 状态，强约束 shutdown 必须先释放 runtime 再 disablePatch。
 			disposePatchEnabledSnapshots.push(Boolean((globalThis as any)[PATCH_KEY]?.enabled));
 			runtimeCalls.push("dispose");
-			enabled = false;
+			beautifiedEnabled = false;
+			footerEnabled = false;
 		},
 		getStatus() {
-			return { enabled, installed: enabled };
+			const installed = beautifiedEnabled || footerEnabled;
+			return {
+				enabled: installed,
+				installed,
+				editorEnabled: beautifiedEnabled,
+				editorInstalled: beautifiedEnabled,
+				footerEnabled,
+				footerInstalled: footerEnabled,
+			};
 		},
-		configure(settings: { beautifiedInputEnabled?: boolean }) {
-			if (typeof settings.beautifiedInputEnabled === "boolean") runtimeCalls.push(`beautified:${settings.beautifiedInputEnabled}`);
-			if (options.configureFailure && settings.beautifiedInputEnabled) {
-				enabled = false;
-				return { enabled: true, installed: false, failure: "boom" };
+		configure(settings: { beautifiedInputEnabled?: boolean; footerEnabled?: boolean }) {
+			if (typeof settings.beautifiedInputEnabled === "boolean") {
+				beautifiedEnabled = settings.beautifiedInputEnabled;
+				runtimeCalls.push(`beautified:${settings.beautifiedInputEnabled}`);
 			}
-			if (typeof settings.beautifiedInputEnabled === "boolean") enabled = settings.beautifiedInputEnabled;
-			return { enabled, installed: enabled };
+			if (typeof settings.footerEnabled === "boolean") {
+				footerEnabled = settings.footerEnabled;
+				runtimeCalls.push(`footer:${settings.footerEnabled}`);
+			}
+			if (options.configureFailure && settings.beautifiedInputEnabled) {
+				return { ...this.getStatus(), installed: footerEnabled, editorInstalled: false, failure: "boom" };
+			}
+			return this.getStatus();
 		},
 		setBeautifiedInputEnabled(nextEnabled: boolean) {
+			beautifiedEnabled = nextEnabled;
 			runtimeCalls.push(`beautified:${nextEnabled}`);
 		},
 		resetSessionStartTime() {
@@ -171,6 +187,7 @@ test("chrome-frame 能力缺失时只关闭 runtime 且保留用户偏好", () =
 	assert.equal(state.config.settings.chromeFrame.enabled, true);
 	assert.equal(state.failures.get("compat:UserMessageComponent"), "prototype.render missing");
 	assert.equal(harness.runtimeCalls.includes("beautified:true"), true);
+	assert.equal(harness.runtimeCalls.includes("footer:true"), true);
 	harness.emit("session_shutdown", { id: "capability-failure", mode: "tui", hasUI: true });
 });
 
@@ -178,7 +195,7 @@ test("session_start 配置 animations 并调用统一 runtime", () => {
 	const harness = createHarness();
 	harness.emit("session_start", { id: "one" });
 
-	assert.deepEqual(harness.runtimeCalls, ["bind:one", "resetTime", "prompt:", "shortcuts", "beautified:true"]);
+	assert.deepEqual(harness.runtimeCalls, ["bind:one", "resetTime", "prompt:", "shortcuts", "beautified:true", "footer:true"]);
 	assert.equal(getAnimationsRuntimeState().currentEventCtx.id, "one");
 	assert.equal(getAnimationsPatchState().enabled, true);
 });
@@ -200,6 +217,7 @@ test("Master Switch OFF 门控输入框与动画且保留子项偏好", () => {
 	assert.equal(settings.animations.enabled, true);
 	assert.equal((globalThis as any)[PATCH_KEY].enabled, false);
 	assert.equal(harness.runtimeCalls.includes("beautified:false"), true);
+	assert.equal(harness.runtimeCalls.includes("footer:false"), true);
 	assert.equal(getAnimationsPatchState().enabled, false);
 });
 
@@ -208,6 +226,7 @@ test("TUI owner session_shutdown 先 dispose runtime、保留用户偏好，再 
 	harness.emit("session_start", { id: "owner" });
 	(globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled = true;
 	(globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled = false;
+	(globalThis as any)[PATCH_KEY].config.settings.footer.enabled = false;
 	assert.equal((globalThis as any)[PATCH_KEY].enabled, true);
 
 	harness.emit("session_shutdown");
@@ -216,6 +235,7 @@ test("TUI owner session_shutdown 先 dispose runtime、保留用户偏好，再 
 	assert.deepEqual(harness.disposePatchEnabledSnapshots, [true]);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, true);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled, false);
+	assert.equal((globalThis as any)[PATCH_KEY].config.settings.footer.enabled, false);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.animations.enabled, true);
 	assert.equal("bottomStatus" in (globalThis as any)[PATCH_KEY].config.settings, false);
 	assert.equal(getAnimationsPatchState().enabled, false);
@@ -271,7 +291,7 @@ test("shutdown 后下一次 TUI session_start 会按持久化设置恢复 fixed 
 	harness.emit("session_shutdown");
 	harness.emit("session_start", { id: "next" });
 
-	assert.deepEqual(harness.runtimeCalls.slice(-5), ["bind:next", "resetTime", "prompt:", "shortcuts", "beautified:false"]);
+	assert.deepEqual(harness.runtimeCalls.slice(-6), ["bind:next", "resetTime", "prompt:", "shortcuts", "beautified:false", "footer:true"]);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, true);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled, false);
 });
@@ -300,6 +320,7 @@ test("扩展启动时读取持久化设置", () => {
 		chromeFrame: { enabled: false, assistantFrame: false, toolCompactMode: false, compactEditTool: true },
 		fixedBottomEditor: { enabled: false },
 		beautifiedInput: { enabled: false },
+		footer: { enabled: false },
 		animations: { enabled: false, thinking: "aurora", fps: 8 },
 		bottomStatus: { enabled: true },
 	}), "utf-8");
@@ -314,6 +335,7 @@ test("扩展启动时读取持久化设置", () => {
 	assert.equal(settings.chromeFrame.compactEditTool, true);
 	assert.equal(settings.fixedBottomEditor.enabled, false);
 	assert.equal(settings.beautifiedInput.enabled, false);
+	assert.equal(settings.footer.enabled, false);
 	assert.equal(settings.animations.enabled, false);
 	assert.equal(settings.animations.thinking, "aurora");
 	assert.equal(settings.animations.fps, 8);
@@ -321,6 +343,7 @@ test("扩展启动时读取持久化设置", () => {
 	assert.equal(harness.runtimeCalls.includes("bind:persisted"), true);
 	assert.equal(harness.runtimeCalls.includes("set:true"), false);
 	assert.equal(harness.runtimeCalls.includes("beautified:false"), true);
+	assert.equal(harness.runtimeCalls.includes("footer:false"), true);
 });
 
 test("tool_execution_update 默认关闭 debug 时只记录诊断且不改变 animations runtime", () => {
@@ -460,9 +483,34 @@ test("命令层只切换 Beautified Input，并原样持久化 legacy fixed 偏�
 	};
 
 	await harness.commands.get("alps-pi").handler("", ctx);
-	assert.deepEqual(harness.runtimeCalls, ["bind:command-ctx", "beautified:false"]);
+	assert.deepEqual(harness.runtimeCalls, ["bind:command-ctx", "beautified:false", "footer:true"]);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled, false);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, true);
 	const persisted = JSON.parse(readFileSync(process.env.ALPS_PI_SETTINGS_PATH!, "utf-8"));
 	assert.equal(persisted.fixedBottomEditor.enabled, true);
+});
+
+test("命令层独立切换 Footer 并持久化", async () => {
+	const harness = createHarness();
+	const ctx = {
+		id: "footer-command-ctx",
+		hasUI: true,
+		ui: {
+			custom(factory: any) {
+				const component = factory({}, undefined, {}, () => {});
+				for (let i = 0; i < 6; i++) component.handleInput("\x1b[B");
+				component.handleInput(" ");
+				component.handleInput("q");
+				return Promise.resolve();
+			},
+			notify() {},
+		},
+	};
+
+	await harness.commands.get("alps-pi").handler("", ctx);
+	assert.deepEqual(harness.runtimeCalls, ["shortcuts", "beautified:true", "footer:false"]);
+	assert.equal((globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled, true);
+	assert.equal((globalThis as any)[PATCH_KEY].config.settings.footer.enabled, false);
+	const persisted = JSON.parse(readFileSync(process.env.ALPS_PI_SETTINGS_PATH!, "utf-8"));
+	assert.equal(persisted.footer.enabled, false);
 });

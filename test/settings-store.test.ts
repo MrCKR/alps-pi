@@ -39,6 +39,14 @@ test("启动默认设置保留 legacy fixed 字段且现代功能默认开启", 
 	assert.equal(settings.chromeFrame.enabled, true);
 	assert.equal(settings.fixedBottomEditor.enabled, true);
 	assert.equal(settings.beautifiedInput.enabled, true);
+	assert.deepEqual(settings.inputMetrics, {
+		inputTokens: true,
+		outputTokens: true,
+		cacheHit: true,
+		tokenSpeed: true,
+		elapsedTime: true,
+	});
+	assert.equal(settings.footer.enabled, true);
 	assert.equal(settings.animations.enabled, true);
 	assert.equal("bottomStatus" in settings, false);
 });
@@ -50,12 +58,18 @@ test("显式独立路径读写使用锁与原子 JSON 并合并缺失字段", ()
 		settings.chromeFrame.toolCompactMode = false;
 		settings.fixedBottomEditor.enabled = false;
 		settings.beautifiedInput.enabled = false;
+		settings.inputMetrics.cacheHit = false;
+		settings.inputMetrics.elapsedTime = false;
+		settings.footer.enabled = false;
 		settings.animations.thinking = "aurora";
 		writePersistedSettings(settings, primary);
 		const raw = readJson(primary);
 		assert.equal(raw.bottomStatus, undefined);
 		assert.equal(existsSync(`${primary}.lock`), false);
 		assert.equal(readPersistedSettings(primary).fixedBottomEditor.enabled, false);
+		assert.equal(readPersistedSettings(primary).footer.enabled, false);
+		assert.equal(readPersistedSettings(primary).inputMetrics.cacheHit, false);
+		assert.equal(readPersistedSettings(primary).inputMetrics.elapsedTime, false);
 		assert.equal(readPersistedSettings(primary).animations.thinking, "aurora");
 		assert.equal(readPersistedSettings(primary).chromeFrame.assistantFrame, true);
 	} finally {
@@ -88,6 +102,23 @@ test("四级读取优先级严格为 primary → namespace → legacy → defaul
 	}
 });
 
+test("旧配置缺少 Footer 和 Input Metrics 时默认开启，显式 false 保留", () => {
+	const { dir, primary } = tempPaths();
+	try {
+		writeJson(primary, { beautifiedInput: { enabled: false } });
+		assert.equal(readPersistedSettings(primary).footer.enabled, true);
+		assert.deepEqual(readPersistedSettings(primary).inputMetrics, DEFAULT_SETTINGS.inputMetrics);
+		writeJson(primary, { footer: { enabled: false }, inputMetrics: { inputTokens: false, cacheHit: "invalid" } });
+		const loaded = readPersistedSettings(primary);
+		assert.equal(loaded.footer.enabled, false);
+		assert.equal(loaded.inputMetrics.inputTokens, false);
+		assert.equal(loaded.inputMetrics.cacheHit, true);
+		assert.equal(loaded.inputMetrics.elapsedTime, true);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("primary 存在时不读取或改写 namespace/legacy", () => {
 	const paths = tempPaths();
 	try {
@@ -113,12 +144,14 @@ test("同进程两个陈旧快照只合并各自改变字段", () => {
 		const first = readPersistedSettings(primary);
 		const second = readPersistedSettings(primary);
 		first.chromeFrame.assistantFrame = false;
+		first.inputMetrics.tokenSpeed = false;
 		second.beautifiedInput.enabled = false;
 		writePersistedSettings(first, primary);
 		writePersistedSettings(second, primary);
 		const loaded = readPersistedSettings(primary);
 		assert.equal(loaded.chromeFrame.assistantFrame, false);
 		assert.equal(loaded.beautifiedInput.enabled, false);
+		assert.equal(loaded.inputMetrics.tokenSpeed, false);
 		assert.equal(loaded.fixedBottomEditor.enabled, true);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
@@ -132,6 +165,8 @@ test("多进程压力写入保留每个独立字段且不留 lock/tmp", async ()
 		const specs = [
 			["chromeFrame", "assistantFrame", "false"],
 			["beautifiedInput", "enabled", "false"],
+			["footer", "enabled", "false"],
+			["inputMetrics", "outputTokens", "false"],
 			["animations", "randomMode", "true"],
 			["animations", "fps", "24"],
 			["shortcuts", "copyEditor", "\"ctrl+alt+g\""],
@@ -156,6 +191,8 @@ test("多进程压力写入保留每个独立字段且不留 lock/tmp", async ()
 			const raw = readJson(primary);
 			assert.equal(raw.chromeFrame.assistantFrame, false);
 			assert.equal(raw.beautifiedInput.enabled, false);
+			assert.equal(raw.footer.enabled, false);
+			assert.equal(raw.inputMetrics.outputTokens, false);
 			assert.equal(raw.animations.randomMode, true);
 			assert.equal(raw.animations.fps, 24);
 			assert.equal(raw.shortcuts.copyEditor, "ctrl+alt+g");

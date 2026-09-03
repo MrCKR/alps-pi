@@ -7,3 +7,4 @@ export * from "./status.ts";
 export * from "./frame.ts";
 export * from "./editor.ts";
 export * from "./icons.ts";
+export * from "./metrics.ts";

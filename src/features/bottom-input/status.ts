@@ -4,6 +4,7 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { sanitizeTerminalSingleLineText, sanitizeTerminalText } from "../../terminal-sanitizer.ts";
 import type { ThemeLike } from "../chrome-frame/styles.ts";
 import { getBottomInputIcons, type BottomInputIconSet } from "./icons.ts";
+import { normalizeInputMetricsSettings, type InputMetricsSettings } from "./metrics.ts";
 
 export type AssistantUsage = {
 	input: number;
@@ -55,6 +56,8 @@ export type BottomInputStatusState = {
 	lastPrompt: string;
 	/** 最近一次有效 assistant 响应的平均输出速度。 */
 	tokensPerSecond?: number | null;
+	/** 输入框边框指标显示偏好；不传时五项全部显示。 */
+	inputMetrics?: Partial<InputMetricsSettings>;
 	/** 图标集；不传则按环境判断。 */
 	icons?: BottomInputIconSet;
 };
@@ -66,6 +69,8 @@ export type BottomInputFrameStatus = {
 	elapsed: string | null;
 	sessionUsage?: SessionUsageSnapshot | null;
 	tokensPerSecond?: number | null;
+	inputMetrics?: InputMetricsSettings;
+	icons?: BottomInputIconSet;
 };
 
 export type BottomInputStatusRender = {
@@ -120,6 +125,7 @@ export function renderBottomInputStatus(input: BottomInputStatusState): BottomIn
 	}
 
 	const icons = input.icons ?? getBottomInputIcons();
+	const inputMetrics = normalizeInputMetricsSettings(input.inputMetrics);
 	const elapsedSeconds = Math.floor(Math.max(0, input.now - input.sessionStartTime) / 1000);
 	const usage = readContextUsageSnapshot(input.ctx, input.isStreaming, input.liveUsage, input.latestAssistantUsage);
 	const sessionUsage = readSessionUsageSnapshot(input.ctx);
@@ -133,6 +139,7 @@ export function renderBottomInputStatus(input: BottomInputStatusState): BottomIn
 		context: usage,
 		sessionUsage,
 		tokensPerSecond: input.tokensPerSecond,
+		inputMetrics,
 		elapsedSeconds,
 		lastPrompt: input.lastPrompt,
 		extensionStatuses,
@@ -150,13 +157,16 @@ export function renderBottomInputStatus(input: BottomInputStatusState): BottomIn
 
 /** 渲染输入框边框要嵌入的 model/thinking/context/elapsed。 */
 export function renderFrameStatus(input: BottomInputStatusState & { icons?: BottomInputIconSet }, modelName = readModelName(input.ctx), thinkingLevel = readThinkingLevel(input.ctx) ?? input.currentThinkingLevel ?? readThinkingLevelFromSession(input.ctx), usage = readContextUsageSnapshot(input.ctx, input.isStreaming, input.liveUsage, input.latestAssistantUsage), sessionUsage = readSessionUsageSnapshot(input.ctx)): BottomInputFrameStatus {
+	const icons = input.icons ?? getBottomInputIcons();
 	return {
-		model: renderModelSegment(modelName, input.theme, input.icons ?? getBottomInputIcons()),
+		model: renderModelSegment(modelName, input.theme, icons),
 		thinking: renderThinkingSegment(thinkingLevel, input.theme),
-		context: renderContextSegment(usage),
-		elapsed: renderElapsedSegment(input.theme, input.sessionStartTime, input.now, input.icons ?? getBottomInputIcons()),
+		context: renderContextSegment(usage, icons),
+		elapsed: renderElapsedSegment(input.theme, input.sessionStartTime, input.now, icons),
 		sessionUsage,
 		tokensPerSecond: input.tokensPerSecond ?? null,
+		inputMetrics: normalizeInputMetricsSettings(input.inputMetrics),
+		icons,
 	};
 }
 
@@ -269,7 +279,7 @@ function renderThinkingSegment(level: string | null, theme: ThemeLike): string |
 	return alpsColor ? applyHexColor(alpsColor, label) : safeFg(theme, thinkingColorToken(level), label);
 }
 
-function renderContextSegment(usage: ContextUsage | null): string | null {
+function renderContextSegment(usage: ContextUsage | null, icons: BottomInputIconSet): string | null {
 	if (!usage || usage.tokens <= 0) return null;
 
 	if (usage.contextWindow && usage.contextWindow > 0) {
@@ -277,18 +287,18 @@ function renderContextSegment(usage: ContextUsage | null): string | null {
 			? usage.percent
 			: (usage.tokens / usage.contextWindow) * 100;
 		const color = contextColor(percent);
+		const icon = applyHexColor(color, icons.context);
 		const value = applyHexColor(color, `${percent.toFixed(1)}%/${formatTokens(usage.contextWindow)}`);
-		return `${renderContextBar(percent, color)} ${value}`;
+		return `${icon}${renderContextBar(percent, color)} ${value}`;
 	}
 
-	return applyHexColor(CONTEXT_COLORS.normal, formatTokens(usage.tokens));
+	return applyHexColor(CONTEXT_COLORS.normal, `${icons.context}${formatTokens(usage.tokens)}`);
 }
 
 function renderElapsedSegment(theme: ThemeLike, startedAt: number, now: number, icons: BottomInputIconSet): string | null {
 	const elapsed = Math.max(0, now - startedAt);
 	if (elapsed < 1000) return null;
-	// 线框规格要求使用 ◷，不受 Nerd Font 模式影响。
-	return safeFg(theme, "muted", `◷ ${formatDuration(elapsed)}`);
+	return safeFg(theme, "muted", `${icons.time}${formatDuration(elapsed)}`);
 }
 
 function normalizeModelName(value: unknown): string | null {

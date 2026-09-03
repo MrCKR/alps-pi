@@ -6,6 +6,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import lockfile from "proper-lockfile";
 import { cloneDefaultSettings, type AlpsPiSettings } from "./settings.ts";
 import { normalizeAnimationsSettings } from "./features/animations/settings.ts";
+import { normalizeInputMetricsSettings } from "./features/bottom-input/metrics.ts";
 import { normalizeShortcut, shortcutConflictKey, shortcutUsesSuper, isSupportedSuperShortcut, RESERVED_BOTTOM_INPUT_SHORTCUTS, SHORTCUT_KEYS } from "./features/bottom-input/shortcuts.ts";
 
 const SETTINGS_ENV = "ALPS_PI_SETTINGS_PATH";
@@ -25,6 +26,7 @@ export function cloneStartupSettings(): AlpsPiSettings {
 	settings.chromeFrame.enabled = true;
 	settings.fixedBottomEditor.enabled = true;
 	settings.beautifiedInput.enabled = true;
+	settings.footer.enabled = true;
 	settings.animations.enabled = true;
 	return settings;
 }
@@ -105,6 +107,8 @@ export function cloneSettings(settings: AlpsPiSettings): AlpsPiSettings {
 		chromeFrame: { ...settings.chromeFrame },
 		fixedBottomEditor: { ...settings.fixedBottomEditor },
 		beautifiedInput: { ...settings.beautifiedInput },
+		inputMetrics: { ...settings.inputMetrics },
+		footer: { ...settings.footer },
 		animations: { ...settings.animations },
 		shortcuts: { ...settings.shortcuts },
 	};
@@ -186,7 +190,7 @@ function acquireSettingsLock(path: string): () => void {
 
 function mergeChangedSettings(current: AlpsPiSettings, baseline: AlpsPiSettings, next: AlpsPiSettings): AlpsPiSettings {
 	const merged = cloneSettings(current);
-	for (const section of ["chromeFrame", "fixedBottomEditor", "beautifiedInput", "animations", "shortcuts"] as const) {
+	for (const section of ["chromeFrame", "fixedBottomEditor", "beautifiedInput", "inputMetrics", "footer", "animations", "shortcuts"] as const) {
 		const baselineSection = baseline[section] as Record<string, unknown>;
 		const nextSection = next[section] as Record<string, unknown>;
 		const mergedSection = merged[section] as Record<string, unknown>;
@@ -221,6 +225,10 @@ function normalizeSettings(value: unknown, defaults: AlpsPiSettings): AlpsPiSett
 		},
 		beautifiedInput: {
 			enabled: readBoolean(raw.beautifiedInput, "enabled", defaults.beautifiedInput.enabled),
+		},
+		inputMetrics: normalizeInputMetricsSettings(raw.inputMetrics, defaults.inputMetrics),
+		footer: {
+			enabled: readBoolean(raw.footer, "enabled", defaults.footer.enabled),
 		},
 		animations: normalizeAnimationsSettings(raw.animations, defaults.animations),
 		shortcuts: normalizeShortcutSettings(raw.shortcuts, defaults.shortcuts),

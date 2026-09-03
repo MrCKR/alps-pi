@@ -3,6 +3,7 @@
 import { CURSOR_MARKER, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { sanitizeTerminalText } from "../../terminal-sanitizer.ts";
 import type { ThemeLike } from "../chrome-frame/styles.ts";
+import { getBottomInputIcons } from "./icons.ts";
 import { formatTokens, type BottomInputFrameStatus } from "./status.ts";
 
 export type BeautifiedEditorFrameInput = {
@@ -21,6 +22,15 @@ export type BeautifiedEditorFrameInput = {
 export const MIN_FRAME_WIDTH = 8;
 const FIXED_EDITOR_CURSOR_MARKER = CURSOR_MARKER;
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const BOTTOM_METRIC_COLORS = {
+	input: "#7AA2F7",
+	output: "#73DACA",
+	cacheGood: "#9ECE6A",
+	cacheWarning: "#FEBC38",
+	cacheLow: "#FF5F5F",
+	speed: "#B281D6",
+	elapsed: "#A9B1D6",
+} as const;
 
 /** 包装 editor 行为完整输入框线框；宽度不足时回退原始行，避免异常。 */
 export function renderBeautifiedEditorFrame(input: BeautifiedEditorFrameInput): string[] {
@@ -59,41 +69,53 @@ function buildBottomBorder(width: number, theme: ThemeLike, status: BottomInputF
 	});
 }
 
+type BottomMetricKey = "input" | "output" | "cache" | "speed" | "elapsed";
+type BottomMetricSegment = { key: BottomMetricKey; value: string };
+
 function buildBottomRightLabel(status: BottomInputFrameStatus, maxWidth: number, theme: ThemeLike, borderColor?: (text: string) => string): string {
-	const elapsed = status.elapsed?.trim() || "";
-	const throughput = buildThroughputLabel(status, theme);
-	const usageParts = buildSessionUsageParts(status);
 	const separator = styleBorder(theme, borderColor, " · ");
-	for (let count = usageParts.length; count >= 0; count -= 1) {
-		const groups: string[] = [];
-		if (throughput) groups.push(throughput);
-		if (count > 0) groups.push(safeFg(theme, "dimmed", usageParts.slice(0, count).join(" "), "muted"));
-		if (elapsed) groups.push(elapsed);
-		const label = groups.join(separator);
+	let visibleSegments = buildBottomMetricSegments(status);
+
+	for (const key of [null, "cache", "output", "input", "speed"] as const) {
+		if (key) visibleSegments = visibleSegments.filter((segment) => segment.key !== key);
+		const label = visibleSegments.map((segment) => segment.value).join(separator);
 		if (visibleWidth(label) <= maxWidth) return label;
 	}
-	return elapsed;
+
+	return "";
 }
 
-function buildThroughputLabel(status: BottomInputFrameStatus, theme: ThemeLike): string {
-	const rate = status.tokensPerSecond;
-	if (typeof rate !== "number" || !Number.isFinite(rate) || rate <= 0) return "";
-	const value = rate < 1_000
-		? rate.toFixed(1)
-		: `${(rate / 1_000).toFixed(rate < 10_000 ? 1 : 0)}k`;
-	return safeFg(theme, "dimmed", `🚀${value} tok/s`, "muted");
-}
-
-function buildSessionUsageParts(status: BottomInputFrameStatus): string[] {
+function buildBottomMetricSegments(status: BottomInputFrameStatus): BottomMetricSegment[] {
+	const icons = status.icons ?? getBottomInputIcons();
+	const visibility = status.inputMetrics;
 	const usage = status.sessionUsage;
-	if (!usage) return [];
-	const parts: string[] = [];
-	if (usage.input > 0) parts.push(`↑${formatTokens(usage.input)}`);
-	if (usage.output > 0) parts.push(`↓${formatTokens(usage.output)}`);
-	if ((usage.cacheRead > 0 || usage.cacheWrite > 0) && usage.latestCacheHitRate !== null) {
-		parts.push(`CH${usage.latestCacheHitRate.toFixed(1)}%`);
+	const segments: BottomMetricSegment[] = [];
+
+	if (visibility?.inputTokens !== false && usage && usage.input > 0) {
+		segments.push({ key: "input", value: colorizeMetric(`${icons.inputTokens} ${formatTokens(usage.input)}`, BOTTOM_METRIC_COLORS.input) });
 	}
-	return parts;
+	if (visibility?.outputTokens !== false && usage && usage.output > 0) {
+		segments.push({ key: "output", value: colorizeMetric(`${icons.outputTokens} ${formatTokens(usage.output)}`, BOTTOM_METRIC_COLORS.output) });
+	}
+	if (visibility?.cacheHit !== false && usage && (usage.cacheRead > 0 || usage.cacheWrite > 0) && usage.latestCacheHitRate !== null) {
+		segments.push({
+			key: "cache",
+			value: colorizeMetric(`${icons.cacheHit} ${usage.latestCacheHitRate.toFixed(1)}%`, cacheMetricColor(usage.latestCacheHitRate)),
+		});
+	}
+
+	const rate = status.tokensPerSecond;
+	if (visibility?.tokenSpeed !== false && typeof rate === "number" && Number.isFinite(rate) && rate > 0) {
+		const value = rate < 1_000 ? rate.toFixed(1) : `${(rate / 1_000).toFixed(rate < 10_000 ? 1 : 0)}k`;
+		segments.push({ key: "speed", value: colorizeMetric(`${icons.tokenSpeed} ${value}tok/s`, BOTTOM_METRIC_COLORS.speed) });
+	}
+	if (visibility?.elapsedTime !== false && status.elapsed?.trim()) {
+		const elapsed = stripAnsi(status.elapsed.trim());
+		const elapsedValue = elapsed.startsWith(icons.time) ? `${icons.time} ${elapsed.slice(icons.time.length)}` : elapsed;
+		segments.push({ key: "elapsed", value: colorizeMetric(elapsedValue, BOTTOM_METRIC_COLORS.elapsed) });
+	}
+
+	return segments;
 }
 
 function buildBorderLine(input: { width: number; theme: ThemeLike; borderColor?: (text: string) => string; leftCorner: string; rightCorner: string; leftLabel?: string; rightLabel?: string }): string {
@@ -274,6 +296,20 @@ function safeFg(theme: ThemeLike, token: string, text: string, fallback = "text"
 			return text;
 		}
 	}
+}
+
+function cacheMetricColor(rate: number): string {
+	if (rate >= 90) return BOTTOM_METRIC_COLORS.cacheGood;
+	if (rate >= 60) return BOTTOM_METRIC_COLORS.cacheWarning;
+	return BOTTOM_METRIC_COLORS.cacheLow;
+}
+
+function colorizeMetric(text: string, hex: string): string {
+	const value = hex.replace("#", "");
+	const red = Number.parseInt(value.slice(0, 2), 16);
+	const green = Number.parseInt(value.slice(2, 4), 16);
+	const blue = Number.parseInt(value.slice(4, 6), 16);
+	return `\x1b[38;2;${red};${green};${blue}m${text}\x1b[0m`;
 }
 
 function stripAnsi(input: string): string {

@@ -20,17 +20,28 @@ import {
 import { createBottomInputEditor } from "./editor.ts";
 import { writeBottomInputDebugLog } from "./debug.ts";
 import { getBottomInputIcons } from "./icons.ts";
+import { cloneDefaultInputMetricsSettings, normalizeInputMetricsSettings, type InputMetricsSettings } from "./metrics.ts";
 import { formatPiCapabilityFailures, inspectPiRuntimeCapabilities } from "../../pi-compat.ts";
 
 export type BottomInputRuntimeStatus = {
 	enabled: boolean;
 	installed: boolean;
+	editorEnabled: boolean;
+	editorInstalled: boolean;
+	footerEnabled: boolean;
+	footerInstalled: boolean;
 	failure?: string;
+};
+
+export type BottomInputRuntimeSettings = {
+	beautifiedInputEnabled?: boolean;
+	footerEnabled?: boolean;
+	inputMetrics?: Partial<InputMetricsSettings>;
 };
 
 export type BottomInputRuntime = {
 	bindSession(ctx: any): void;
-	configure(settings: { beautifiedInputEnabled?: boolean }): BottomInputRuntimeStatus;
+	configure(settings: BottomInputRuntimeSettings): BottomInputRuntimeStatus;
 	dispose(): void;
 	getStatus(): BottomInputRuntimeStatus;
 	setBeautifiedInputEnabled(enabled: boolean): void;
@@ -99,7 +110,10 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	private ui: RuntimeUI | undefined;
 	private generation = 0;
 	private beautifiedInputEnabled = true;
-	private installed = false;
+	private footerEnabled = true;
+	private inputMetrics = cloneDefaultInputMetricsSettings();
+	private editorInstalled = false;
+	private footerInstalled = false;
 	private failure: string | undefined;
 	private editorInstance: any;
 	private editorFactory: ((tui: any, theme: any, keybindings: any) => any) | undefined;
@@ -113,7 +127,8 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	private timer: ReturnType<typeof setInterval> | null = null;
 	private renderTimer: ReturnType<typeof setTimeout> | null = null;
 	private renderPendingFull = false;
-	private layoutOwnerGeneration: number | null = null;
+	private editorOwnerGeneration: number | null = null;
+	private footerOwnerGeneration: number | null = null;
 	private cachedLayout: { width: number; expiresAt: number; result: StatusLayout } | null = null;
 	private stashedEditorText: string | null = null;
 	private liveUsage: AssistantUsage | null = null;
@@ -147,10 +162,10 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		const sameUiSession = Boolean(previousUi && previousUi === next.ui);
 		this.debug("bind_session", ctx, {
 			nextUi: next.ui,
-			note: previousCtx && previousCtx !== ctx && !sameUiSession && this.installed ? "switching_ui_session" : undefined,
+			note: previousCtx && previousCtx !== ctx && !sameUiSession && (this.editorInstalled || this.footerInstalled) ? "switching_ui_session" : undefined,
 			details: { sameUiSession, replacingCtx: Boolean(previousCtx && previousCtx !== ctx), hasPreviousUi: Boolean(previousUi) },
 		});
-		if (previousCtx && previousCtx !== ctx && !sameUiSession && this.installed) this.disable();
+		if (previousCtx && previousCtx !== ctx && !sameUiSession && (this.editorInstalled || this.footerInstalled)) this.disable();
 		if (!previousCtx) this.sessionStartTime = this.now();
 		if ((previousCtx !== ctx || previousUi !== next.ui) && !sameUiSession) {
 			this.generation += 1;
@@ -161,8 +176,10 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		this.failure = undefined;
 	}
 
-	configure(settings: { beautifiedInputEnabled?: boolean }): BottomInputRuntimeStatus {
+	configure(settings: BottomInputRuntimeSettings): BottomInputRuntimeStatus {
 		if (typeof settings.beautifiedInputEnabled === "boolean") this.beautifiedInputEnabled = settings.beautifiedInputEnabled;
+		if (typeof settings.footerEnabled === "boolean") this.footerEnabled = settings.footerEnabled;
+		if (settings.inputMetrics) this.inputMetrics = normalizeInputMetricsSettings(settings.inputMetrics, this.inputMetrics);
 		return this.syncLayout();
 	}
 
@@ -251,7 +268,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	}
 
 	requestRender(options: { full?: boolean } = {}): void {
-		if (!this.installed || this.renderTimer) {
+		if (!(this.editorInstalled || this.footerInstalled) || this.renderTimer) {
 			if (options.full) this.renderPendingFull = true;
 			return;
 		}
@@ -259,7 +276,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		const generation = this.generation;
 		this.renderTimer = setTimeout(() => {
 			this.renderTimer = null;
-			if (generation !== this.generation || !this.installed) {
+			if (generation !== this.generation || !(this.editorInstalled || this.footerInstalled)) {
 				this.renderPendingFull = false;
 				return;
 			}
@@ -334,44 +351,119 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 
 	private syncLayout(): BottomInputRuntimeStatus {
 		this.resetLayoutCache();
-		this.debug("sync_layout", this.ctx, { details: { beautifiedInputEnabled: this.beautifiedInputEnabled } });
-		if (!this.beautifiedInputEnabled) return this.disable();
+		this.debug("sync_layout", this.ctx, {
+			details: {
+				beautifiedInputEnabled: this.beautifiedInputEnabled,
+				footerEnabled: this.footerEnabled,
+			},
+		});
+		if (!this.beautifiedInputEnabled && !this.footerEnabled) return this.disable();
 		const ui = this.ui;
 		if (!ui) return this.failClosed("bottom input requires a bound TUI session");
+
+		const failures: string[] = [];
 		try {
-			this.validateUI(ui);
-			if (!this.installed) this.installLayout(ui);
-			this.failure = undefined;
-			this.requestRender({ full: true });
-			return this.toStatus();
+			this.reconcileEditor(ui);
 		} catch (error) {
-			return this.failClosed(formatFailure(error));
+			failures.push(formatFailure(error));
+		}
+		try {
+			this.reconcileFooter(ui);
+		} catch (error) {
+			failures.push(formatFailure(error));
+		}
+		try {
+			this.syncEditorServices();
+		} catch (error) {
+			failures.push(formatFailure(error));
+		}
+
+		this.failure = failures.length > 0 ? failures.join("; ") : undefined;
+		if (this.editorInstalled || this.footerInstalled) this.requestRender({ full: true });
+		return this.toStatus();
+	}
+
+	private reconcileEditor(ui: RuntimeUI): void {
+		if (!this.beautifiedInputEnabled) {
+			this.restoreDefaultEditor(ui);
+			return;
+		}
+		if (this.editorInstalled) return;
+		this.validateEditorUI(ui);
+		const ownerGeneration = this.generation;
+		const factory = this.createEditorFactory(ownerGeneration);
+		this.editorOwnerGeneration = ownerGeneration;
+		this.editorFactory = factory;
+		try {
+			ui.setEditorComponent!(factory);
+			this.editorInstalled = true;
+		} catch (error) {
+			this.editorOwnerGeneration = null;
+			this.editorFactory = undefined;
+			throw error;
 		}
 	}
 
-	private installLayout(ui: RuntimeUI): void {
+	private reconcileFooter(ui: RuntimeUI): void {
+		if (!this.footerEnabled) {
+			this.restoreDefaultFooter(ui);
+			return;
+		}
+		if (this.footerInstalled) return;
+		this.validateFooterUI(ui);
 		const ownerGeneration = this.generation;
-		this.layoutOwnerGeneration = ownerGeneration;
-		this.editorFactory = this.createEditorFactory(ownerGeneration);
-		this.footerFactory = this.createFooterFactory(ownerGeneration);
-		ui.setEditorComponent!(this.editorFactory);
-		ui.setFooter!(this.footerFactory);
-		this.installed = true;
-		this.installInputListener();
-		this.startClockTimer();
+		const factory = this.createFooterFactory(ownerGeneration);
+		this.footerOwnerGeneration = ownerGeneration;
+		this.footerFactory = factory;
+		try {
+			ui.setFooter!(factory);
+			this.footerInstalled = true;
+		} catch (error) {
+			this.footerOwnerGeneration = null;
+			this.footerFactory = undefined;
+			throw error;
+		}
+	}
+
+	private syncEditorServices(): void {
+		if (this.editorInstalled) {
+			this.installInputListener();
+			this.startClockTimer();
+			return;
+		}
+		this.stopClockTimer();
+		this.removeInputListener?.();
+		this.removeInputListener = null;
+		if (!this.footerInstalled) {
+			this.stopRenderTimer();
+			this.tui = undefined;
+		}
 	}
 
 	private disable(): BottomInputRuntimeStatus {
-		if (!this.installed && !this.failure) return this.toStatus();
+		if (!this.editorInstalled && !this.footerInstalled && !this.editorFactory && !this.footerFactory && !this.failure) return this.toStatus();
 		this.debug("disable", this.ctx);
 		this.stopClockTimer();
 		this.stopRenderTimer();
 		this.removeInputListener?.();
 		this.removeInputListener = null;
-		this.restoreDefaultLayout();
-		this.installed = false;
-		this.failure = undefined;
-		this.layoutOwnerGeneration = null;
+		const failures: string[] = [];
+		if (this.ui) {
+			try {
+				this.restoreDefaultEditor(this.ui);
+			} catch (error) {
+				if (!isStaleCtxError(error)) failures.push(formatFailure(error));
+			}
+			try {
+				this.restoreDefaultFooter(this.ui);
+			} catch (error) {
+				if (!isStaleCtxError(error)) failures.push(formatFailure(error));
+			}
+		}
+		this.editorInstalled = false;
+		this.footerInstalled = false;
+		this.editorOwnerGeneration = null;
+		this.footerOwnerGeneration = null;
 		this.editorFactory = undefined;
 		this.footerFactory = undefined;
 		this.editorInstance = undefined;
@@ -380,19 +472,23 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		this.tui = undefined;
 		this.theme = undefined;
 		this.editorTheme = undefined;
+		this.failure = failures.length > 0 ? failures.join("; ") : undefined;
 		this.resetLayoutCache();
 		return this.toStatus();
 	}
 
-	private validateUI(ui: RuntimeUI): void {
+	private validateEditorUI(ui: RuntimeUI): void {
 		if (typeof ui.setEditorComponent !== "function") throw new Error("bottom input expected ctx.ui.setEditorComponent(factory)");
 		if (typeof ui.getEditorComponent !== "function") throw new Error("bottom input expected ctx.ui.getEditorComponent()");
+	}
+
+	private validateFooterUI(ui: RuntimeUI): void {
 		if (typeof ui.setFooter !== "function") throw new Error("bottom input expected ctx.ui.setFooter(factory)");
 	}
 
 	private createEditorFactory(ownerGeneration: number): (tui: any, theme: any, keybindings: any) => any {
 		return (tui, theme, keybindings) => {
-			if (ownerGeneration !== this.generation || ownerGeneration !== this.layoutOwnerGeneration) return createStaleEditorFallback();
+			if (ownerGeneration !== this.generation || ownerGeneration !== this.editorOwnerGeneration) return createStaleEditorFallback();
 			if (!this.diagnoseTui(tui)) throw new Error("unsupported Pi TUI renderer mode");
 			this.tui = tui;
 			this.editorTheme = theme ?? FALLBACK_EDITOR_THEME;
@@ -410,7 +506,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 
 	private createFooterFactory(ownerGeneration: number): (tui: any, theme: any, footerData: any) => any {
 		return (tui, theme, footerData) => {
-			if (ownerGeneration !== this.generation || ownerGeneration !== this.layoutOwnerGeneration) return createStaleFooterFallback();
+			if (ownerGeneration !== this.generation || ownerGeneration !== this.footerOwnerGeneration) return createStaleFooterFallback();
 			const generation = this.generation;
 			this.tui = tui;
 			this.theme = theme ?? FALLBACK_EDITOR_THEME;
@@ -455,7 +551,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 			footerData: this.footerData,
 			theme: this.getRenderTheme(),
 			width: safeWidth,
-			beautifiedInputEnabled: true,
+			beautifiedInputEnabled: this.beautifiedInputEnabled,
 			isStreaming: this.isStreaming,
 			liveUsage: this.liveUsage,
 			latestAssistantUsage: this.latestAssistantUsage,
@@ -464,6 +560,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 			sessionStartTime: this.sessionStartTime,
 			now,
 			lastPrompt: this.lastPrompt,
+			inputMetrics: this.inputMetrics,
 			icons: getBottomInputIcons(),
 		});
 		const layout: StatusLayout = {
@@ -539,15 +636,33 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		}
 	}
 
-	private restoreDefaultLayout(): void {
-		const ui = this.ui;
-		if (!ui) return;
+	private restoreDefaultEditor(ui: RuntimeUI): void {
+		if (!this.editorInstalled && !this.editorFactory) return;
 		try {
 			if (ui.getEditorComponent?.() === this.editorFactory) ui.setEditorComponent?.(undefined);
-			if (isActiveAlpsFooterComponent(this.footerComponent) || this.footerComponent === undefined && this.footerFactory) ui.setFooter?.(undefined);
 			ui.setStatus?.(STASH_STATUS_KEY, undefined);
-		} catch (error) {
-			if (!isStaleCtxError(error)) this.failure = formatFailure(error);
+		} finally {
+			this.editorInstalled = false;
+			this.editorOwnerGeneration = null;
+			this.editorFactory = undefined;
+			this.editorInstance = undefined;
+			this.editorTheme = undefined;
+		}
+	}
+
+	private restoreDefaultFooter(ui: RuntimeUI): void {
+		if (!this.footerInstalled && !this.footerFactory) return;
+		try {
+			if (isActiveAlpsFooterComponent(this.footerComponent) || this.footerComponent === undefined && this.footerFactory) {
+				ui.setFooter?.(undefined);
+			}
+		} finally {
+			this.footerInstalled = false;
+			this.footerOwnerGeneration = null;
+			this.footerFactory = undefined;
+			this.footerComponent = undefined;
+			this.footerData = undefined;
+			this.theme = undefined;
 		}
 	}
 
@@ -582,9 +697,15 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	}
 
 	private toStatus(): BottomInputRuntimeStatus {
-		return this.failure
-			? { enabled: this.beautifiedInputEnabled, installed: this.installed, failure: this.failure }
-			: { enabled: this.beautifiedInputEnabled, installed: this.installed };
+		const status = {
+			enabled: this.beautifiedInputEnabled || this.footerEnabled,
+			installed: this.editorInstalled || this.footerInstalled,
+			editorEnabled: this.beautifiedInputEnabled,
+			editorInstalled: this.editorInstalled,
+			footerEnabled: this.footerEnabled,
+			footerInstalled: this.footerInstalled,
+		};
+		return this.failure ? { ...status, failure: this.failure } : status;
 	}
 
 	private debug(event: Parameters<typeof writeBottomInputDebugLog>[0]["event"], ctx?: any, extra: Omit<Parameters<typeof writeBottomInputDebugLog>[0], "event" | "state" | "ctx" | "currentCtx" | "currentUi"> = {}): void {
@@ -594,11 +715,11 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 			currentCtx: this.ctx,
 			currentUi: this.ui,
 			state: {
-				enabled: this.beautifiedInputEnabled,
-				installed: this.installed,
-				layoutInstalled: this.installed,
+				enabled: this.beautifiedInputEnabled || this.footerEnabled,
+				installed: this.editorInstalled || this.footerInstalled,
+				layoutInstalled: this.editorInstalled || this.footerInstalled,
 				generation: this.generation,
-				layoutOwnerGeneration: this.layoutOwnerGeneration,
+				layoutOwnerGeneration: this.editorOwnerGeneration ?? this.footerOwnerGeneration,
 				hasCompositor: false,
 				hasEditor: Boolean(this.editorInstance),
 				hasFooter: Boolean(this.footerComponent),

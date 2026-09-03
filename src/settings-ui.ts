@@ -25,6 +25,7 @@ export type SettingsPanelOps = {
 };
 
 const MAIN_MAX_VISIBLE = 10;
+const INPUT_METRICS_MAX_VISIBLE = 5;
 const ANIMATIONS_MAX_VISIBLE = 8;
 const SHORTCUT_MAX_VISIBLE = 8;
 const ON = "ON";
@@ -52,8 +53,17 @@ type MainSettingId =
 	| "chromeFrame.toolCompactMode"
 	| "chromeFrame.compactEditTool"
 	| "beautifiedInput.enabled"
+	| "inputMetrics"
+	| "footer.enabled"
 	| "animations"
 	| "shortcuts";
+
+type InputMetricsSettingId =
+	| "inputTokens"
+	| "outputTokens"
+	| "cacheHit"
+	| "tokenSpeed"
+	| "elapsedTime";
 
 type AnimationsSettingId =
 	| "animations.enabled"
@@ -267,6 +277,20 @@ export class AlpsPiSettingsComponent extends Container {
 				values: [ON, OFF],
 			},
 			{
+				id: "inputMetrics",
+				label: "Input Metrics",
+				description: "配置输入框底边显示的会话指标",
+				currentValue: CONFIGURE,
+				submenu: (_currentValue, done) => new InputMetricsSettingsSubmenu(this.ops, () => done(), this.listTheme),
+			},
+			{
+				id: "footer.enabled",
+				label: "Footer",
+				description: "控制 Alps Pi 是否接管底部状态栏",
+				currentValue: booleanLabel(settings.footer.enabled),
+				values: [ON, OFF],
+			},
+			{
 				id: "animations",
 				label: "Animations",
 				description: "配置底部与 hidden thinking 内置动画",
@@ -309,6 +333,10 @@ export class AlpsPiSettingsComponent extends Container {
 				this.syncMainValue(id, state.config.settings.beautifiedInput.enabled);
 				return;
 			}
+			case "footer.enabled":
+				state.config.settings.footer.enabled = booleanValue(newValue);
+				this.ops.onSettingsChanged(state.config.settings);
+				return;
 		}
 	}
 
@@ -319,6 +347,7 @@ export class AlpsPiSettingsComponent extends Container {
 		this.syncMainValue("chromeFrame.toolCompactMode", settings.chromeFrame.toolCompactMode);
 		this.syncMainValue("chromeFrame.compactEditTool", settings.chromeFrame.compactEditTool);
 		this.syncMainValue("beautifiedInput.enabled", settings.beautifiedInput.enabled);
+		this.syncMainValue("footer.enabled", settings.footer.enabled);
 	}
 
 	private syncMainValue(id: MainSettingId, value: boolean): void {
@@ -333,6 +362,51 @@ export class AlpsPiSettingsComponent extends Container {
 		if (this.closed) return;
 		this.closed = true;
 		this.done?.();
+	}
+}
+
+class InputMetricsSettingsSubmenu extends Container {
+	private readonly ops: Required<SettingsPanelOps>;
+	private readonly onCancel: () => void;
+	private readonly settingsList: SettingsList;
+
+	constructor(ops: Required<SettingsPanelOps>, onCancel: () => void, listTheme: SettingsListTheme) {
+		super();
+		this.ops = ops;
+		this.onCancel = onCancel;
+		this.settingsList = new SettingsList(
+			this.createItems(),
+			INPUT_METRICS_MAX_VISIBLE,
+			withSettingsListHint(listTheme, "↑/↓ select · Enter/Space toggle · Esc back"),
+			(id, newValue) => this.handleChange(id as InputMetricsSettingId, newValue),
+			onCancel,
+		);
+		this.addChild(this.settingsList);
+	}
+
+	handleInput(data: string): void {
+		if ((data === "q" || data === "Q") && !hasSettingsListSubmenu(this.settingsList)) {
+			this.onCancel();
+			return;
+		}
+		this.settingsList.handleInput(data);
+	}
+
+	private createItems(): SettingItem[] {
+		const metrics = this.ops.getState().config.settings.inputMetrics;
+		return [
+			{ id: "inputTokens", label: "Input Tokens", description: "显示本会话累计输入 Token", currentValue: booleanLabel(metrics.inputTokens), values: [ON, OFF] },
+			{ id: "outputTokens", label: "Output Tokens", description: "显示本会话累计输出 Token", currentValue: booleanLabel(metrics.outputTokens), values: [ON, OFF] },
+			{ id: "cacheHit", label: "Cache Hit", description: "显示最近一次请求的缓存命中率", currentValue: booleanLabel(metrics.cacheHit), values: [ON, OFF] },
+			{ id: "tokenSpeed", label: "Token Speed", description: "显示最近一次响应的输出速度", currentValue: booleanLabel(metrics.tokenSpeed), values: [ON, OFF] },
+			{ id: "elapsedTime", label: "Elapsed Time", description: "显示当前会话累计耗时", currentValue: booleanLabel(metrics.elapsedTime), values: [ON, OFF] },
+		];
+	}
+
+	private handleChange(id: InputMetricsSettingId, newValue: string): void {
+		const settings = this.ops.getState().config.settings;
+		settings.inputMetrics[id] = booleanValue(newValue);
+		this.ops.onSettingsChanged(settings);
 	}
 }
 

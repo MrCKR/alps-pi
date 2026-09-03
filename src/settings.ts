@@ -1,5 +1,9 @@
 /** 功能：管理 Alps Pi 美化扩展的统一运行时设置 实现者：alps 实现日期：2026-05-27 */
 
+import { cloneDefaultInputMetricsSettings, type InputMetricsSettings } from "./features/bottom-input/metrics.ts";
+
+export type { InputMetricsSettings } from "./features/bottom-input/metrics.ts";
+
 export type ChromeFrameSettings = {
 	/** Alps Pi 美化总开关：统一门控消息线框、输入框美化与动画。 */
 	enabled: boolean;
@@ -18,6 +22,11 @@ export type FixedBottomEditorSettings = {
 
 export type BeautifiedInputSettings = {
 	/** 美化输入框：控制输入框线框与嵌入边框状态。 */
+	enabled: boolean;
+};
+
+export type FooterSettings = {
+	/** Alps Footer：控制是否接管 Pi 底部 footer 区域。 */
 	enabled: boolean;
 };
 
@@ -72,6 +81,10 @@ export type AlpsPiSettings = {
 	fixedBottomEditor: FixedBottomEditorSettings;
 	/** 输入框线框美化配置。 */
 	beautifiedInput: BeautifiedInputSettings;
+	/** 输入框边框内嵌指标配置。 */
+	inputMetrics: InputMetricsSettings;
+	/** 底部 Footer 配置。 */
+	footer: FooterSettings;
 	/** 内置 Animations 配置。 */
 	animations: AnimationsSettings;
 	/** 底部输入框快捷键配置。 */
@@ -89,6 +102,10 @@ export const DEFAULT_SETTINGS: AlpsPiSettings = {
 		enabled: true,
 	},
 	beautifiedInput: {
+		enabled: true,
+	},
+	inputMetrics: cloneDefaultInputMetricsSettings(),
+	footer: {
 		enabled: true,
 	},
 	animations: {
@@ -121,6 +138,8 @@ export function cloneDefaultSettings(): AlpsPiSettings {
 		chromeFrame: { ...DEFAULT_SETTINGS.chromeFrame },
 		fixedBottomEditor: { ...DEFAULT_SETTINGS.fixedBottomEditor },
 		beautifiedInput: { ...DEFAULT_SETTINGS.beautifiedInput },
+		inputMetrics: { ...DEFAULT_SETTINGS.inputMetrics },
+		footer: { ...DEFAULT_SETTINGS.footer },
 		animations: { ...DEFAULT_SETTINGS.animations },
 		shortcuts: { ...DEFAULT_SETTINGS.shortcuts },
 	};

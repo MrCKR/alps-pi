@@ -49,6 +49,8 @@ test("设置界面展示英文设置名、中文描述和主题线框", () => {
 	assert.match(plain, /Compact Edit/);
 	assert.doesNotMatch(plain, /Fixed Input/);
 	assert.match(plain, /Beautified Input/);
+	assert.match(plain, /Input Metrics/);
+	assert.match(plain, /Footer/);
 	assert.match(plain, /Animations/);
 	assert.match(plain, /Shortcuts/);
 	assert.match(plain, /统一启用或关闭所有 Alps Pi 美化效果/);
@@ -57,6 +59,8 @@ test("设置界面展示英文设置名、中文描述和主题线框", () => {
 	assert.match(plain, /Compact Tools\s+ON/);
 	assert.match(plain, /Compact Edit\s+OFF/);
 	assert.match(plain, /Beautified Input\s+ON/);
+	assert.match(plain, /Input Metrics\s+configure/);
+	assert.match(plain, /Footer\s+ON/);
 	assert.match(plain, /Animations\s+configure/);
 	assert.doesNotMatch(plain, /preview/i);
 	assert.doesNotMatch(plain, /Alps Pi 美化设置/);
@@ -114,6 +118,35 @@ test("设置界面第五项切换美化输入框且不改 legacy fixed 偏好", 
 	assert.equal(state.config.settings.fixedBottomEditor.enabled, true);
 	assert.deepEqual(beautifiedInputCalls, [false]);
 	assert.doesNotMatch(stripAnsi(component.render(80).join("\n")), /Fixed Input/);
+});
+
+test("设置界面第七项独立切换 Footer", () => {
+	const { state, changedCalls, component } = createPanel();
+	for (let i = 0; i < 6; i++) component.handleInput("\x1b[B");
+	component.handleInput(" ");
+
+	assert.equal(state.config.settings.footer.enabled, false);
+	assert.deepEqual(changedCalls, [JSON.stringify(state.config.settings.animations)]);
+	assert.match(stripAnsi(component.render(80).join("\n")), /Footer\s+OFF/);
+});
+
+test("Input Metrics 二级页可独立关闭五项指标", () => {
+	const { state, changedCalls, component } = createPanel();
+	openInputMetricsSettings(component);
+	const initial = stripAnsi(component.render(90).join("\n"));
+	for (const label of ["Input Tokens", "Output Tokens", "Cache Hit", "Token Speed", "Elapsed Time"]) {
+		assert.match(initial, new RegExp(`${label}\\s+ON`));
+	}
+
+	const keys = ["inputTokens", "outputTokens", "cacheHit", "tokenSpeed", "elapsedTime"] as const;
+	for (let index = 0; index < keys.length; index += 1) {
+		component.handleInput(" ");
+		assert.equal(state.config.settings.inputMetrics[keys[index]!], false);
+		if (index < keys.length - 1) component.handleInput("\x1b[B");
+	}
+	assert.equal(changedCalls.length, 5);
+	component.handleInput("\x1b");
+	assert.match(stripAnsi(component.render(90).join("\n")), /Input Metrics\s+configure/);
 });
 
 test("Animations 二级页可修改 Enabled、Random Mode、Thinking、Working、Tool、Width、FPS，并提供预览入口", async () => {
@@ -243,12 +276,17 @@ test("快捷键设置保存后关闭捕获并返回快捷键页", () => {
 	assert.match(stripAnsi(component.render(80).join("\n")), /Master Switch/);
 });
 
-function openAnimationsSettings(component: AlpsPiSettingsComponent): void {
+function openInputMetricsSettings(component: AlpsPiSettingsComponent): void {
 	for (let i = 0; i < 5; i++) component.handleInput("\x1b[B");
 	component.handleInput(" ");
 }
 
+function openAnimationsSettings(component: AlpsPiSettingsComponent): void {
+	for (let i = 0; i < 7; i++) component.handleInput("\x1b[B");
+	component.handleInput(" ");
+}
+
 function openShortcutSettings(component: AlpsPiSettingsComponent): void {
-	for (let i = 0; i < 6; i++) component.handleInput("\x1b[B");
+	for (let i = 0; i < 8; i++) component.handleInput("\x1b[B");
 	component.handleInput(" ");
 }

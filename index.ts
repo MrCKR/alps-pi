@@ -38,6 +38,8 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 		state.config.settings.chromeFrame.compactEditTool = persistedSettings.chromeFrame.compactEditTool;
 		state.config.settings.fixedBottomEditor.enabled = persistedSettings.fixedBottomEditor.enabled;
 		state.config.settings.beautifiedInput.enabled = persistedSettings.beautifiedInput.enabled;
+		Object.assign(state.config.settings.inputMetrics, persistedSettings.inputMetrics);
+		state.config.settings.footer.enabled = persistedSettings.footer.enabled;
 		state.config.settings.animations = { ...persistedSettings.animations };
 		state.config.settings.shortcuts = { ...persistedSettings.shortcuts };
 		trackSettingsBaseline(state.config.settings, persistedSettings);
@@ -52,6 +54,8 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 			bottomInputRuntime.bindSession(ctx);
 			const status = bottomInputRuntime.configure({
 				beautifiedInputEnabled: state.config.settings.chromeFrame.enabled && enabled,
+				footerEnabled: state.config.settings.chromeFrame.enabled && state.config.settings.footer.enabled,
+				inputMetrics: state.config.settings.inputMetrics,
 			});
 			writePersistedSettings(state.config.settings);
 			return status;
@@ -60,6 +64,8 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 			bottomInputRuntime.setShortcuts?.(settings.shortcuts);
 			bottomInputRuntime.configure({
 				beautifiedInputEnabled: settings.chromeFrame.enabled && settings.beautifiedInput.enabled,
+				footerEnabled: settings.chromeFrame.enabled && settings.footer.enabled,
+				inputMetrics: settings.inputMetrics,
 			});
 			configureAnimations({
 				...settings.animations,
@@ -102,6 +108,8 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 		bottomInputRuntime.setShortcuts?.(state.config.settings.shortcuts);
 		bottomInputRuntime.configure({
 			beautifiedInputEnabled: state.config.settings.chromeFrame.enabled && state.config.settings.beautifiedInput.enabled,
+			footerEnabled: state.config.settings.chromeFrame.enabled && state.config.settings.footer.enabled,
+			inputMetrics: state.config.settings.inputMetrics,
 		});
 	});
 
@@ -202,6 +210,8 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 			state.config.settings.chromeFrame.compactEditTool = persisted.chromeFrame.compactEditTool;
 			state.config.settings.fixedBottomEditor.enabled = persisted.fixedBottomEditor.enabled;
 			state.config.settings.beautifiedInput.enabled = persisted.beautifiedInput.enabled;
+			Object.assign(state.config.settings.inputMetrics, persisted.inputMetrics);
+			state.config.settings.footer.enabled = persisted.footer.enabled;
 			state.config.settings.animations = { ...persisted.animations };
 			state.config.settings.shortcuts = { ...persisted.shortcuts };
 			writePersistedSettings(state.config.settings);

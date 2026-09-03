@@ -45,7 +45,7 @@ pi install git:https://github.com/MrCKR/alps-pi
 
 - 消息线框默认启用，无需每次手动打开。
 - Pi `/settings` 中选择 `TUI mode: fullscreen` 后，使用 Pi 原生固定 editor/status/widget/footer dock。
-- 美化输入框默认开启，会显示完整输入框线框，并把模型、thinking、上下文进度和耗时嵌入边框。
+- 美化输入框默认开启，会显示完整输入框线框，并把模型、thinking、上下文进度和可配置的会话指标嵌入边框。
 - 内置 Animations 默认开启，会完整替代外部 `pi-animations` 的底部 Working/Thinking/Tool 动画，并兼容替换 Pi hidden thinking 的 `Thinking...`。
 - `/alps-pi` 设置持久化到独立的 `~/.pi/agent/alps-pi/settings.json`，`/reload` 或新会话后按上次设置恢复。首次升级按“独立主文件 → Pi settings 的 `alps-pi` namespace → `~/.pi/agent/alps-pi.json` → 默认值”读取，并保留原 namespace 供回滚。
 - `/alps-pi` 提供设置界面。
@@ -62,14 +62,16 @@ pi install git:https://github.com/MrCKR/alps-pi
 /alps-pi preview     预览美化线框样式
 ```
 
-`/alps-pi` 设置界面包含五个开关、一个 Animations 配置项和一个快捷键配置项：
+`/alps-pi` 设置界面包含六个直接开关、Input Metrics、Animations 和快捷键配置项：
 
 ```text
-Master Switch       统一启用或关闭消息线框、输入框美化与动画，默认 ON
+Master Switch       统一启用或关闭消息线框、输入框美化、Footer 与动画，默认 ON
 Assistant Frame     控制 assistant 正文回复是否包线框，默认 ON
 Compact Tools       未展开 tool 只显示第一条有效文本行，默认 ON
 Compact Edit        允许 edit tool 也按极简模式展示，默认 OFF
 Beautified Input    控制输入框线框与嵌入边框状态，默认 ON
+Input Metrics       分别控制输入、输出、缓存命中率、Token 速度和耗时，默认全部 ON
+Footer              控制 Alps Pi 是否接管底部状态栏，默认 ON
 Animations          配置底部 Working/Thinking/Tool 与 hidden thinking 内置动画，默认 ON
 Shortcuts           管理暂存、复制、剪切和 editor 光标快捷键
 ```
@@ -105,7 +107,7 @@ Esc/q 关闭
 
 `alps-pi 0.2.0` 不再接管 terminal viewport。需要固定输入框时，请在 Pi `/settings` 中将 `TUI mode` 设为 `fullscreen`；滚动、选区、鼠标、粘贴和 dock 布局全部由 Pi 原生 TUI 管理。`regular` 模式仍保留消息线框、Beautified Input、状态、Animations 和输入框快捷键，但不会模拟固定 dock。旧 `fixedBottomEditor.enabled` 以及 transcript 滚动/跳转快捷键字段仅原样保留，供回滚到 `0.1.5`，现代 runtime 不读取或执行。
 
-开启 `美化输入框` 后，扩展会把 editor 包装成完整线框：顶部左侧显示模型与 thinking，顶部右侧显示 10 字符上下文进度和百分比/窗口，底部右侧显示本次对话耗时。extension statuses 与上一个问题保持在线框下方，不塞进边框。缺失的数据不会显示占位。`Alt+S` 对齐原版行为：有输入时暂存并清空输入框，输入框为空时恢复暂存内容。
+开启 `Beautified Input` 后，扩展会把 editor 包装成完整线框：顶部左侧显示模型与 thinking，顶部右侧以图标、10 字符进度条和百分比/窗口显示上下文；底部右侧依次显示本会话累计输入、累计输出、最近一次请求的缓存命中率、最近一次有效响应的 Token 输出速度和会话耗时。`Input Metrics` 子页可分别关闭这五项，设置独立持久化；指标使用 `[图标] [数据]` 紧凑格式，并以 ` · ` 分隔。输入、输出、速度和耗时使用固定语义色，缓存命中率按 `>= 90%`、`>= 60%`、`< 60%` 分别显示为绿、金、红。窄终端会按缓存、输出、输入、速度的顺序整项隐藏，优先保留耗时。开启 `Footer` 后，extension statuses 与上一个问题保持在线框下方显示；关闭时 Alps Pi 会释放自己持有的 Footer，并保留后续扩展接管的 Footer。Beautified Input、Input Metrics 偏好与 Footer 可独立配置，Master Switch 仅统一控制是否生效，不覆盖子项偏好。缺失的数据不会显示占位。`Alt+S` 对齐原版行为：有输入时暂存并清空输入框，输入框为空时恢复暂存内容。
 
 开启 `Animations` 后，扩展会接管 Pi 底部 `Working...` loader：普通 agent 输出期显示 Working 动画，thinking 流式阶段切换为 Thinking 动画，tool 执行阶段切换为 Tool 动画；多行动画会整体写入底部 working 区域，避免和 Todo/widget 混排。hidden thinking 会在思考中播放动画，思考完成后停为 `Thinking complete`，并沿用 Pi thinking 文案配色。该功能用于替代外部 `pi-animations`，请禁用/卸载外部 `pi-animations`，否则可能出现重复动画或 monkey patch 冲突。
 
@@ -151,12 +153,12 @@ toolError.border     error
 
 ## 安全策略
 
-- 扩展默认启用消息线框 patch、美化输入框和内置 Animations。
+- 扩展默认启用消息线框 patch、美化输入框、Footer 和内置 Animations。
 - 设置界面里的线框美化开关会恢复原始 render 方法；如果 render 已被后续扩展接管，alps-pi 会跳过恢复，避免覆盖其它 wrapper。
 - patch 是幂等的，重复启用不会重复包裹。
 - 核心组件 patch 失败时会自动回滚。
 - 用户 prompt、extension status、消息正文进入 terminal 展示前会剥离 OSC/DCS/APC/PM 与非 SGR CSI；主题层生成的 SGR 颜色仍保留。
-- Beautified Input 仅通过 Pi 公开的 editor/footer/input API 安装；能力缺失时只关闭对应运行时功能，不回滚用户偏好。
+- Beautified Input 与 Footer 分别通过 Pi 公开的 editor/input API 和 footer API 安装；能力缺失时只关闭对应运行时功能，不回滚用户偏好。
 - Alps 不覆盖 `terminal.write`、`terminal.rows`、`tui.render` 或 `tui.doRender`，也不发送 alternate-screen/mouse-reporting 控制序列。
 - image escape 行会回退或跳过包装，避免破坏终端图片协议。
 - assistant / user / custom / skill / compaction / branch 空内容不会渲染空框。
@@ -166,7 +168,7 @@ toolError.border     error
 
 正式运行基线为 Pi `>=0.84.4`。Pi 核心包按官方 package 规则声明为 wildcard peer，开发与发布验证使用 `0.84.4`。
 
-Master Switch 下的消息线框仍依赖 Pi 导出的消息组件与 `render(width)`；Beautified Input 只依赖 `ctx.ui.setEditorComponent`、`ctx.ui.setFooter` 和 `ctx.ui.onTerminalInput`。运行时集中检测组件、Animations 和 TUI mode 能力，缺失时按功能 fail closed 并输出诊断，不修改持久化用户偏好。旧 Pi 用户可回滚到 `alps-pi 0.1.5`。
+Master Switch 下的消息线框仍依赖 Pi 导出的消息组件与 `render(width)`；Beautified Input 依赖 `ctx.ui.setEditorComponent`、`ctx.ui.getEditorComponent` 和可选的 `ctx.ui.onTerminalInput`，Footer 只依赖 `ctx.ui.setFooter`。运行时集中检测组件、Animations 和 TUI mode 能力，缺失时按功能 fail closed 并输出诊断，不修改持久化用户偏好。旧 Pi 用户可回滚到 `alps-pi 0.1.5`。
 
 ## 开发
 
