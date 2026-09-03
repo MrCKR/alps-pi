@@ -131,13 +131,8 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 							settingsTui = tui;
 							return createSettingsComponent(theme ?? fallbackTheme, done, {
 								getState: getGlobalPatchState,
-								disableChromeFrame: () => runIfActive(() => {
-									const result = disableFn();
-									onSettingsChanged(result.config.settings, ctx);
-									return result;
-								}) ?? getGlobalPatchState(),
-								enableChromeFrame: () => runIfActive(() => {
-									const result = enableFn();
+								setMasterEnabled: (enabled) => runIfActive(() => {
+									const result = enabled ? enableFn() : disableFn();
 									onSettingsChanged(result.config.settings, ctx);
 									return result;
 								}) ?? getGlobalPatchState(),

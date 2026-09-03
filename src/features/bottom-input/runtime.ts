@@ -38,8 +38,9 @@ export type BottomInputRuntime = {
 	setLastPrompt(prompt: unknown): void;
 	setThinkingLevel(level: unknown): void;
 	setStreaming?(streaming: boolean): void;
-	setLiveUsage(usage: unknown): void;
-	clearLiveUsage(): void;
+	setLiveUsage(usage: unknown, assistantMessageEvent?: unknown): void;
+	clearLiveUsage(message?: unknown): void;
+	resetThroughput(): void;
 	requestRender(options?: { full?: boolean }): void;
 	stashOrRestoreEditorText(ctx?: any): void;
 	copyEditorText?(ctx?: any): void;
@@ -84,6 +85,7 @@ const STATUS_RENDER_INTERVAL_MS = 1_000;
 const STATUS_RENDER_DEBOUNCE_MS = 33;
 const LAYOUT_CACHE_TTL_MS = 250;
 const STREAMING_LAYOUT_CACHE_TTL_MS = 1_000;
+const MIN_THROUGHPUT_DURATION_MS = 250;
 
 export function createBottomInputRuntime(options: BottomInputRuntimeOptions = {}): BottomInputRuntime {
 	return new BottomInputRuntimeImpl(options);
@@ -117,6 +119,8 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	private liveUsage: AssistantUsage | null = null;
 	private latestAssistantUsage: AssistantUsage | null = null;
 	private isStreaming = false;
+	private outputStartedAt: number | null = null;
+	private tokensPerSecond: number | null = null;
 	private currentThinkingLevel: string | null = null;
 	private lastPrompt = "";
 	private sessionStartTime: number;
@@ -170,6 +174,8 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		this.stashedEditorText = null;
 		this.liveUsage = null;
 		this.latestAssistantUsage = null;
+		this.outputStartedAt = null;
+		this.tokensPerSecond = null;
 		this.currentThinkingLevel = null;
 		this.lastPrompt = "";
 		this.sessionStartTime = this.now();
@@ -185,6 +191,8 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 
 	resetSessionStartTime(): void {
 		this.sessionStartTime = this.now();
+		this.outputStartedAt = null;
+		this.tokensPerSecond = null;
 		this.resetLayoutCache();
 		this.requestRender();
 	}
@@ -203,12 +211,18 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 
 	setStreaming(streaming: boolean): void {
 		this.isStreaming = streaming;
-		if (streaming) this.liveUsage = null;
+		if (streaming) {
+			this.liveUsage = null;
+			this.outputStartedAt = null;
+		}
 		this.resetLayoutCache();
 		this.requestRender();
 	}
 
-	setLiveUsage(usage: unknown): void {
+	setLiveUsage(usage: unknown, assistantMessageEvent?: unknown): void {
+		if (this.outputStartedAt === null && isAssistantOutputDelta(assistantMessageEvent)) {
+			this.outputStartedAt = this.now();
+		}
 		if (isAssistantUsage(usage) && getUsageTokenTotal(usage) > 0) {
 			this.liveUsage = usage;
 			this.latestAssistantUsage = usage;
@@ -217,9 +231,21 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		this.requestRender();
 	}
 
-	clearLiveUsage(): void {
+	clearLiveUsage(message?: unknown): void {
+		if (message === undefined) {
+			this.outputStartedAt = null;
+		} else {
+			this.completeThroughput(message);
+		}
 		this.isStreaming = false;
 		this.liveUsage = null;
+		this.resetLayoutCache();
+		this.requestRender();
+	}
+
+	resetThroughput(): void {
+		this.outputStartedAt = null;
+		this.tokensPerSecond = null;
 		this.resetLayoutCache();
 		this.requestRender();
 	}
@@ -293,6 +319,17 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 
 	setShortcuts(shortcuts: Partial<BottomInputShortcuts> | undefined): void {
 		this.shortcuts = resolveBottomInputShortcuts(shortcuts);
+	}
+
+	private completeThroughput(message: unknown): void {
+		const startedAt = this.outputStartedAt;
+		this.outputStartedAt = null;
+		const usage = readCompletedAssistantUsage(message);
+		if (startedAt === null || !usage || usage.output <= 0) return;
+		const durationMs = this.now() - startedAt;
+		if (!Number.isFinite(durationMs) || durationMs < MIN_THROUGHPUT_DURATION_MS) return;
+		const rate = usage.output * 1_000 / durationMs;
+		if (Number.isFinite(rate) && rate > 0) this.tokensPerSecond = rate;
 	}
 
 	private syncLayout(): BottomInputRuntimeStatus {
@@ -423,6 +460,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 			liveUsage: this.liveUsage,
 			latestAssistantUsage: this.latestAssistantUsage,
 			currentThinkingLevel: this.currentThinkingLevel,
+			tokensPerSecond: this.tokensPerSecond,
 			sessionStartTime: this.sessionStartTime,
 			now,
 			lastPrompt: this.lastPrompt,
@@ -569,6 +607,21 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 			...extra,
 		});
 	}
+}
+
+function isAssistantOutputDelta(value: unknown): boolean {
+	if (!value || typeof value !== "object") return false;
+	const event = value as { type?: unknown; delta?: unknown };
+	return (event.type === "text_delta" || event.type === "thinking_delta" || event.type === "toolcall_delta")
+		&& typeof event.delta === "string"
+		&& event.delta.length > 0;
+}
+
+function readCompletedAssistantUsage(value: unknown): AssistantUsage | null {
+	if (!value || typeof value !== "object") return null;
+	const message = value as { role?: unknown; stopReason?: unknown; usage?: unknown };
+	if (message.role !== "assistant" || message.stopReason === "error" || message.stopReason === "aborted") return null;
+	return isAssistantUsage(message.usage) ? message.usage : null;
 }
 
 function isActiveAlpsFooterComponent(component: any): boolean {

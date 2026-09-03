@@ -43,9 +43,12 @@ test("package 包含 alps 主题且主题 token 完整", async () => {
 	assert.equal(themeJson.name, "alps");
 	assert.match(themeJson.$schema, /theme-schema\.json$/);
 	assert.ok(licenseFiles.includes("LICENSE.synthwave-84"));
-	assert.equal(Object.keys(themeJson.colors).length, 51);
+	assert.equal(Object.keys(themeJson.colors).length, 52);
 	assert.equal(themeJson.colors.accent, "variable");
 	assert.equal(themeJson.colors.borderAccent, "func");
-	assert.equal(themeJson.colors.thinkingMedium, "variable");
+	assert.equal(themeJson.vars.inputBorder, "#ff8b39");
+	for (const token of ["thinkingOff", "thinkingMinimal", "thinkingLow", "thinkingMedium", "thinkingHigh", "thinkingXhigh", "thinkingMax"]) {
+		assert.equal(themeJson.colors[token], "inputBorder");
+	}
 	assert.equal(themeJson.colors.bashMode, "keyword");
 });

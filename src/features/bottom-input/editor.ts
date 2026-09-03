@@ -45,7 +45,13 @@ export function createBottomInputEditor(tui: any, theme: any, keybindings: any, 
 				if (!this.stateRef.beautifiedInputEnabled || width < MIN_FRAME_WIDTH) return super.render(width);
 				const innerWidth = Math.max(1, Math.floor(width) - 4);
 				const base = super.render(innerWidth);
-				return renderBottomInputEditorLines({ lines: base, width, theme: this.stateRef.getTheme(), state: this.stateRef });
+				return renderBottomInputEditorLines({
+					lines: base,
+					width,
+					theme: this.stateRef.getTheme(),
+					borderColor: (text) => this.borderColor(text),
+					state: this.stateRef,
+				});
 			}
 		}
 		return new AlpsBeautifiedEditor();
@@ -74,7 +80,7 @@ export function splitNativeEditorRender(lines: readonly string[]): SplitEditorRe
 }
 
 /** 包装原生 editor 输出；美化关闭时原样返回，美化开启时只包 editor body。 */
-export function renderBottomInputEditorLines(input: { lines: readonly string[]; width: number; theme: ThemeLike; state: BottomInputEditorState }): string[] {
+export function renderBottomInputEditorLines(input: { lines: readonly string[]; width: number; theme: ThemeLike; borderColor?: (text: string) => string; state: BottomInputEditorState }): string[] {
 	const width = Number.isFinite(input.width) ? Math.max(0, Math.floor(input.width)) : 0;
 	if (!input.state.beautifiedInputEnabled || width < MIN_FRAME_WIDTH) return [...input.lines];
 	const { editorLines, popupLines } = splitNativeEditorRender(input.lines);
@@ -83,6 +89,7 @@ export function renderBottomInputEditorLines(input: { lines: readonly string[]; 
 			editorLines,
 			width,
 			theme: input.theme,
+			borderColor: input.borderColor,
 			status: input.state.getFrameStatus(width),
 		}),
 		...fitPopupLines(popupLines, width),
@@ -102,7 +109,13 @@ class FallbackBeautifiedInputEditor extends Editor {
 		if (!this.stateRef.beautifiedInputEnabled || width < MIN_FRAME_WIDTH) return super.render(width);
 		const innerWidth = Math.max(1, Math.floor(width) - 4);
 		const base = super.render(innerWidth);
-		return renderBottomInputEditorLines({ lines: base, width, theme: this.stateRef.getTheme(), state: this.stateRef });
+		return renderBottomInputEditorLines({
+			lines: base,
+			width,
+			theme: this.stateRef.getTheme(),
+			borderColor: (text) => this.borderColor(text),
+			state: this.stateRef,
+		});
 	}
 }
 

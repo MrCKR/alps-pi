@@ -3,7 +3,7 @@
 import { CURSOR_MARKER, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { sanitizeTerminalText } from "../../terminal-sanitizer.ts";
 import type { ThemeLike } from "../chrome-frame/styles.ts";
-import type { BottomInputFrameStatus } from "./status.ts";
+import { formatTokens, type BottomInputFrameStatus } from "./status.ts";
 
 export type BeautifiedEditorFrameInput = {
 	/** 原始 editor 渲染行。 */
@@ -12,6 +12,8 @@ export type BeautifiedEditorFrameInput = {
 	width: number;
 	/** 当前主题。 */
 	theme: ThemeLike;
+	/** Pi editor 当前的动态边框着色函数。 */
+	borderColor?: (text: string) => string;
 	/** 边框内嵌状态。 */
 	status: BottomInputFrameStatus;
 };
@@ -26,18 +28,19 @@ export function renderBeautifiedEditorFrame(input: BeautifiedEditorFrameInput): 
 	if (width < MIN_FRAME_WIDTH) return [...input.editorLines];
 	const editorLines = input.editorLines.length > 0 ? [...input.editorLines] : [""];
 	return [
-		buildTopBorder(width, input.theme, input.status),
-		...editorLines.map((line) => renderContentLine(line, width, input.theme)),
-		buildBottomBorder(width, input.theme, input.status.elapsed),
+		buildTopBorder(width, input.theme, input.status, input.borderColor),
+		...editorLines.map((line) => renderContentLine(line, width, input.theme, input.borderColor)),
+		buildBottomBorder(width, input.theme, input.status, input.borderColor),
 	];
 }
 
-function buildTopBorder(width: number, theme: ThemeLike, status: BottomInputFrameStatus): string {
+function buildTopBorder(width: number, theme: ThemeLike, status: BottomInputFrameStatus, borderColor?: (text: string) => string): string {
 	const leftLabel = joinStyledSegments([status.model, status.thinking], safeFg(theme, "borderMuted", " · "));
 	const rightLabel = status.context ?? "";
 	return buildBorderLine({
 		width,
 		theme,
+		borderColor,
 		leftCorner: "╭",
 		rightCorner: "╮",
 		leftLabel,
@@ -45,18 +48,56 @@ function buildTopBorder(width: number, theme: ThemeLike, status: BottomInputFram
 	});
 }
 
-function buildBottomBorder(width: number, theme: ThemeLike, elapsed: string | null): string {
+function buildBottomBorder(width: number, theme: ThemeLike, status: BottomInputFrameStatus, borderColor?: (text: string) => string): string {
 	return buildBorderLine({
 		width,
 		theme,
+		borderColor,
 		leftCorner: "╰",
 		rightCorner: "╯",
-		rightLabel: elapsed?.trim() || "",
+		rightLabel: buildBottomRightLabel(status, Math.max(0, width - 4), theme, borderColor),
 	});
 }
 
-function buildBorderLine(input: { width: number; theme: ThemeLike; leftCorner: string; rightCorner: string; leftLabel?: string; rightLabel?: string }): string {
-	const { width, theme, leftCorner, rightCorner } = input;
+function buildBottomRightLabel(status: BottomInputFrameStatus, maxWidth: number, theme: ThemeLike, borderColor?: (text: string) => string): string {
+	const elapsed = status.elapsed?.trim() || "";
+	const throughput = buildThroughputLabel(status, theme);
+	const usageParts = buildSessionUsageParts(status);
+	const separator = styleBorder(theme, borderColor, " · ");
+	for (let count = usageParts.length; count >= 0; count -= 1) {
+		const groups: string[] = [];
+		if (throughput) groups.push(throughput);
+		if (count > 0) groups.push(safeFg(theme, "dimmed", usageParts.slice(0, count).join(" "), "muted"));
+		if (elapsed) groups.push(elapsed);
+		const label = groups.join(separator);
+		if (visibleWidth(label) <= maxWidth) return label;
+	}
+	return elapsed;
+}
+
+function buildThroughputLabel(status: BottomInputFrameStatus, theme: ThemeLike): string {
+	const rate = status.tokensPerSecond;
+	if (typeof rate !== "number" || !Number.isFinite(rate) || rate <= 0) return "";
+	const value = rate < 1_000
+		? rate.toFixed(1)
+		: `${(rate / 1_000).toFixed(rate < 10_000 ? 1 : 0)}k`;
+	return safeFg(theme, "dimmed", `🚀${value} tok/s`, "muted");
+}
+
+function buildSessionUsageParts(status: BottomInputFrameStatus): string[] {
+	const usage = status.sessionUsage;
+	if (!usage) return [];
+	const parts: string[] = [];
+	if (usage.input > 0) parts.push(`↑${formatTokens(usage.input)}`);
+	if (usage.output > 0) parts.push(`↓${formatTokens(usage.output)}`);
+	if ((usage.cacheRead > 0 || usage.cacheWrite > 0) && usage.latestCacheHitRate !== null) {
+		parts.push(`CH${usage.latestCacheHitRate.toFixed(1)}%`);
+	}
+	return parts;
+}
+
+function buildBorderLine(input: { width: number; theme: ThemeLike; borderColor?: (text: string) => string; leftCorner: string; rightCorner: string; leftLabel?: string; rightLabel?: string }): string {
+	const { width, theme, borderColor, leftCorner, rightCorner } = input;
 	const safeWidth = Math.max(2, width);
 	const innerBudget = Math.max(0, safeWidth - 2);
 	let leftLabel = fitStatusLabel(input.leftLabel ?? "", Math.max(0, Math.floor(innerBudget * 0.45) - 2));
@@ -73,18 +114,18 @@ function buildBorderLine(input: { width: number; theme: ThemeLike; leftCorner: s
 	}
 	if (visibleWidth(labelPart(leftLabel)) + visibleWidth(labelPart(rightLabel)) > innerBudget) rightLabel = "";
 	if (visibleWidth(labelPart(leftLabel)) + visibleWidth(labelPart(rightLabel)) > innerBudget) leftLabel = "";
-	return composeBorderLine(theme, leftCorner, rightCorner, leftLabel, rightLabel, innerBudget);
+	return composeBorderLine(theme, borderColor, leftCorner, rightCorner, leftLabel, rightLabel, innerBudget);
 }
 
 function labelPart(label: string): string {
 	return label ? ` ${label} ` : "";
 }
 
-function composeBorderLine(theme: ThemeLike, leftCorner: string, rightCorner: string, leftLabel: string, rightLabel: string, innerBudget: number): string {
+function composeBorderLine(theme: ThemeLike, borderColor: ((text: string) => string) | undefined, leftCorner: string, rightCorner: string, leftLabel: string, rightLabel: string, innerBudget: number): string {
 	const leftPart = labelPart(leftLabel);
 	const rightPart = labelPart(rightLabel);
 	const dashCount = Math.max(0, innerBudget - visibleWidth(leftPart) - visibleWidth(rightPart));
-	return styleBorder(theme, leftCorner) + leftPart + styleBorder(theme, "─".repeat(dashCount)) + rightPart + styleBorder(theme, rightCorner);
+	return styleBorder(theme, borderColor, leftCorner) + leftPart + styleBorder(theme, borderColor, "─".repeat(dashCount)) + rightPart + styleBorder(theme, borderColor, rightCorner);
 }
 
 function fitStatusLabel(label: string, maxWidth: number): string {
@@ -94,12 +135,12 @@ function fitStatusLabel(label: string, maxWidth: number): string {
 	return truncateToWidth(plain, maxWidth, "…", false);
 }
 
-function renderContentLine(line: string, width: number, theme: ThemeLike): string {
+function renderContentLine(line: string, width: number, theme: ThemeLike, borderColor?: (text: string) => string): string {
 	const innerWidth = Math.max(0, width - 4);
 	const safeLine = sanitizeEditorLine(line);
 	const clipped = closeOpenAnsiCodes(truncateEditorLinePreservingCursor(safeLine, innerWidth));
 	const padded = padToWidth(clipped, innerWidth);
-	return styleBorder(theme, "│") + " " + padded + " " + styleBorder(theme, "│");
+	return styleBorder(theme, borderColor, "│") + " " + padded + " " + styleBorder(theme, borderColor, "│");
 }
 
 function sanitizeEditorLine(line: string): string {
@@ -214,8 +255,13 @@ function joinStyledSegments(segments: Array<string | null>, separator: string): 
 	return segments.filter((segment): segment is string => Boolean(segment)).join(separator);
 }
 
-function styleBorder(theme: ThemeLike, text: string): string {
-	return safeFg(theme, "mdCode", text, "border");
+function styleBorder(theme: ThemeLike, borderColor: ((text: string) => string) | undefined, text: string): string {
+	try {
+		if (borderColor) return borderColor(text);
+	} catch {
+		// 第三方 editor 着色异常时仍需保证输入框可渲染。
+	}
+	return safeFg(theme, "borderMuted", text, "border");
 }
 
 function safeFg(theme: ThemeLike, token: string, text: string, fallback = "text"): string {

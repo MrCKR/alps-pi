@@ -123,6 +123,110 @@ test("线框状态显示模型、thinking、上下文进度条和会话耗时", 
 	assert.doesNotMatch(frameText, /host|⊛|\d{2}:\d{2}/i);
 });
 
+test("会话统计嵌入下边框右侧并使用最新缓存命中率", () => {
+	const harness = createCtx();
+	const entries = [
+		{ type: "message", message: { role: "assistant", usage: { input: 1000, output: 10, cacheRead: 0, cacheWrite: 0 } } },
+		{ type: "message", message: { role: "toolResult", usage: { input: 2000, output: 5, cacheRead: 0, cacheWrite: 0 } } },
+		{ type: "compaction", usage: { input: 28000, output: 5, cacheRead: 0, cacheWrite: 0 } },
+		{ type: "message", message: { role: "assistant", usage: { input: 7, output: 13, cacheRead: 993, cacheWrite: 0 } } },
+	];
+	harness.ctx.sessionManager.getEntries = () => entries;
+	const footerData = { getExtensionStatuses: () => new Map([["codegraph", "CodeGraph synced"]]) };
+	const { theme, rendered } = renderStatus({ ctx: harness.ctx, footerData, tokensPerSecond: 3.9 });
+	const frame = renderBeautifiedEditorFrame({
+		editorLines: ["> hello"],
+		width: 80,
+		theme,
+		borderColor: (text) => `\x1b[31m${text}\x1b[39m`,
+		status: rendered.frameStatus,
+	});
+	const bottom = frame.at(-1) ?? "";
+
+	assert.equal(stripAnsi(rendered.secondaryLines[0] ?? ""), " CodeGraph synced ");
+	assert.match(stripAnsi(bottom), /🚀3\.9 tok\/s · ↑31k ↓33 CH99\.3% · ◷ 1m26s/);
+	assert.match(bottom, /\x1b\[31m · \x1b\[39m/);
+	assert.equal(theme.calls.some((call) => call.token === "dimmed" && call.text === "🚀3.9 tok/s"), true);
+	assert.equal(theme.calls.some((call) => call.token === "dimmed" && call.text === "↑31k ↓33 CH99.3%"), true);
+
+	const previousCacheKey = rendered.cacheKey;
+	entries.push({ type: "message", message: { role: "assistant", usage: { input: 100, output: 1, cacheRead: 0, cacheWrite: 0 } } });
+	const next = renderStatus({ ctx: harness.ctx, footerData, tokensPerSecond: 3.9 }).rendered;
+	const nextBottom = renderBeautifiedEditorFrame({ editorLines: ["> hello"], width: 80, theme, status: next.frameStatus }).at(-1) ?? "";
+	assert.notEqual(next.cacheKey, previousCacheKey);
+	assert.match(stripAnsi(nextBottom), /🚀3\.9 tok\/s · ↑31k ↓34 CH0\.0% · ◷ 1m26s/);
+});
+
+test("下边框会话统计隐藏零值和无缓存活动的 CH", () => {
+	const harness = createCtx();
+	harness.ctx.sessionManager.getEntries = () => [
+		{ type: "message", message: { role: "assistant", usage: { input: 999, output: 0, cacheRead: 0, cacheWrite: 0 } } },
+	];
+	const { theme, rendered } = renderStatus({ ctx: harness.ctx });
+	const bottom = renderBeautifiedEditorFrame({ editorLines: ["> hello"], width: 40, theme, status: rendered.frameStatus }).at(-1) ?? "";
+	const plain = stripAnsi(bottom);
+
+	assert.deepEqual(rendered.secondaryLines, []);
+	assert.match(plain, /↑999 · ◷ 1m26s/);
+	assert.doesNotMatch(plain, /↓|CH/);
+});
+
+test("下边框会话统计在窄终端整项隐藏并优先保留耗时", () => {
+	const harness = createCtx();
+	harness.ctx.sessionManager.getEntries = () => [
+		{ type: "message", message: { role: "assistant", usage: { input: 31000, output: 33, cacheRead: 31000, cacheWrite: 0 } } },
+	];
+	const { theme, rendered } = renderStatus({ ctx: harness.ctx });
+	const medium = stripAnsi(renderBeautifiedEditorFrame({ editorLines: [">"], width: 25, theme, status: rendered.frameStatus }).at(-1) ?? "");
+	const narrow = stripAnsi(renderBeautifiedEditorFrame({ editorLines: [">"], width: 15, theme, status: rendered.frameStatus }).at(-1) ?? "");
+
+	assert.equal(medium, "╰─── ↑31k ↓33 · ◷ 1m26s ╯");
+	assert.equal(narrow, "╰──── ◷ 1m26s ╯");
+	assert.doesNotMatch(`${medium}\n${narrow}`, /CH|…/);
+	assert.equal(visibleWidth(medium), 25);
+	assert.equal(visibleWidth(narrow), 15);
+});
+
+test("会话统计先于 tok/s 隐藏且 tok/s 保持完整标签", () => {
+	const harness = createCtx();
+	harness.ctx.sessionManager.getEntries = () => [
+		{ type: "message", message: { role: "assistant", usage: { input: 31000, output: 33, cacheRead: 31000, cacheWrite: 0 } } },
+	];
+	const { theme, rendered } = renderStatus({ ctx: harness.ctx, tokensPerSecond: 3.9 });
+	const medium = stripAnsi(renderBeautifiedEditorFrame({ editorLines: [">"], width: 30, theme, status: rendered.frameStatus }).at(-1) ?? "");
+	const narrow = stripAnsi(renderBeautifiedEditorFrame({ editorLines: [">"], width: 25, theme, status: rendered.frameStatus }).at(-1) ?? "");
+	const tiny = stripAnsi(renderBeautifiedEditorFrame({ editorLines: [">"], width: 24, theme, status: rendered.frameStatus }).at(-1) ?? "");
+
+	assert.equal(medium, "╰───── 🚀3.9 tok/s · ◷ 1m26s ╯");
+	assert.equal(narrow, "╰ 🚀3.9 tok/s · ◷ 1m26s ╯");
+	assert.equal(tiny, "╰───────────── ◷ 1m26s ╯");
+	assert.doesNotMatch(`${medium}\n${narrow}\n${tiny}`, /…/);
+	assert.equal(visibleWidth(medium), 30);
+	assert.equal(visibleWidth(narrow), 25);
+	assert.equal(visibleWidth(tiny), 24);
+});
+
+test("Alps 普通 thinking 标签颜色与输入边框 token 解耦", () => {
+	const expectations = [
+		{ level: "off", label: "off", ansi: "\x1b[38;2;255;255;255m" },
+		{ level: "minimal", label: "min", ansi: "\x1b[38;2;106;111;150m" },
+		{ level: "low", label: "low", ansi: "\x1b[38;2;103;150;230m" },
+		{ level: "medium", label: "med", ansi: "\x1b[38;2;255;126;219m" },
+	];
+
+	for (const expectation of expectations) {
+		const harness = createCtx();
+		harness.ctx.getThinkingLevel = () => expectation.level;
+		const theme = Object.assign(createFakeTheme(), { name: "alps" });
+		const { rendered } = renderStatus({ ctx: harness.ctx, theme, now: 2000 });
+		const rawThinking = rendered.frameStatus.thinking ?? "";
+
+		assert.equal(stripAnsi(rawThinking), expectation.label);
+		assert.equal(rawThinking.startsWith(expectation.ansi), true);
+		assert.equal(theme.calls.some((call) => call.token.startsWith("thinking")), false);
+	}
+});
+
 test("thinking high/xhigh 使用原版 rainbow 逐字符配色", () => {
 	const harness = createCtx();
 	harness.ctx.getThinkingLevel = () => "xhigh";
@@ -301,6 +405,43 @@ test("状态渲染遇到 stale ctx getter 时 fail-soft", () => {
 	assert.doesNotMatch(line, /ctx/);
 });
 
+test("runtime 按首个输出 delta 和最终 usage 计算平均 tok/s", () => {
+	const harness = createCtx();
+	let now = 0;
+	const runtime = createBottomInputRuntime({ startClock: false, now: () => now });
+	runtime.bindSession(harness.ctx);
+	runtime.configure({ beautifiedInputEnabled: true });
+	const tui = { mode: "regular", terminal: { columns: 80, rows: 20 }, requestRender() {}, hasOverlay: () => false };
+	const editor = harness.instantiateEditor(tui, { borderColor: (text: string) => text, selectList: {} });
+
+	runtime.setStreaming?.(true);
+	now = 1_000;
+	runtime.setLiveUsage({ input: 1, output: 1, cacheRead: 0, cacheWrite: 0 }, { type: "text_delta", delta: "a" });
+	now = 6_000;
+	runtime.setLiveUsage({ input: 1, output: 20, cacheRead: 0, cacheWrite: 0 }, { type: "thinking_delta", delta: "b" });
+	now = 11_000;
+	runtime.clearLiveUsage({ role: "assistant", stopReason: "stop", usage: { input: 1, output: 39, cacheRead: 0, cacheWrite: 0 } });
+	assert.match(stripAnsi(editor.render(80).at(-1) ?? ""), /🚀3\.9 tok\/s/);
+
+	runtime.setStreaming?.(true);
+	now = 12_000;
+	runtime.setLiveUsage({ input: 1, output: 1, cacheRead: 0, cacheWrite: 0 }, { type: "toolcall_delta", delta: "{" });
+	now = 12_100;
+	runtime.clearLiveUsage({ role: "assistant", stopReason: "stop", usage: { input: 1, output: 100, cacheRead: 0, cacheWrite: 0 } });
+	assert.match(stripAnsi(editor.render(80).at(-1) ?? ""), /🚀3\.9 tok\/s/, "短响应不覆盖稳定值");
+
+	runtime.setStreaming?.(true);
+	now = 13_000;
+	runtime.setLiveUsage({ input: 1, output: 1, cacheRead: 0, cacheWrite: 0 }, { type: "text_delta", delta: "c" });
+	now = 23_000;
+	runtime.clearLiveUsage({ role: "assistant", stopReason: "aborted", usage: { input: 1, output: 390, cacheRead: 0, cacheWrite: 0 } });
+	assert.match(stripAnsi(editor.render(80).at(-1) ?? ""), /🚀3\.9 tok\/s/, "中止响应不覆盖稳定值");
+
+	runtime.resetThroughput();
+	assert.doesNotMatch(stripAnsi(editor.render(80).at(-1) ?? ""), /🚀|tok\/s/);
+	runtime.dispose();
+});
+
 test("Alt+S 有输入时暂存并清空，空输入时恢复", () => {
 	const harness = createCtx();
 	const runtime = createBottomInputRuntime({ startClock: false });
@@ -417,25 +558,29 @@ test("renderBottomInputEditorLines 美化普通 editor 且不保留原生上下�
 	assert.equal(lines.filter((line) => line === "────────────────────").length, 0);
 });
 
-test("美化输入框外框使用主题 mdCode 纯色", () => {
+test("美化输入框外框在原生着色异常时回退到主题边框色", () => {
 	const theme = createFakeTheme();
 	const lines = renderBeautifiedEditorFrame({
 		editorLines: ["> hello"],
 		width: 24,
 		theme,
+		borderColor: () => {
+			throw new Error("broken editor border color");
+		},
 		status: { model: null, thinking: null, context: null, elapsed: null },
 	});
 
-	assert.match(lines[0], /\x1b\[38;5;6m╭/);
-	assert.match(lines[1], /\x1b\[38;5;6m│/);
-	assert.match(lines[2], /\x1b\[38;5;6m╰/);
-	assert.ok(theme.calls.some((call) => call.kind === "fg" && call.token === "mdCode"));
+	assert.match(lines[0], /\x1b\[38;5;11m╭/);
+	assert.match(lines[1], /\x1b\[38;5;11m│/);
+	assert.match(lines[2], /\x1b\[38;5;11m╰/);
+	assert.ok(theme.calls.some((call) => call.kind === "fg" && call.token === "borderMuted"));
+	assert.equal(theme.calls.some((call) => call.kind === "fg" && call.token === "mdCode"), false);
 	assert.ok(lines.every((line) => visibleWidth(line) <= 24));
 });
 
 
 
-test("美化 editor 使用 footer 捕获的完整主题渲染边框", () => {
+test("美化 editor 复用原生 editor 的动态边框颜色", () => {
 	const footerData = { getExtensionStatuses: () => new Map() };
 	const harness = createCtx({ footerData });
 	const editorTheme = {
@@ -452,9 +597,12 @@ test("美化 editor 使用 footer 捕获的完整主题渲染边框", () => {
 	harness.instantiateFooter(tui, footerTheme);
 	const lines = editor.render(24);
 
-	assert.match(lines[0], /\x1b\[38;5;6m╭/);
-	assert.ok(footerTheme.calls.some((call) => call.kind === "fg" && call.token === "mdCode"));
-	assert.doesNotMatch(lines[0], /\x1b\[31m╭/);
+	assert.match(lines[0], /\x1b\[31m╭/);
+	assert.equal(footerTheme.calls.some((call) => call.kind === "fg" && call.token === "mdCode"), false);
+
+	editor.borderColor = (text: string) => `\x1b[32m${text}\x1b[39m`;
+	const updatedLines = editor.render(24);
+	assert.match(updatedLines[0], /\x1b\[32m╭/);
 });
 
 test("线框边框裁剪 ANSI 状态时保持闭合且不泄漏转义文本", () => {
@@ -514,7 +662,7 @@ test("线框内容裁剪会重置未闭合 SGR，避免输入颜色污染右边�
 		status: { model: null, thinking: null, context: null, elapsed: null },
 	});
 
-	assert.match(framed[1], /\x1b\[31m[\s\S]*\x1b\[0m[\s\S]*\x1b\[38;5;6m│/);
+	assert.match(framed[1], /\x1b\[31m[\s\S]*\x1b\[0m[\s\S]*\x1b\[38;5;11m│/);
 	assert.ok(visibleWidth(framed[1]) <= 12);
 });
 

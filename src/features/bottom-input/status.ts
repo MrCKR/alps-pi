@@ -20,6 +20,14 @@ export type ContextUsage = {
 	percent?: number;
 };
 
+type SessionUsageSnapshot = {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	latestCacheHitRate: number | null;
+};
+
 export type BottomInputStatusState = {
 	/** 当前 interactive ctx，用于读取 model/thinking/context。 */
 	ctx: any;
@@ -45,6 +53,8 @@ export type BottomInputStatusState = {
 	now: number;
 	/** before_agent_start 捕获到的上一条 prompt。 */
 	lastPrompt: string;
+	/** 最近一次有效 assistant 响应的平均输出速度。 */
+	tokensPerSecond?: number | null;
 	/** 图标集；不传则按环境判断。 */
 	icons?: BottomInputIconSet;
 };
@@ -54,6 +64,8 @@ export type BottomInputFrameStatus = {
 	thinking: string | null;
 	context: string | null;
 	elapsed: string | null;
+	sessionUsage?: SessionUsageSnapshot | null;
+	tokensPerSecond?: number | null;
 };
 
 export type BottomInputStatusRender = {
@@ -84,6 +96,12 @@ const RAINBOW_COLORS = [
 	"#b281d6",
 ];
 const MAX_NEON_COLORS = ["#f06ecf", "#cf83ed", "#a993ff"];
+const ALPS_THINKING_LABEL_COLORS: Readonly<Record<string, string>> = {
+	off: "#ffffff",
+	minimal: "#6a6f96",
+	low: "#6796e6",
+	medium: "#ff7edb",
+};
 const INTERNAL_STATUS_KEYS = new Set(["alps-pi-bottom-input", "alps-pi-bottom-status", "alps-pi-last-prompt"]);
 
 /** 渲染输入框附属状态；美化关闭时不读取 model/thinking/context/elapsed，只保留下方附属信息。 */
@@ -104,6 +122,7 @@ export function renderBottomInputStatus(input: BottomInputStatusState): BottomIn
 	const icons = input.icons ?? getBottomInputIcons();
 	const elapsedSeconds = Math.floor(Math.max(0, input.now - input.sessionStartTime) / 1000);
 	const usage = readContextUsageSnapshot(input.ctx, input.isStreaming, input.liveUsage, input.latestAssistantUsage);
+	const sessionUsage = readSessionUsageSnapshot(input.ctx);
 	const modelName = readModelName(input.ctx);
 	const thinking = readThinkingLevel(input.ctx) ?? input.currentThinkingLevel ?? readThinkingLevelFromSession(input.ctx);
 	const cacheKey = JSON.stringify({
@@ -112,6 +131,8 @@ export function renderBottomInputStatus(input: BottomInputStatusState): BottomIn
 		model: modelName,
 		thinking,
 		context: usage,
+		sessionUsage,
+		tokensPerSecond: input.tokensPerSecond,
 		elapsedSeconds,
 		lastPrompt: input.lastPrompt,
 		extensionStatuses,
@@ -122,18 +143,20 @@ export function renderBottomInputStatus(input: BottomInputStatusState): BottomIn
 		topLines: [],
 		secondaryLines: renderExtensionStatusLines(extensionStatuses, safeWidth, input.theme),
 		lastPromptLines: renderLastPromptLines(input.lastPrompt, safeWidth, input.theme),
-		frameStatus: renderFrameStatus({ ...input, width: safeWidth, icons }, modelName, thinking, usage),
+		frameStatus: renderFrameStatus({ ...input, width: safeWidth, icons }, modelName, thinking, usage, sessionUsage),
 		cacheKey,
 	};
 }
 
 /** 渲染输入框边框要嵌入的 model/thinking/context/elapsed。 */
-export function renderFrameStatus(input: BottomInputStatusState & { icons?: BottomInputIconSet }, modelName = readModelName(input.ctx), thinkingLevel = readThinkingLevel(input.ctx) ?? input.currentThinkingLevel ?? readThinkingLevelFromSession(input.ctx), usage = readContextUsageSnapshot(input.ctx, input.isStreaming, input.liveUsage, input.latestAssistantUsage)): BottomInputFrameStatus {
+export function renderFrameStatus(input: BottomInputStatusState & { icons?: BottomInputIconSet }, modelName = readModelName(input.ctx), thinkingLevel = readThinkingLevel(input.ctx) ?? input.currentThinkingLevel ?? readThinkingLevelFromSession(input.ctx), usage = readContextUsageSnapshot(input.ctx, input.isStreaming, input.liveUsage, input.latestAssistantUsage), sessionUsage = readSessionUsageSnapshot(input.ctx)): BottomInputFrameStatus {
 	return {
 		model: renderModelSegment(modelName, input.theme, input.icons ?? getBottomInputIcons()),
 		thinking: renderThinkingSegment(thinkingLevel, input.theme),
 		context: renderContextSegment(usage),
 		elapsed: renderElapsedSegment(input.theme, input.sessionStartTime, input.now, input.icons ?? getBottomInputIcons()),
+		sessionUsage,
+		tokensPerSecond: input.tokensPerSecond ?? null,
 	};
 }
 
@@ -226,7 +249,7 @@ export function readContextUsageSnapshot(
 }
 
 function emptyFrameStatus(): BottomInputFrameStatus {
-	return { model: null, thinking: null, context: null, elapsed: null };
+	return { model: null, thinking: null, context: null, elapsed: null, sessionUsage: null, tokensPerSecond: null };
 }
 
 function renderModelSegment(modelName: string | null, theme: ThemeLike, _icons: BottomInputIconSet): string | null {
@@ -242,7 +265,8 @@ function renderThinkingSegment(level: string | null, theme: ThemeLike): string |
 	// max 使用更高亮的独立霓虹序列；high/xhigh 保留既有 rainbow 配色。
 	if (level === "max") return rainbow(label, MAX_NEON_COLORS);
 	if (level === "high" || level === "xhigh") return rainbow(label);
-	return safeFg(theme, thinkingColorToken(level), label);
+	const alpsColor = theme.name === "alps" ? ALPS_THINKING_LABEL_COLORS[level] : undefined;
+	return alpsColor ? applyHexColor(alpsColor, label) : safeFg(theme, thinkingColorToken(level), label);
 }
 
 function renderContextSegment(usage: ContextUsage | null): string | null {
@@ -319,6 +343,39 @@ function thinkingColorToken(level: string): string {
 	return tokens[level] ?? "thinking";
 }
 
+function readSessionUsageSnapshot(ctx: any): SessionUsageSnapshot | null {
+	const totals: SessionUsageSnapshot = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, latestCacheHitRate: null };
+	for (const entry of readSessionEntries(ctx)) {
+		if (!isRecord(entry)) continue;
+		let usage: AssistantUsage | null = null;
+		if (entry.type === "message" && isRecord(entry.message) && entry.message.role === "assistant" && isAssistantUsage(entry.message.usage)) {
+			usage = entry.message.usage;
+			const promptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
+			totals.latestCacheHitRate = promptTokens > 0 ? (usage.cacheRead / promptTokens) * 100 : null;
+		} else if (entry.type === "message" && isRecord(entry.message) && entry.message.role === "toolResult" && isAssistantUsage(entry.message.usage)) {
+			usage = entry.message.usage;
+		} else if ((entry.type === "branch_summary" || entry.type === "compaction") && isAssistantUsage(entry.usage)) {
+			usage = entry.usage;
+		}
+		if (!usage) continue;
+		totals.input += usage.input;
+		totals.output += usage.output;
+		totals.cacheRead += usage.cacheRead;
+		totals.cacheWrite += usage.cacheWrite;
+	}
+
+	return totals.input > 0 || totals.output > 0 || totals.cacheRead > 0 || totals.cacheWrite > 0 ? totals : null;
+}
+
+function readSessionEntries(ctx: any): any[] {
+	try {
+		const entries = ctx?.sessionManager?.getEntries?.();
+		return Array.isArray(entries) ? entries : [];
+	} catch {
+		return [];
+	}
+}
+
 function readCoreContextUsage(ctx: any): ContextUsage | null {
 	try {
 		if (typeof ctx?.getContextUsage !== "function") return null;
@@ -391,7 +448,7 @@ function contextColor(percent: number): string {
 	return CONTEXT_COLORS.normal;
 }
 
-function formatTokens(n: number): string {
+export function formatTokens(n: number): string {
 	if (n < 1000) return String(n);
 	if (n < 10000) return `${(n / 1000).toFixed(1)}k`;
 	if (n < 1000000) return `${Math.round(n / 1000)}k`;

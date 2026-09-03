@@ -18,8 +18,7 @@ import {
 
 export type SettingsPanelOps = {
 	getState?: () => PatchState;
-	enableChromeFrame?: () => PatchState;
-	disableChromeFrame?: () => PatchState;
+	setMasterEnabled?: (enabled: boolean) => PatchState;
 	setBeautifiedInputEnabled?: (enabled: boolean) => void;
 	onSettingsChanged?: (settings: AlpsPiSettings) => void;
 	requestRender?: () => void;
@@ -195,8 +194,7 @@ export class AlpsPiSettingsComponent extends Container {
 		this.done = done;
 		this.ops = {
 			getState: ops.getState ?? getGlobalPatchState,
-			enableChromeFrame: ops.enableChromeFrame ?? (() => setChromeFramePreference(true)),
-			disableChromeFrame: ops.disableChromeFrame ?? (() => setChromeFramePreference(false)),
+			setMasterEnabled: ops.setMasterEnabled ?? ((enabled) => setChromeFramePreference(enabled)),
 			setBeautifiedInputEnabled: ops.setBeautifiedInputEnabled ?? (() => undefined),
 			onSettingsChanged: ops.onSettingsChanged ?? (() => undefined),
 			requestRender: ops.requestRender ?? (() => undefined),
@@ -235,8 +233,8 @@ export class AlpsPiSettingsComponent extends Container {
 		return [
 			{
 				id: "chromeFrame.enabled",
-				label: "Message Frame",
-				description: "控制消息、工具与 bash 外框",
+				label: "Master Switch",
+				description: "统一启用或关闭所有 Alps Pi 美化效果",
 				currentValue: booleanLabel(settings.chromeFrame.enabled),
 				values: [ON, OFF],
 			},
@@ -288,14 +286,11 @@ export class AlpsPiSettingsComponent extends Container {
 	private handleMainChange(id: MainSettingId, newValue: string): void {
 		const state = this.ops.getState();
 		switch (id) {
-			case "chromeFrame.enabled":
-				if (booleanValue(newValue)) {
-					this.ops.enableChromeFrame();
-				} else {
-					this.ops.disableChromeFrame();
-				}
-				this.syncMainValue(id, state.config.settings.chromeFrame.enabled);
+			case "chromeFrame.enabled": {
+				const nextState = this.ops.setMasterEnabled(booleanValue(newValue));
+				this.syncMainValue(id, nextState.config.settings.chromeFrame.enabled);
 				return;
+			}
 			case "chromeFrame.assistantFrame":
 				state.config.settings.chromeFrame.assistantFrame = booleanValue(newValue);
 				this.ops.onSettingsChanged(state.config.settings);

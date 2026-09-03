@@ -63,6 +63,9 @@ function createHarness(options: { failEnable?: boolean; configureFailure?: boole
 		clearLiveUsage() {
 			runtimeCalls.push("clearLiveUsage");
 		},
+		resetThroughput() {
+			runtimeCalls.push("resetThroughput");
+		},
 		requestRender() {
 			runtimeCalls.push("render");
 		},
@@ -178,6 +181,26 @@ test("session_start 配置 animations 并调用统一 runtime", () => {
 	assert.deepEqual(harness.runtimeCalls, ["bind:one", "resetTime", "prompt:", "shortcuts", "beautified:true"]);
 	assert.equal(getAnimationsRuntimeState().currentEventCtx.id, "one");
 	assert.equal(getAnimationsPatchState().enabled, true);
+});
+
+test("Master Switch OFF 门控输入框与动画且保留子项偏好", () => {
+	const file = process.env.ALPS_PI_SETTINGS_PATH!;
+	writeFileSync(file, JSON.stringify({
+		chromeFrame: { enabled: false },
+		beautifiedInput: { enabled: true },
+		animations: { enabled: true },
+	}), "utf-8");
+	const harness = createHarness();
+
+	harness.emit("session_start", { id: "master-off" });
+
+	const settings = (globalThis as any)[PATCH_KEY].config.settings;
+	assert.equal(settings.chromeFrame.enabled, false);
+	assert.equal(settings.beautifiedInput.enabled, true);
+	assert.equal(settings.animations.enabled, true);
+	assert.equal((globalThis as any)[PATCH_KEY].enabled, false);
+	assert.equal(harness.runtimeCalls.includes("beautified:false"), true);
+	assert.equal(getAnimationsPatchState().enabled, false);
 });
 
 test("TUI owner session_shutdown 先 dispose runtime、保留用户偏好，再 disablePatch", () => {
@@ -396,7 +419,7 @@ test("模型、thinking 与消息事件会刷新统一 runtime", () => {
 
 	assert.deepEqual(harness.runtimeCalls, [
 		"bind:model",
-		"render",
+		"resetThroughput",
 		"bind:think",
 		"thinking:high",
 		"bind:prompt",

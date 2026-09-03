@@ -656,7 +656,7 @@ class MultiLineComponent {
 function renderToolInstance(instance: any, kind: any = "tool", width = 48) {
 	const original = Object.getPrototypeOf(instance).render;
 	const theme = createFakeTheme();
-	const wrapped = createWrappedRender("ToolFake", kind, original, () => theme, { forceImageFallback: kind === "tool" });
+	const wrapped = createWrappedRender("ToolFake", kind, original, () => theme, { suppressInlineImages: kind === "tool" });
 	return { lines: wrapped.call(instance, width), instance, theme };
 }
 
@@ -773,7 +773,7 @@ test("toolName=bash 的 LLM tool 极简时优先显示命令关键行", () => {
 	assert.doesNotMatch(body, /stdout line/);
 });
 
-test("Tool 极简模式遇到 Kitty 图片时完整回退原生 renderer 且 payload 仅一次", () => {
+test("Tool 极简模式遇到 Kitty 图片时移除 payload 并保留工具框", () => {
 	const kitty = "\x1b_Gf=100,a=T;AAAA\x1b\\";
 	class ComplexTool {
 		toolName = "read";
@@ -786,13 +786,13 @@ test("Tool 极简模式遇到 Kitty 图片时完整回退原生 renderer 且 pay
 	const { lines } = renderToolInstance(new ComplexTool());
 	const joined = lines.join("\n");
 
-	assert.equal(joined.split(kitty).length - 1, 1);
+	assert.equal(joined.split(kitty).length - 1, 0);
 	assert.ok(joined.includes("green first"));
-	assert.ok(joined.includes("second"));
-	assert.doesNotMatch(stripAnsi(lines[0] ?? ""), /TOOL read/);
+	assert.ok(!joined.includes("second"));
+	assert.match(stripAnsi(lines[0] ?? ""), /TOOL read/);
 });
 
-test("Tool 极简模式遇到 iTerm 图片时完整回退且 payload 仅一次", () => {
+test("Tool 极简模式遇到 iTerm 图片时移除 payload 并保留工具框", () => {
 	const iterm = "\x1b]1337;File=name=test.png;inline=1:AAAA\x07";
 	class ImageOnlyTool {
 		toolName = "image";
@@ -805,9 +805,35 @@ test("Tool 极简模式遇到 iTerm 图片时完整回退且 payload 仅一次",
 	const { lines } = renderToolInstance(new ImageOnlyTool());
 	const joined = lines.join("\n");
 
-	assert.equal(lines.length, 1);
-	assert.equal(joined.split(iterm).length - 1, 1);
-	assert.doesNotMatch(stripAnsi(joined), /TOOL image/);
+	assert.equal(lines.length, 3);
+	assert.equal(joined.split(iterm).length - 1, 0);
+	assert.match(stripAnsi(lines[0] ?? ""), /TOOL image/);
+});
+
+test("图片工具重复刷新保持固定 innerWidth，并移除 payload 与高度占位", () => {
+	const kitty = "\x1b_Gf=100,a=T;AAAA\x1b\\";
+	class ImageRowsTool {
+		toolName = "read";
+		isPartial = false;
+		result = { isError: false };
+		seenWidths: number[] = [];
+		render(width: number) {
+			this.seenWidths.push(width);
+			return ["read image.png", kitty, "", "", ""];
+		}
+	}
+	const instance = new ImageRowsTool();
+	const theme = createFakeTheme();
+	const wrapped = createWrappedRender("ImageRows", "tool", ImageRowsTool.prototype.render, () => theme, { suppressInlineImages: true });
+	const first = wrapped.call(instance, 48);
+	const second = wrapped.call(instance, 48);
+
+	assert.deepEqual(instance.seenWidths, [44, 44]);
+	assert.equal(first.filter((line) => line === "").length, 0);
+	assert.equal(second.filter((line) => line === "").length, 0);
+	assert.equal(first.join("\n").split(kitty).length - 1, 0);
+	assert.match(stripAnsi(first[0] ?? ""), /TOOL read/);
+	assert.match(stripAnsi(first.at(-1) ?? ""), /^╰─+╯$/);
 });
 
 test("Tool 极简模式优先显示有参数的关键调用行", () => {

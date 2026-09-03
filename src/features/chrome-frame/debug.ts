@@ -11,6 +11,7 @@ export type ChromeFrameDebugBranch =
 	| "fallback"
 	| "narrowFallback"
 	| "imageFallback"
+	| "imageSuppressed"
 	| "compactThinking"
 	| "cacheHit"
 	| "empty"
@@ -131,7 +132,7 @@ function safeVisibleWidth(input: string): number {
 }
 
 function lineRole(index: number, total: number, branch: ChromeFrameDebugBranch, usesCompactThinking: boolean | undefined): string {
-	if (branch === "normal" || branch === "cacheHit") {
+	if (branch === "normal" || branch === "imageSuppressed" || branch === "cacheHit") {
 		if (usesCompactThinking) {
 			if (index === 0) return "compactTop";
 			if (index === total - 1) return "compactBottom";

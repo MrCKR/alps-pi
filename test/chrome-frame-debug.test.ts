@@ -196,7 +196,7 @@ test("调试日志不写 OSC/DCS/APC/PM/image payload literal 或可还原尾部
 	const imagePayload = "\x1b_Gf=100,a=T;IMAGE-PAYLOAD\x1b\\";
 	try {
 		withDebugEnv(path, () => {
-			const wrapped = createWrappedRender("DebugPayload", "tool", DebugComponent.prototype.render, () => createFakeTheme(), { forceImageFallback: true });
+			const wrapped = createWrappedRender("DebugPayload", "tool", DebugComponent.prototype.render, () => createFakeTheme(), { suppressInlineImages: true });
 			const instance = new DebugComponent([`${oscPayload}${dcsPayload}${apcPayload}${pmPayload}`, imagePayload]);
 			(instance as any).expanded = true;
 			wrapped.call(instance, 80);
@@ -205,8 +205,9 @@ test("调试日志不写 OSC/DCS/APC/PM/image payload literal 或可还原尾部
 		assert.doesNotMatch(rawLog, /OSC-PAYLOAD|DCS-PAYLOAD|APC-PAYLOAD|PM-PAYLOAD|IMAGE-PAYLOAD/);
 		assert.doesNotMatch(rawLog, /U\+004F|U\+0053|U\+0043|U\+0050|U\+0041|U\+0059|U\+004C|U\+004F|U\+0044/);
 		const [entry] = readEntries(path);
-		assert.equal(entry.branch, "imageFallback");
-		assert.ok(entry.lines.some((line: any) => line.isImageLine));
+		assert.equal(entry.branch, "imageSuppressed");
+		assert.equal(entry.hasImageLine, true);
+		assert.ok(entry.lines.every((line: any) => !line.isImageLine));
 		for (const line of entry.lines) {
 			assert.ok(Array.isArray(line.tailCodepoints));
 			if (line.isImageLine) assert.deepEqual(line.tailCodepoints, []);
@@ -249,7 +250,7 @@ test("debug JSONL 在 cacheHit 和 streaming thinking 中证明 content 行不�
 	}
 });
 
-test("可区分 compactThinking、cacheHit 与 imageFallback 分支", () => {
+test("可区分 compactThinking、cacheHit 与 imageSuppressed 分支", () => {
 	const { dir, path } = tempLogPath();
 	try {
 		withDebugEnv(path, () => {
@@ -261,7 +262,7 @@ test("可区分 compactThinking、cacheHit 与 imageFallback 分支", () => {
 			const compact = createWrappedRender("DebugThinking", "assistant", ThinkingComponent.prototype.render, () => createFakeTheme());
 			compact.call(new ThinkingComponent(["hidden thought"]), 50);
 
-			const image = createWrappedRender("DebugImage", "tool", DebugComponent.prototype.render, () => createFakeTheme(), { forceImageFallback: true });
+			const image = createWrappedRender("DebugImage", "tool", DebugComponent.prototype.render, () => createFakeTheme(), { suppressInlineImages: true });
 			const imageInstance = new DebugComponent(["\x1b_Gf=100,a=T;IMAGE-PAYLOAD\x1b\\"]);
 			(imageInstance as any).expanded = true;
 			image.call(imageInstance, 50);
@@ -270,10 +271,10 @@ test("可区分 compactThinking、cacheHit 与 imageFallback 分支", () => {
 		assert.ok(entries.some((entry) => entry.branch === "normal"));
 		assert.ok(entries.some((entry) => entry.branch === "cacheHit"));
 		assert.ok(entries.some((entry) => entry.branch === "compactThinking"));
-		assert.ok(entries.some((entry) => entry.branch === "imageFallback"));
-		const imageEntry = entries.find((entry) => entry.branch === "imageFallback");
+		assert.ok(entries.some((entry) => entry.branch === "imageSuppressed"));
+		const imageEntry = entries.find((entry) => entry.branch === "imageSuppressed");
 		assert.equal(imageEntry.hasImageLine, true);
-		assert.ok(imageEntry.lines.some((line: any) => line.isImageLine));
+		assert.ok(imageEntry.lines.every((line: any) => !line.isImageLine));
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

@@ -39,7 +39,7 @@ export type ComponentTarget = {
 	ctor: any;
 	core?: boolean;
 	getTheme: (instance?: any) => ThemeLike;
-	forceImageFallback?: boolean;
+	suppressInlineImages?: boolean;
 };
 
 export type SafeBoxRenderOptions = {
@@ -60,12 +60,12 @@ type RenderCacheEntry = {
 	lines: string[];
 };
 
-// 缓存键随边界空行裁剪语义升级，避免热加载复用旧 padding 行线框。
-const RENDER_CACHE_KEY = Symbol.for("alps.pi.renderCache.v4");
+// 缓存键随终端内联图片抑制语义升级，避免热加载复用带图片占位的旧输出。
+const RENDER_CACHE_KEY = Symbol.for("alps.pi.renderCache.v6");
 const TIMING_STATE_KEY = Symbol.for("alps.pi.timingState.v1");
 const TRACKED_SETTINGS_KEY = Symbol.for("alps.pi.trackedSettings.v1");
 const WRAPPED_RENDER_KEY = Symbol.for("alps.pi.wrappedRender.v2");
-const WRAPPED_RENDER_VERSION = 5;
+const WRAPPED_RENDER_VERSION = 7;
 const CACHE_KEY_SEPARATOR = "\x1f";
 
 export type ChromeFrameLifecycleEvent =
@@ -792,6 +792,27 @@ export function compactToolLines(lines: readonly string[], instance?: any): stri
 	return line ? [line] : [];
 }
 
+function isBlankTerminalLine(line: string): boolean {
+	return sanitizeTerminalText(line, { allowNewline: false, allowTab: false, preserveSgr: false }).trim().length === 0;
+}
+
+/** 删除图片协议行及其连续高度占位；保留图片前后的普通工具文本。 */
+function suppressInlineImageRows(lines: readonly string[]): string[] {
+	const visibleLines: string[] = [];
+	let suppressingImageRows = false;
+	for (const raw of lines) {
+		const line = String(raw);
+		if (isImageEscapeLine(line)) {
+			suppressingImageRows = true;
+			continue;
+		}
+		if (suppressingImageRows && isBlankTerminalLine(line)) continue;
+		suppressingImageRows = false;
+		visibleLines.push(line);
+	}
+	return visibleLines;
+}
+
 function shouldCompactTool(kind: ChromeKind, toolName: string | undefined, instance: any, config: ChromeConfig): boolean {
 	if (kind !== "tool") return false;
 	if (!config.settings.chromeFrame.toolCompactMode) return false;
@@ -863,7 +884,7 @@ export function createWrappedRender(
 					boxedLineCount: lines.length,
 					branch: nextBranch,
 					cacheKeySummary,
-					hasImageLine: displayedLines ? containsImageLine(displayedLines) : false,
+					hasImageLine: innerLines ? containsImageLine(innerLines) : false,
 					usesCompactThinking: shouldUseCompactThinkingBox(renderKind, instance),
 					error: error instanceof Error ? error.name : error ? typeof error : undefined,
 					lines,
@@ -892,13 +913,12 @@ export function createWrappedRender(
 			}
 			innerWidth = Math.max(1, numericWidth - 4);
 			innerLines = asLines(originalRender.call(instance, innerWidth));
-			if (Boolean(extra.forceImageFallback) && containsImageLine(innerLines)) {
-				branch = "imageFallback";
-				const rawFallback = fallback();
-				displayedLines = rawFallback;
-				return debugReturn ? debugReturn(rawFallback, branch) : rawFallback;
-			}
-			displayedLines = shouldCompactTool(renderKind, toolName, instance, config) ? compactToolLines(innerLines, instance) : innerLines;
+			const hasSuppressedImage = Boolean(extra.suppressInlineImages) && containsImageLine(innerLines);
+			const visibleInnerLines = hasSuppressedImage ? suppressInlineImageRows(innerLines) : innerLines;
+			// 当前终端不显示图片：不输出 Kitty/iTerm payload，也不保留 Pi 为图片分配的高度占位。
+			displayedLines = shouldCompactTool(renderKind, toolName, instance, config)
+				? compactToolLines(visibleInnerLines, instance)
+				: visibleInnerLines;
 			if (isEmptyMessageChrome(renderKind, displayedLines)) {
 				branch = "empty";
 				return debugReturn ? debugReturn([], branch) : [];
@@ -917,7 +937,7 @@ export function createWrappedRender(
 				return debugReturn ? debugReturn(cache.lines, branch) : cache.lines;
 			}
 			const usesCompactThinking = shouldUseCompactThinkingBox(renderKind, instance);
-			branch = usesCompactThinking ? "compactThinking" : "normal";
+			branch = usesCompactThinking ? "compactThinking" : hasSuppressedImage ? "imageSuppressed" : "normal";
 			const lines = usesCompactThinking
 				? renderCompactThinkingBox(displayedLines, numericWidth, getTheme(instance), config, { elapsedText, tokenText })
 				: renderNeonBox(renderKind, displayedLines, numericWidth, getTheme(instance), {
@@ -1005,7 +1025,7 @@ export function enablePatch(
 				target.kind,
 				original,
 				target.getTheme,
-				{ forceImageFallback: target.forceImageFallback },
+				{ suppressInlineImages: target.suppressInlineImages },
 			);
 			state.patched.add(target.id);
 		} catch (error) {
@@ -1070,7 +1090,7 @@ export function createRuntimeTargets(themeOverride?: ThemeLike): ComponentTarget
 		{ id: "SkillInvocationMessageComponent", kind: "skill", ctor: SkillInvocationMessageComponent, getTheme },
 		{ id: "CompactionSummaryMessageComponent", kind: "compaction", ctor: CompactionSummaryMessageComponent, getTheme },
 		{ id: "BranchSummaryMessageComponent", kind: "branch", ctor: BranchSummaryMessageComponent, getTheme },
-		{ id: "ToolExecutionComponent", kind: "tool", ctor: ToolExecutionComponent, getTheme, forceImageFallback: true },
+		{ id: "ToolExecutionComponent", kind: "tool", ctor: ToolExecutionComponent, getTheme, suppressInlineImages: true },
 		{ id: "BashExecutionComponent", kind: "bash", ctor: BashExecutionComponent, getTheme },
 	];
 }

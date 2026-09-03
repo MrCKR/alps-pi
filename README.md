@@ -65,7 +65,7 @@ pi install git:https://github.com/MrCKR/alps-pi
 `/alps-pi` 设置界面包含五个开关、一个 Animations 配置项和一个快捷键配置项：
 
 ```text
-Message Frame       控制消息、工具与 bash 外框，默认 ON
+Master Switch       统一启用或关闭消息线框、输入框美化与动画，默认 ON
 Assistant Frame     控制 assistant 正文回复是否包线框，默认 ON
 Compact Tools       未展开 tool 只显示第一条有效文本行，默认 ON
 Compact Edit        允许 edit tool 也按极简模式展示，默认 OFF
@@ -166,7 +166,7 @@ toolError.border     error
 
 正式运行基线为 Pi `>=0.84.4`。Pi 核心包按官方 package 规则声明为 wildcard peer，开发与发布验证使用 `0.84.4`。
 
-Message Frame 仍依赖 Pi 导出的消息组件与 `render(width)`；Beautified Input 只依赖 `ctx.ui.setEditorComponent`、`ctx.ui.setFooter` 和 `ctx.ui.onTerminalInput`。运行时集中检测组件、Animations 和 TUI mode 能力，缺失时按功能 fail closed 并输出诊断，不修改持久化用户偏好。旧 Pi 用户可回滚到 `alps-pi 0.1.5`。
+Master Switch 下的消息线框仍依赖 Pi 导出的消息组件与 `render(width)`；Beautified Input 只依赖 `ctx.ui.setEditorComponent`、`ctx.ui.setFooter` 和 `ctx.ui.onTerminalInput`。运行时集中检测组件、Animations 和 TUI mode 能力，缺失时按功能 fail closed 并输出诊断，不修改持久化用户偏好。旧 Pi 用户可回滚到 `alps-pi 0.1.5`。
 
 ## 开发
 

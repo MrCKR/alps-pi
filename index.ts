@@ -50,13 +50,21 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 			const state = getGlobalPatchState();
 			state.config.settings.beautifiedInput.enabled = enabled;
 			bottomInputRuntime.bindSession(ctx);
-			const status = bottomInputRuntime.configure({ beautifiedInputEnabled: enabled });
+			const status = bottomInputRuntime.configure({
+				beautifiedInputEnabled: state.config.settings.chromeFrame.enabled && enabled,
+			});
 			writePersistedSettings(state.config.settings);
 			return status;
 		},
 		onSettingsChanged: (settings) => {
 			bottomInputRuntime.setShortcuts?.(settings.shortcuts);
-			configureAnimations(settings.animations);
+			bottomInputRuntime.configure({
+				beautifiedInputEnabled: settings.chromeFrame.enabled && settings.beautifiedInput.enabled,
+			});
+			configureAnimations({
+				...settings.animations,
+				enabled: settings.chromeFrame.enabled && settings.animations.enabled,
+			});
 			writePersistedSettings(settings);
 		},
 	});
@@ -73,7 +81,10 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 		configureAnimationsRenderRequest(() => bottomInputRuntime.requestRender());
 		const capabilities = inspectCapabilities();
 		for (const failure of formatPiCapabilityFailures(capabilities)) console.debug?.(`[alps-pi] ${failure}`);
-		configureAnimations(state.config.settings.animations);
+		configureAnimations({
+			...state.config.settings.animations,
+			enabled: state.config.settings.chromeFrame.enabled && state.config.settings.animations.enabled,
+		});
 		if (state.config.settings.chromeFrame.enabled && capabilities.chromeFrame.supported) {
 			enablePatch();
 		} else {
@@ -89,13 +100,15 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 		bottomInputRuntime.resetSessionStartTime();
 		bottomInputRuntime.setLastPrompt("");
 		bottomInputRuntime.setShortcuts?.(state.config.settings.shortcuts);
-		bottomInputRuntime.configure({ beautifiedInputEnabled: state.config.settings.beautifiedInput.enabled });
+		bottomInputRuntime.configure({
+			beautifiedInputEnabled: state.config.settings.chromeFrame.enabled && state.config.settings.beautifiedInput.enabled,
+		});
 	});
 
 	pi.on("model_select", (_event: any, ctx: any) => {
 		if (!isCurrentTuiOwner()) return;
 		bottomInputRuntime.bindSession(ctx);
-		bottomInputRuntime.requestRender();
+		bottomInputRuntime.resetThroughput();
 	});
 
 	pi.on("thinking_level_select", (event: any, ctx: any) => {
@@ -125,7 +138,7 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 		recordAnimationsLifecycleEvent("message_update", ctx, event);
 		handleAnimationsMessageUpdate(event, ctx);
 		bottomInputRuntime.bindSession(ctx);
-		bottomInputRuntime.setLiveUsage(event?.message?.usage);
+		bottomInputRuntime.setLiveUsage(event?.message?.usage, event?.assistantMessageEvent);
 	});
 
 	pi.on("message_end", (event: any, ctx: any) => {
@@ -134,7 +147,7 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 		recordAnimationsLifecycleEvent("message_end", ctx, event);
 		handleAnimationsMessageEnd(ctx);
 		bottomInputRuntime.bindSession(ctx);
-		bottomInputRuntime.clearLiveUsage();
+		bottomInputRuntime.clearLiveUsage(event?.message);
 	});
 
 	pi.on("tool_execution_start", (event: any, ctx: any) => {

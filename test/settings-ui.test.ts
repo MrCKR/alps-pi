@@ -20,16 +20,10 @@ function createPanel() {
 		closed = true;
 	}, {
 		getState: () => state,
-		enableChromeFrame: () => {
-			calls.push("enable");
-			state.enabled = true;
-			state.config.settings.chromeFrame.enabled = true;
-			return state;
-		},
-		disableChromeFrame: () => {
-			calls.push("disable");
-			state.enabled = false;
-			state.config.settings.chromeFrame.enabled = false;
+		setMasterEnabled: (enabled: boolean) => {
+			calls.push(enabled ? "enable" : "disable");
+			state.enabled = enabled;
+			state.config.settings.chromeFrame.enabled = enabled;
 			return state;
 		},
 		setBeautifiedInputEnabled: (enabled: boolean) => {
@@ -49,7 +43,7 @@ test("设置界面展示英文设置名、中文描述和主题线框", () => {
 	const { component } = createPanel();
 	const lines = component.render(80);
 	const plain = stripAnsi(lines.join("\n"));
-	assert.match(plain, /Message Frame/);
+	assert.match(plain, /Master Switch/);
 	assert.match(plain, /Assistant Frame/);
 	assert.match(plain, /Compact Tools/);
 	assert.match(plain, /Compact Edit/);
@@ -57,9 +51,9 @@ test("设置界面展示英文设置名、中文描述和主题线框", () => {
 	assert.match(plain, /Beautified Input/);
 	assert.match(plain, /Animations/);
 	assert.match(plain, /Shortcuts/);
-	assert.match(plain, /控制消息、工具与 bash 外框/);
+	assert.match(plain, /统一启用或关闭所有 Alps Pi 美化效果/);
 	assert.doesNotMatch(plain, /底部状态栏/);
-	assert.match(plain, /Message Frame\s+ON/);
+	assert.match(plain, /Master Switch\s+ON/);
 	assert.match(plain, /Compact Tools\s+ON/);
 	assert.match(plain, /Compact Edit\s+OFF/);
 	assert.match(plain, /Beautified Input\s+ON/);
@@ -76,7 +70,7 @@ test("设置界面展示英文设置名、中文描述和主题线框", () => {
 	assert.match(lines.at(-1)!, /\x1b\[38;5;12m╰/);
 });
 
-test("设置界面可切换线框美化", () => {
+test("设置界面可切换美化总开关", () => {
 	const { state, calls, component } = createPanel();
 	assert.equal(state.config.settings.chromeFrame.enabled, true);
 	component.handleInput(" ");
@@ -246,7 +240,7 @@ test("快捷键设置保存后关闭捕获并返回快捷键页", () => {
 
 	assert.equal(state.config.settings.shortcuts.stashEditor, "alt+g");
 	assert.doesNotMatch(stripAnsi(component.render(80).join("\n")), /Editing:/);
-	assert.match(stripAnsi(component.render(80).join("\n")), /Message Frame/);
+	assert.match(stripAnsi(component.render(80).join("\n")), /Master Switch/);
 });
 
 function openAnimationsSettings(component: AlpsPiSettingsComponent): void {

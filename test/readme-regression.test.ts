@@ -38,7 +38,7 @@ test("README 说明内置 alps 主题", async () => {
 test("README 说明设置面板项目", async () => {
 	const readme = await readReadme();
 
-	assert.match(readme, /Message Frame\s+控制消息、工具与 bash 外框，默认 ON/);
+	assert.match(readme, /Master Switch\s+统一启用或关闭消息线框、输入框美化与动画，默认 ON/);
 	assert.match(readme, /Assistant Frame\s+控制 assistant 正文回复是否包线框，默认 ON/);
 	assert.match(readme, /Compact Tools\s+未展开 tool 只显示第一条有效文本行，默认 ON/);
 	assert.match(readme, /Compact Edit\s+允许 edit tool 也按极简模式展示，默认 OFF/);

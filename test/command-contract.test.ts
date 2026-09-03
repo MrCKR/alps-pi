@@ -144,7 +144,7 @@ test("注册 /alps-pi 命令且描述为中文", () => {
 	assert.match(harness.commands.get("alps-pi").description, /打开 Alps Pi 美化设置/);
 });
 
-test("无参数打开 overlay 设置界面，可切换 Message Frame 与 Assistant Frame", async () => {
+test("无参数打开 overlay 设置界面，可切换 Master Switch 与 Assistant Frame", async () => {
 	const harness = createHarness();
 	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
 	await Promise.resolve();
@@ -152,9 +152,10 @@ test("无参数打开 overlay 设置界面，可切换 Message Frame 与 Assista
 	assert.equal(harness.customCalls[0].options.overlay, true);
 	assert.equal(harness.customCalls[0].options.overlayOptions.anchor, "center");
 	const component = harness.customCalls[0].component;
-	assert.match(component.render(80).join("\n"), /Message Frame/);
+	assert.match(component.render(80).join("\n"), /Master Switch/);
 	component.handleInput(" ");
 	assert.deepEqual(harness.patchCalls, ["disable"]);
+	assert.equal(harness.settingsChangedCalls[0]?.chromeFrame.enabled, false);
 	component.handleInput("\x1b[B");
 	component.handleInput(" ");
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.chromeFrame.assistantFrame, false);

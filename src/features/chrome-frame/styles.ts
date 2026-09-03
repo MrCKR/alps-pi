@@ -3,6 +3,7 @@
 import { DEFAULT_SETTINGS, type AlpsPiSettings } from "../../settings.ts";
 
 export type ThemeLike = {
+	readonly name?: string;
 	fg(token: string, text: string): string;
 	bg(token: string, text: string): string;
 	bold?(text: string): string;
