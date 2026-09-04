@@ -4,9 +4,9 @@
 
 ## 结论
 
-- **真正把连续工具合成一个组：** `pi-claude-style-tools`、`pi-pretty-tui` 的 clean 模式，以及 `alps-pi` 当前源码（下一版本）的 Collapsed 模式。
-- **只压缩单条工具消息，没有连续合并：** `pi-foldable-tools`、`pi-collapse-tools`、`pi-tool-display`、`pi-terse-tools`、`@mobrienv/pi-tidy-tools`、`@diegopetrucci/pi-quiet-tools`，以及 npm 已发布 `alps-pi` 0.2.1 的 Compact 模式。
-- **连续 thinking：** 本次候选中没有一个把多条 thinking 保存为可逐项恢复的组。`pi-claude-style-tools` 单独处理 thinking；`pi-pretty-tui` clean 模式隐藏 collapsed thinking；`alps-pi` 当前源码把可见非空 Thinking 当作工具组边界。
+- **真正把连续工具合成一个组：** `pi-claude-style-tools`、`pi-pretty-tui` 的 clean 模式，以及 `alps-pi` 0.3.0 的 Collapsed 模式。
+- **只压缩单条工具消息，没有连续合并：** `pi-foldable-tools`、`pi-collapse-tools`、`pi-tool-display`、`pi-terse-tools`、`@mobrienv/pi-tidy-tools` 和 `@diegopetrucci/pi-quiet-tools`；`alps-pi` 0.3.0 的 Compact 模式也保留逐条压缩行为。
+- **连续 thinking：** 本次候选中没有一个把多条 thinking 保存为可逐项恢复的组。`pi-claude-style-tools` 单独处理 thinking；`pi-pretty-tui` clean 模式隐藏 collapsed thinking；`alps-pi` 0.3.0 把可见非空 Thinking 当作工具组边界。
 - **不是本用途：** `pi-fold` 折叠的是发送给模型的历史上下文，不是终端里的工具执行输出。
 
 ## 判定口径
@@ -84,13 +84,13 @@ Pi 一手文档：
 - **限制与不确定性：** 它额外注册的 `Ctrl+Shift+O` 只切换“已展开视图”的 detail cap，不替代 Pi 的 collapsed/expanded 状态；核心展开仍是原生 `Ctrl+O`。相关两个状态已由源码分别确认。
 - **一手来源：** [pi.dev 包页](https://pi.dev/packages/pi-claude-style-tools) · [npm](https://www.npmjs.com/package/pi-claude-style-tools) · [官方源码](https://github.com/FammasMaz/pi-cc-tools/blob/48d6e67eafbf575c3e375e97873f38a37057fd60/extensions/index.ts)
 
-### `alps-pi` 当前源码（下一版本）
+### `alps-pi` 0.3.0
 
 - **功能：** Compact Tools 提供 Off、Compact、Collapsed 三态，默认 Compact。Compact 保留逐 Tool 首条有效文本摘要；Collapsed 把连续非对话/非 Thinking frame 聚合成一个 `Tools` frame，并显示计数、失败数、当前 Tool、方向性上下文贡献和冻结耗时。
-- **安装：** 发布前使用 `pi install git:https://github.com/MrCKR/alps-pi`；npm 0.2.1 仍是上一版 Compact-only 行为。
+- **安装：** `pi install npm:alps-pi@0.3.0`
 - **适用范围：** 对 Pi 内部消息与工具执行组件做通用 TUI patch，覆盖 Tool、Bash、Skill、Resource/Custom、Compaction、Branch 和 Working 等运行时 kind。包同时提供消息框、输入框、动画和主题。
-- **限制与不确定性：** 这是对 Pi 内部 TUI component 的 patch，比只实现公开 custom renderer API 更依赖 Pi 内部结构。下一版本默认值为 `toolCompactMode: "compact"`、`compactEditTool: false`；旧 Boolean 自动迁移为 `true -> "compact"`、`false -> "off"`。
-- **一手来源：** [已发布 0.2.1](https://www.npmjs.com/package/alps-pi) · [模式规范](./tool-compact-mode-spec.md) · [聚合源码](../src/features/chrome-frame/collapsed.ts) · [渲染源码](../src/features/chrome-frame/patch.ts)
+- **限制与不确定性：** 这是对 Pi 内部 TUI component 的 patch，比只实现公开 custom renderer API 更依赖 Pi 内部结构。默认值为 `toolCompactMode: "compact"`、`compactEditTool: false`；旧 Boolean 自动迁移为 `true -> "compact"`、`false -> "off"`。
+- **一手来源：** [npm 0.3.0](https://www.npmjs.com/package/alps-pi/v/0.3.0) · [GitHub Release](https://github.com/MrCKR/alps-pi/releases/tag/v0.3.0) · [模式规范](./tool-compact-mode-spec.md) · [聚合源码](../src/features/chrome-frame/collapsed.ts) · [渲染源码](../src/features/chrome-frame/patch.ts)
 
 ## 可选压缩模式，由 Pi 原生 Ctrl+O 展开
 
@@ -151,7 +151,7 @@ Pi 一手文档：
 
 它的核心不是“父组件持有子组件”，而是“摘要 entry 与被隐藏的原 component 并存”。因此恢复能力依赖原 transcript 仍在内存中。
 
-### `alps-pi` 当前源码 Collapsed：锚点加 sibling 隐藏
+### `alps-pi` 0.3.0 Collapsed：锚点加 sibling 隐藏
 
 - **数据结构：** [`collapsed.ts`](../src/features/chrome-frame/collapsed.ts) 用线性 `entries` 保存首次观察顺序，按组件实例和稳定 Tool/message identity 去重。`CollapsedGroupSnapshot` 汇总 count、failedCount、current、冻结耗时和方向性上下文贡献。
 - **分组边界：** `roleFor()` 把可见非空 `user`、`assistant`、`thinking` 标为 boundary，其余可见 frame 标为 member；空或隐藏 frame ignored。空的 tool-call-only Assistant 不切组。
@@ -168,7 +168,7 @@ Pi 一手文档：
 | --- | --- | --- | --- | --- |
 | `pi-claude-style-tools` | 是，相邻 component | 是，`tools[]` | 是，全局展开所有组 | 否，独立处理 |
 | `pi-pretty-tui` clean | 是，同一 run 的连续序列 | 原 component 保留，摘要不持有 | 是，依赖原 transcript | 否，只隐藏 collapsed thinking |
-| `alps-pi` 当前源码 Collapsed | 是，两条可见对话之间 | 仅内部 registry/snapshot | 否 | 否，Thinking 是边界 |
+| `alps-pi` 0.3.0 Collapsed | 是，两条可见对话之间 | 仅内部 registry/snapshot | 否 | 否，Thinking 是边界 |
 | 其余候选 | 否 | 单项 renderer | 只展开单项 | 否 |
 
 ### 为什么普通 custom renderer 做不到
@@ -177,7 +177,7 @@ Pi 的公开 custom tool API 每次只给一个工具调用的 `renderCall` / `r
 
 - 像 `pi-claude-style-tools` 一样 patch `Container.addChild`，在 component 树建立时创建真正的父组。
 - 像 `pi-pretty-tui` 一样维护 run 状态，新增摘要 entry，并隐藏原 component。
-- 像 `alps-pi` 当前源码一样 patch 每个 component 的 `render()`，由 anchor 出组框，siblings 返回空。
+- 像 `alps-pi` 0.3.0 一样 patch 每个 component 的 `render()`，由 anchor 出组框，siblings 返回空。
 
 Pi 原生 `Ctrl+O` 只是把一个 expanded 布尔值广播给 chat container 中所有可展开 component，没有“当前组”或“组内选中项”。若要支持单组展开或组内导航，还必须由扩展自己增加焦点状态、输入路由和持久 group identity；仅消费原生 `expanded` 不够。
 
