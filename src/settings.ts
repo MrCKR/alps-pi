@@ -4,13 +4,21 @@ import { cloneDefaultInputMetricsSettings, type InputMetricsSettings } from "./f
 
 export type { InputMetricsSettings } from "./features/bottom-input/metrics.ts";
 
+export type ToolDisplayMode = "off" | "compact" | "collapsed";
+
+export function normalizeToolDisplayMode(value: unknown, fallback: ToolDisplayMode = "compact"): ToolDisplayMode {
+	if (value === true) return "compact";
+	if (value === false) return "off";
+	return value === "off" || value === "compact" || value === "collapsed" ? value : fallback;
+}
+
 export type ChromeFrameSettings = {
 	/** Alps Pi 美化总开关：统一门控消息线框、输入框美化与动画。 */
 	enabled: boolean;
 	/** Assistant 正文线框：控制普通 assistant 回复是否包裹外框。 */
 	assistantFrame: boolean;
-	/** Tool 极简模式：未展开的 LLM tool 只显示第一条有效文本行。 */
-	toolCompactMode: boolean;
+	/** Tool 展示模式：关闭、逐项极简或连续操作聚合。 */
+	toolCompactMode: ToolDisplayMode;
 	/** 极简下收起 edit：允许 edit tool 也按极简模式展示。 */
 	compactEditTool: boolean;
 };
@@ -95,7 +103,7 @@ export const DEFAULT_SETTINGS: AlpsPiSettings = {
 	chromeFrame: {
 		enabled: true,
 		assistantFrame: true,
-		toolCompactMode: true,
+		toolCompactMode: "compact",
 		compactEditTool: false,
 	},
 	fixedBottomEditor: {

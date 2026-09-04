@@ -67,8 +67,8 @@ pi install git:https://github.com/MrCKR/alps-pi
 ```text
 Master Switch       统一启用或关闭消息线框、输入框美化、Footer 与动画，默认 ON
 Assistant Frame     控制 assistant 正文回复是否包线框，默认 ON
-Compact Tools       未展开 tool 只显示第一条有效文本行，默认 ON
-Compact Edit        允许 edit tool 也按极简模式展示，默认 OFF
+Compact Tools       Off / Compact / Collapsed 三态，默认 Compact
+Compact Edit        Compact 模式下允许 edit 也极简展示，默认 OFF；Collapsed 时隐藏但保留偏好
 Beautified Input    控制输入框线框与嵌入边框状态，默认 ON
 Input Metrics       分别控制输入、输出、缓存命中率、Token 速度和耗时，默认全部 ON
 Footer              控制 Alps Pi 是否接管底部状态栏，默认 ON
@@ -83,6 +83,10 @@ Shortcuts           管理暂存、复制、剪切和 editor 光标快捷键
 Enter/Space 切换
 Esc/q 关闭
 ```
+
+`Compact Tools` 持久化为 `"off" | "compact" | "collapsed"`。旧 Boolean 配置自动迁移：`true -> "compact"`，`false -> "off"`。`Off` 保留完整工具内容，`Compact` 保留原有逐工具首条有效文本摘要；`Collapsed` 把相邻的 Tool、Bash、Skill、Resource/Custom、Compaction、Branch、Working 等非对话 frame 合并为一个 `Tools` frame。只有可见且非空的 User、Assistant 或 Thinking 会切组，只有 tool call 的 Assistant 不切组。
+
+Collapsed 第一行显示 `×N`，存在失败时追加 `· N failed`；第二行显示最新活动项的 `TOOL <toolName> <status> : <Compact summary>`。Edit 始终只显示路径，不读取 Compact Edit 偏好。组运行时耗时实时增长，遇边界后冻结，并作为下一可见 frame 的起点。顶部方向指标中，`↑` 表示上传、本地或 tool 侧新保留上下文，`↓` 表示模型侧新保留上下文；每项只计一次。普通 frame 的单一 `[...]` 指标同样只表示本 frame 新保留到后续模型上下文的内容，不是会话累计用量，也不随 UI 截断、图片隐藏或完整 prompt 重传变化。
 
 ## 覆盖范围
 

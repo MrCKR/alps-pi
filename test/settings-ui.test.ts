@@ -56,7 +56,7 @@ test("设置界面展示英文设置名、中文描述和主题线框", () => {
 	assert.match(plain, /统一启用或关闭所有 Alps Pi 美化效果/);
 	assert.doesNotMatch(plain, /底部状态栏/);
 	assert.match(plain, /Master Switch\s+ON/);
-	assert.match(plain, /Compact Tools\s+ON/);
+	assert.match(plain, /Compact Tools\s+Compact/);
 	assert.match(plain, /Compact Edit\s+OFF/);
 	assert.match(plain, /Beautified Input\s+ON/);
 	assert.match(plain, /Input Metrics\s+configure/);
@@ -95,17 +95,26 @@ test("设置界面可切换正文线框并关闭", () => {
 	assert.equal(isClosed(), true);
 });
 
-test("设置界面可切换 Tool 极简模式与 edit 收起", () => {
+test("设置界面可切换 Tool 三种模式并在 Collapsed 时隐藏 edit 选项", () => {
 	const { state, component } = createPanel();
-	assert.equal(state.config.settings.chromeFrame.toolCompactMode, true);
+	assert.equal(state.config.settings.chromeFrame.toolCompactMode, "compact");
 	assert.equal(state.config.settings.chromeFrame.compactEditTool, false);
-	component.handleInput("\x1b[B");
-	component.handleInput("\x1b[B");
-	component.handleInput(" ");
-	assert.equal(state.config.settings.chromeFrame.toolCompactMode, false);
-	component.handleInput("\x1b[B");
+
+	for (let i = 0; i < 3; i++) component.handleInput("\x1b[B");
 	component.handleInput(" ");
 	assert.equal(state.config.settings.chromeFrame.compactEditTool, true);
+	component.handleInput("\x1b[A");
+	component.handleInput(" ");
+	assert.equal(state.config.settings.chromeFrame.toolCompactMode, "collapsed");
+	assert.equal(state.config.settings.chromeFrame.compactEditTool, true);
+	assert.match(stripAnsi(component.render(80).join("\n")), /Compact Tools\s+Collapsed/);
+	assert.doesNotMatch(stripAnsi(component.render(80).join("\n")), /Compact Edit/);
+
+	component.handleInput(" ");
+	assert.equal(state.config.settings.chromeFrame.toolCompactMode, "off");
+	assert.match(stripAnsi(component.render(80).join("\n")), /Compact Edit\s+ON/);
+	component.handleInput(" ");
+	assert.equal(state.config.settings.chromeFrame.toolCompactMode, "compact");
 });
 
 test("设置界面第五项切换美化输入框且不改 legacy fixed 偏好", () => {

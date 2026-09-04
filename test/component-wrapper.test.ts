@@ -439,7 +439,7 @@ test("设置样式变化不刷新线框更新时间", () => {
 		Date.now = () => 2_000;
 		wrapped.call(second, 36);
 		Date.now = () => 10_000;
-		state.config.settings.chromeFrame.toolCompactMode = !state.config.settings.chromeFrame.toolCompactMode;
+		state.config.settings.chromeFrame.toolCompactMode = state.config.settings.chromeFrame.toolCompactMode === "compact" ? "off" : "compact";
 		const lines = wrapped.call(second, 36);
 
 		assert.match(stripAnsi(lines.at(-1)!), /1s ╯$/);
@@ -536,11 +536,28 @@ test("wrapper 右下角 token 使用原始 tool args/result，忽略极简渲染
 	assert.doesNotMatch(stripAnsi(lines.at(-1)!), /\[ 31 \]/);
 });
 
-test("Bash frame 在缺少稳定 excludeFromContext 能力时不显示 token", () => {
+test("Bash frame 使用原始 retained command/output 显示 token", () => {
+	class BashComponent {
+		command = "echo retained";
+		outputLines = ["visible output"];
+		status = "complete";
+		render(_width: number) {
+			return ["$ echo retained", "visible output"];
+		}
+	}
+	const wrapped = createWrappedRender("Bash", "bash", BashComponent.prototype.render, () => createFakeTheme());
+	const instance = new BashComponent();
+	const lines = wrapped.call(instance, 44);
+
+	assert.match(stripAnsi(lines[0]!), new RegExp(`BASH.*\\[ ${estimateFrameTokens("bash", instance)} \\]`));
+});
+
+test("excludeFromContext Bash frame 不显示 token", () => {
 	class BashComponent {
 		command = "echo hidden";
 		outputLines = ["secret output"];
 		status = "complete";
+		excludeFromContext = true;
 		render(_width: number) {
 			return ["$ echo hidden", "secret output"];
 		}
@@ -687,7 +704,7 @@ test("Tool 极简模式不在内部额外添加 toolName 或状态", () => {
 
 test("Tool 普通模式保持原始多行内容", () => {
 	const state = (globalThis as any)[PATCH_KEY];
-	state.config.settings.chromeFrame.toolCompactMode = false;
+	state.config.settings.chromeFrame.toolCompactMode = "off";
 	const { lines } = renderToolInstance(new MultiLineComponent());
 	const body = bodyText(lines);
 
@@ -1014,7 +1031,7 @@ test("Tool 极简缓存随 expanded 与设置变化失效", () => {
 	instance.expanded = true;
 	const expanded = wrapped.call(instance, 48);
 	const callsAfterExpanded = theme.calls.length;
-	state.config.settings.chromeFrame.toolCompactMode = false;
+	state.config.settings.chromeFrame.toolCompactMode = "off";
 	instance.expanded = false;
 	const normal = wrapped.call(instance, 48);
 

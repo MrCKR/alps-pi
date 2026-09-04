@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname, join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import lockfile from "proper-lockfile";
-import { cloneDefaultSettings, type AlpsPiSettings } from "./settings.ts";
+import { cloneDefaultSettings, normalizeToolDisplayMode, type AlpsPiSettings } from "./settings.ts";
 import { normalizeAnimationsSettings } from "./features/animations/settings.ts";
 import { normalizeInputMetricsSettings } from "./features/bottom-input/metrics.ts";
 import { normalizeShortcut, shortcutConflictKey, shortcutUsesSuper, isSupportedSuperShortcut, RESERVED_BOTTOM_INPUT_SHORTCUTS, SHORTCUT_KEYS } from "./features/bottom-input/shortcuts.ts";
@@ -217,7 +217,7 @@ function normalizeSettings(value: unknown, defaults: AlpsPiSettings): AlpsPiSett
 		chromeFrame: {
 			enabled: readBoolean(raw.chromeFrame, "enabled", defaults.chromeFrame.enabled),
 			assistantFrame: readBoolean(raw.chromeFrame, "assistantFrame", defaults.chromeFrame.assistantFrame),
-			toolCompactMode: readBoolean(raw.chromeFrame, "toolCompactMode", defaults.chromeFrame.toolCompactMode),
+			toolCompactMode: normalizeToolDisplayMode(isRecord(raw.chromeFrame) ? raw.chromeFrame.toolCompactMode : undefined, defaults.chromeFrame.toolCompactMode),
 			compactEditTool: readBoolean(raw.chromeFrame, "compactEditTool", defaults.chromeFrame.compactEditTool),
 		},
 		fixedBottomEditor: {

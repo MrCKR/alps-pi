@@ -4,9 +4,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DEFAULT_SETTINGS, cloneDefaultSettings } from "../src/settings.ts";
 
-test("默认开启消息线框和 Tool 极简模式且默认不收起 edit", () => {
+test("默认开启消息线框并使用 Tool Compact 模式且默认不收起 edit", () => {
 	assert.equal(DEFAULT_SETTINGS.chromeFrame.enabled, true);
-	assert.equal(DEFAULT_SETTINGS.chromeFrame.toolCompactMode, true);
+	assert.equal(DEFAULT_SETTINGS.chromeFrame.toolCompactMode, "compact");
 	assert.equal(DEFAULT_SETTINGS.chromeFrame.compactEditTool, false);
 });
 
@@ -46,7 +46,7 @@ test("cloneDefaultSettings 返回包含固定输入框、美化输入框、Input
 		chromeFrame: {
 			enabled: true,
 			assistantFrame: true,
-			toolCompactMode: true,
+			toolCompactMode: "compact",
 			compactEditTool: false,
 		},
 		fixedBottomEditor: {

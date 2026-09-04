@@ -2,7 +2,7 @@
 
 import { Container, Key, matchesKey, SettingsList, truncateToWidth, visibleWidth, type Component, type SettingItem, type SettingsListTheme } from "@earendil-works/pi-tui";
 import { type PatchState, getGlobalPatchState, setChromeFramePreference } from "./features/chrome-frame/index.ts";
-import type { AlpsPiSettings } from "./settings.ts";
+import { normalizeToolDisplayMode, type AlpsPiSettings, type ToolDisplayMode } from "./settings.ts";
 import { ANIMATION_FPS_VALUES, ANIMATION_WIDTH_VALUES } from "./features/animations/settings.ts";
 import { getAnimationsForCategory } from "./features/animations/registry.ts";
 import { AnimationsPreviewComponent } from "./features/animations/preview.ts";
@@ -31,6 +31,15 @@ const SHORTCUT_MAX_VISIBLE = 8;
 const ON = "ON";
 const OFF = "OFF";
 const CONFIGURE = "configure";
+const TOOL_DISPLAY_VALUES = ["Off", "Compact", "Collapsed"] as const;
+
+function toolDisplayModeLabel(value: ToolDisplayMode): string {
+	return value[0]!.toUpperCase() + value.slice(1);
+}
+
+function toolDisplayModeValue(value: string): ToolDisplayMode {
+	return normalizeToolDisplayMode(value.toLowerCase());
+}
 
 const SHORTCUT_DESCRIPTIONS: Record<BottomInputShortcutKey, string> = {
 	stashEditor: "暂存或恢复当前输入框内容",
@@ -240,7 +249,7 @@ export class AlpsPiSettingsComponent extends Container {
 
 	private createMainItems(): SettingItem[] {
 		const settings = this.ops.getState().config.settings;
-		return [
+		const items: SettingItem[] = [
 			{
 				id: "chromeFrame.enabled",
 				label: "Master Switch",
@@ -258,17 +267,21 @@ export class AlpsPiSettingsComponent extends Container {
 			{
 				id: "chromeFrame.toolCompactMode",
 				label: "Compact Tools",
-				description: "未展开 tool 只显示第一条有效文本行",
-				currentValue: booleanLabel(settings.chromeFrame.toolCompactMode),
-				values: [ON, OFF],
+				description: "选择完整、逐项极简或连续操作聚合展示",
+				currentValue: toolDisplayModeLabel(settings.chromeFrame.toolCompactMode),
+				values: [...TOOL_DISPLAY_VALUES],
 			},
-			{
+		];
+		if (settings.chromeFrame.toolCompactMode !== "collapsed") {
+			items.push({
 				id: "chromeFrame.compactEditTool",
 				label: "Compact Edit",
-				description: "允许 edit tool 也按极简模式展示",
+				description: "仅在 Compact 模式收起 edit tool",
 				currentValue: booleanLabel(settings.chromeFrame.compactEditTool),
 				values: [ON, OFF],
-			},
+			});
+		}
+		items.push(
 			{
 				id: "beautifiedInput.enabled",
 				label: "Beautified Input",
@@ -304,7 +317,8 @@ export class AlpsPiSettingsComponent extends Container {
 				currentValue: CONFIGURE,
 				submenu: (_currentValue, done) => new ShortcutSettingsSubmenu(this.ops, () => done(), this.listTheme),
 			},
-		];
+		);
+		return items;
 	}
 
 	private handleMainChange(id: MainSettingId, newValue: string): void {
@@ -320,8 +334,9 @@ export class AlpsPiSettingsComponent extends Container {
 				this.ops.onSettingsChanged(state.config.settings);
 				return;
 			case "chromeFrame.toolCompactMode":
-				state.config.settings.chromeFrame.toolCompactMode = booleanValue(newValue);
+				state.config.settings.chromeFrame.toolCompactMode = toolDisplayModeValue(newValue);
 				this.ops.onSettingsChanged(state.config.settings);
+				this.refreshMainItems(id);
 				return;
 			case "chromeFrame.compactEditTool":
 				state.config.settings.chromeFrame.compactEditTool = booleanValue(newValue);
@@ -344,14 +359,22 @@ export class AlpsPiSettingsComponent extends Container {
 		const settings = this.ops.getState().config.settings;
 		this.syncMainValue("chromeFrame.enabled", settings.chromeFrame.enabled);
 		this.syncMainValue("chromeFrame.assistantFrame", settings.chromeFrame.assistantFrame);
-		this.syncMainValue("chromeFrame.toolCompactMode", settings.chromeFrame.toolCompactMode);
+		this.syncMainValue("chromeFrame.toolCompactMode", toolDisplayModeLabel(settings.chromeFrame.toolCompactMode));
 		this.syncMainValue("chromeFrame.compactEditTool", settings.chromeFrame.compactEditTool);
 		this.syncMainValue("beautifiedInput.enabled", settings.beautifiedInput.enabled);
 		this.syncMainValue("footer.enabled", settings.footer.enabled);
 	}
 
-	private syncMainValue(id: MainSettingId, value: boolean): void {
-		this.settingsList.updateValue(id, booleanLabel(value));
+	private syncMainValue(id: MainSettingId, value: boolean | string): void {
+		this.settingsList.updateValue(id, typeof value === "boolean" ? booleanLabel(value) : value);
+	}
+
+	private refreshMainItems(selectedId: MainSettingId): void {
+		const internals = getSettingsListInternals(this.settingsList);
+		const items = this.createMainItems();
+		internals.items = items;
+		internals.filteredItems = items;
+		internals.selectedIndex = Math.max(0, items.findIndex((item) => item.id === selectedId));
 	}
 
 	private hasActiveSubmenu(): boolean {

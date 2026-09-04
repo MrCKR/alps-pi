@@ -3,9 +3,15 @@
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { PI_COMPONENTS, inspectPiRuntimeCapabilities, type PiRuntimeCapabilities } from "../../pi-compat.ts";
 import { isEmptyMessageChrome, renderCompactThinkingBox, renderNeonBox } from "./chrome.ts";
+import { observeCollapsedFrame, resetCollapsedRegistry, synchronizeCollapsedMode, type CollapsedCurrentItem } from "./collapsed.ts";
+import {
+	contextContributionTokens,
+	contextContributionTotalTokens,
+	estimateContextContribution,
+} from "./contribution.ts";
 import { isChromeFrameDebugEnabled, summarizeChromeFrameCacheKey, writeChromeFrameDebugLog, type ChromeFrameDebugBranch } from "./debug.ts";
 import { containsImageLine, isImageEscapeLine } from "./image.ts";
-import { cloneDefaultSettings, type AlpsPiSettings } from "../../settings.ts";
+import { cloneDefaultSettings, normalizeToolDisplayMode, type AlpsPiSettings } from "../../settings.ts";
 import { sanitizeTerminalText } from "../../terminal-sanitizer.ts";
 import { DEFAULT_CONFIG, getChromeStyle, type ChromeConfig, type ChromeKind, type ChromeStatus, type ThemeLike } from "./styles.ts";
 
@@ -91,6 +97,7 @@ type TimingState = {
 	lastSignature: string;
 	lastUpdatedAt: number;
 	lifecycleUpdatedAt: number;
+	lifecycleActivityOrder: number;
 	active: boolean;
 };
 
@@ -98,6 +105,7 @@ type LifecycleTimingState = {
 	startedAt: number;
 	updatedAt: number;
 	completedAt?: number;
+	activityOrder: number;
 	active: boolean;
 	/** 事件所属 session/agent ctx；用于隔离无 UI 子代理的结束事件。 */
 	owner?: object;
@@ -107,6 +115,7 @@ const CHROME_PATCH_OWNER = Symbol.for("alps.pi.chromeFrame.patchOwner.v1");
 const timingRegistry = new Map<number, TimingState>();
 const lifecycleTimingRegistry = new Map<string, LifecycleTimingState>();
 let nextTimingSequence = 1;
+let nextLifecycleActivityOrder = 1;
 let timingGeneration = 1;
 
 function getWrappedRenderMetadata(render: unknown): WrappedRenderMetadata | undefined {
@@ -128,7 +137,9 @@ function isCurrentWrappedRender(id: string, render: unknown): boolean {
 function resetTimingRegistry(): void {
 	timingRegistry.clear();
 	lifecycleTimingRegistry.clear();
+	resetCollapsedRegistry();
 	nextTimingSequence = 1;
+	nextLifecycleActivityOrder = 1;
 	timingGeneration += 1;
 }
 
@@ -191,6 +202,7 @@ function writeLifecycleTimingState(key: string, timestamp: number, active: boole
 		startedAt: previous?.startedAt ?? timestamp,
 		updatedAt: timestamp,
 		completedAt: active ? undefined : timestamp,
+		activityOrder: nextLifecycleActivityOrder++,
 		active,
 		owner: lifecycleOwner(ctx) ?? previous?.owner,
 	});
@@ -243,6 +255,7 @@ function initializeTimingState(initialUpdatedAt: number, timing?: TimingState): 
 		lastSignature: "",
 		lastUpdatedAt: initialUpdatedAt,
 		lifecycleUpdatedAt: -1,
+		lifecycleActivityOrder: 0,
 		active: false,
 	};
 	next.sequence = nextTimingSequence++;
@@ -250,6 +263,7 @@ function initializeTimingState(initialUpdatedAt: number, timing?: TimingState): 
 	next.lastSignature = "";
 	next.lastUpdatedAt = initialUpdatedAt;
 	next.lifecycleUpdatedAt = -1;
+	next.lifecycleActivityOrder = 0;
 	next.active = false;
 	timingRegistry.set(next.sequence, next);
 	return next;
@@ -275,9 +289,13 @@ function updateTimingState(instance: any, kind: ChromeKind, status: ChromeStatus
 	const now = Date.now();
 	const timing = getTimingState(instance, lifecycleState?.updatedAt ?? nativeTimestamp ?? now);
 	const firstSignature = timing.lastSignature === "";
-	if (lifecycleState && timing.lifecycleUpdatedAt !== lifecycleState.updatedAt) {
+	if (
+		lifecycleState
+		&& (timing.lifecycleUpdatedAt !== lifecycleState.updatedAt || timing.lifecycleActivityOrder !== lifecycleState.activityOrder)
+	) {
 		timing.lastUpdatedAt = lifecycleState.updatedAt;
 		timing.lifecycleUpdatedAt = lifecycleState.updatedAt;
+		timing.lifecycleActivityOrder = lifecycleState.activityOrder;
 	} else if (!lifecycleState && timing.lastSignature !== signature) {
 		// 历史 frame 首次渲染使用原始 timestamp；后续内容变化才使用当前更新时间。
 		timing.lastUpdatedAt = firstSignature && nativeTimestamp !== undefined ? nativeTimestamp : now;
@@ -331,6 +349,7 @@ function normalizeSettings(settings: AlpsPiSettings | any, enabled?: boolean): A
 				...DEFAULT_CONFIG.settings.chromeFrame,
 				...settings.chromeFrame,
 				enabled: typeof enabled === "boolean" ? enabled : Boolean(settings.chromeFrame.enabled ?? DEFAULT_CONFIG.settings.chromeFrame.enabled),
+				toolCompactMode: normalizeToolDisplayMode(settings.chromeFrame.toolCompactMode, DEFAULT_CONFIG.settings.chromeFrame.toolCompactMode),
 			},
 			fixedBottomEditor: {
 				...DEFAULT_CONFIG.settings.fixedBottomEditor,
@@ -362,7 +381,7 @@ function normalizeSettings(settings: AlpsPiSettings | any, enabled?: boolean): A
 		chromeFrame: {
 			enabled: typeof enabled === "boolean" ? enabled : Boolean(settings?.enabled ?? DEFAULT_CONFIG.settings.chromeFrame.enabled),
 			assistantFrame: Boolean(settings?.assistantFrame ?? DEFAULT_CONFIG.settings.chromeFrame.assistantFrame),
-			toolCompactMode: Boolean(settings?.toolCompactMode ?? DEFAULT_CONFIG.settings.chromeFrame.toolCompactMode),
+			toolCompactMode: normalizeToolDisplayMode(settings?.toolCompactMode, DEFAULT_CONFIG.settings.chromeFrame.toolCompactMode),
 			compactEditTool: Boolean(settings?.compactEditTool ?? DEFAULT_CONFIG.settings.chromeFrame.compactEditTool),
 		},
 		fixedBottomEditor: {
@@ -486,130 +505,24 @@ function isNonEmptyText(value: unknown): boolean {
 	return typeof value === "string" && value.trim().length > 0;
 }
 
-const ESTIMATED_IMAGE_CHARS = 4800;
-
-/** 复用 Pi compaction 的文本/图片字符计数规则。 */
-function estimateTextAndImageContentChars(content: unknown): number | undefined {
-	if (typeof content === "string") return content.length;
-	if (!Array.isArray(content)) return undefined;
-	let chars = 0;
-	for (const block of content) {
-		if (block?.type === "text" && typeof block.text === "string") {
-			chars += block.text.length;
-		} else if (block?.type === "image") {
-			chars += ESTIMATED_IMAGE_CHARS;
-		}
-	}
-	return chars;
-}
-
-/** 安全计算 tool 参数 JSON 字符数，循环对象降级为字符串。 */
-function safeJsonLength(value: unknown): number {
-	try {
-		return JSON.stringify(value)?.length ?? 0;
-	} catch {
-		return String(value ?? "").length;
-	}
-}
-
-/** 从 AssistantMessageComponent 的原始 message content 估算字符数。 */
-function estimateAssistantContentChars(instance: any): number | undefined {
-	const content = instance?.lastMessage?.content;
-	if (!Array.isArray(content)) return undefined;
-	let chars = 0;
-	for (const block of content) {
-		if (block?.type === "text" && typeof block.text === "string") {
-			chars += block.text.length;
-		} else if (block?.type === "thinking" && typeof block.thinking === "string") {
-			chars += block.thinking.length;
-		} else if (block?.type === "toolCall") {
-			chars += String(block.name ?? "").length + safeJsonLength(block.arguments);
-		}
-	}
-	return chars;
-}
-
-/** 从 UserMessageComponent 子 Markdown 中兜底读取构造时原文。 */
-function extractMarkdownTextFromChildren(value: unknown, seen = new Set<object>()): string | undefined {
-	if (!value || typeof value !== "object") return undefined;
-	if (seen.has(value)) return undefined;
-	seen.add(value);
-	const candidate = value as Record<string, any>;
-	if (typeof candidate.text === "string" && candidate.constructor?.name === "Markdown") return candidate.text;
-	const children = candidate.children;
-	if (Array.isArray(children)) {
-		for (const child of children) {
-			const text = extractMarkdownTextFromChildren(child, seen);
-			if (text !== undefined) return text;
-		}
-	}
-	return undefined;
-}
-
-/** 估算 user frame 对应的原始用户消息字符数。 */
-function estimateUserContentChars(instance: any): number | undefined {
-	if (typeof instance?.text === "string") return instance.text.length;
-	const direct = estimateTextAndImageContentChars(instance?.message?.content);
-	if (direct !== undefined) return direct;
-	return extractMarkdownTextFromChildren(instance)?.length;
-}
-
-/** 估算 tool frame 的调用名、参数和结果内容字符数。 */
-function estimateToolContentChars(instance: any): number | undefined {
-	let chars = String(instance?.toolName ?? "").length + safeJsonLength(instance?.args);
-	const resultChars = estimateTextAndImageContentChars(instance?.result?.content);
-	if (resultChars !== undefined) chars += resultChars;
-	return chars;
-}
-
-/** 估算 compaction/branch summary 的摘要字符数。 */
-function estimateSummaryContentChars(instance: any): number | undefined {
-	if (typeof instance?.message?.summary === "string") return instance.message.summary.length;
-	if (typeof instance?.summary === "string") return instance.summary.length;
-	return undefined;
-}
-
-/** 估算 skill invocation 中实际展示的 skill 内容字符数。 */
-function estimateSkillContentChars(instance: any): number | undefined {
-	const block = instance?.skillBlock;
-	if (!block) return undefined;
-	return String(block.name ?? "").length + (typeof block.content === "string" ? block.content.length : 0);
-}
-
-/** 按 Pi compaction 的 chars/4 口径估算单个 frame 对应的原始上下文 token。 */
+/** 按 Pi 的实际上下文转换口径估算单个 frame 对应的原始上下文 token。 */
 export function estimateFrameTokens(kind: ChromeKind, instance: any): number | undefined {
-	let chars: number | undefined;
-	switch (kind) {
-		case "assistant":
-		case "thinking":
-			chars = estimateAssistantContentChars(instance);
-			break;
-		case "user":
-			chars = estimateUserContentChars(instance);
-			break;
-		case "tool":
-		case "toolPending":
-		case "toolSuccess":
-		case "toolError":
-			chars = estimateToolContentChars(instance);
-			break;
-		case "bash":
-			// Pi 0.84.4 未公开 excludeFromContext；无法可靠区分 ! 与 !!，因此不显示估算 token。
-			return undefined;
-		case "custom":
-			chars = estimateTextAndImageContentChars(instance?.message?.content);
-			break;
-		case "skill":
-			chars = estimateSkillContentChars(instance);
-			break;
-		case "compaction":
-		case "branch":
-			chars = estimateSummaryContentChars(instance);
-			break;
-		case "working":
-			return undefined;
-	}
-	return chars === undefined ? undefined : Math.ceil(chars / 4);
+	const contribution = estimateContextContribution(kind, instance);
+	return contribution ? contextContributionTotalTokens(contribution) : undefined;
+}
+
+const COLLAPSED_METRIC_COLORS = {
+	input: "#7AA2F7",
+	output: "#73DACA",
+	separator: "#FF8B39",
+} as const;
+
+function colorizeHex(text: string, hex: string): string {
+	const value = hex.replace("#", "");
+	const red = Number.parseInt(value.slice(0, 2), 16);
+	const green = Number.parseInt(value.slice(2, 4), 16);
+	const blue = Number.parseInt(value.slice(4, 6), 16);
+	return `\x1b[38;2;${red};${green};${blue}m${text}\x1b[39m`;
 }
 
 /** 将 token 数压成标题短标签；超过千位时向上进位到 1 位小数。 */
@@ -625,6 +538,13 @@ function formatRoundedTokenCount(tokens: number): string {
 		return `${Number.isInteger(scaled) ? String(scaled) : scaled.toFixed(1)}${unit.suffix}`;
 	}
 	return count.toLocaleString();
+}
+
+function formatCollapsedDirectionalTokens(upstream: number, downstream: number): string {
+	const input = colorizeHex(`↑${formatRoundedTokenCount(upstream)}`, COLLAPSED_METRIC_COLORS.input);
+	const separator = colorizeHex("·", COLLAPSED_METRIC_COLORS.separator);
+	const output = colorizeHex(`↓${formatRoundedTokenCount(downstream)}`, COLLAPSED_METRIC_COLORS.output);
+	return `[ ${input} ${separator} ${output} ]`;
 }
 
 /** 生成 frame 标题 token 文本；取不到原文时不显示。 */
@@ -809,6 +729,50 @@ export function compactToolLines(lines: readonly string[], instance?: any): stri
 	return line ? [line] : [];
 }
 
+function collapsedFrameIdentity(kind: ChromeKind, instance: any): string | undefined {
+	const lifecycle = frameLifecycleKey(kind, instance);
+	if (lifecycle) return lifecycle;
+	const messageId = instance?.message?.id ?? instance?.lastMessage?.id;
+	if (messageId !== undefined && messageId !== null) return `message:${String(messageId)}`;
+	const timestamp = frameNativeTimestamp(kind, instance);
+	return timestamp === undefined ? undefined : `${kind}:${timestamp}`;
+}
+
+function collapsedDetail(kind: ChromeKind, toolName: string | undefined, lines: readonly string[], instance: any): string | undefined {
+	const source = kind === "tool" ? compactToolLines(lines, instance)[0] : firstVisibleTextLine(lines);
+	if (!source) return undefined;
+	let detail = normalizeToolLine(source);
+	if (kind === "tool" && toolName) {
+		const rest = getToolLineRest(detail, createToolLineMatcher(toolName));
+		if (rest !== undefined) detail = rest.replace(/^[=:：≡☰-]+\s*/, "");
+	}
+	return detail || undefined;
+}
+
+function collapsedStatusGlyph(status: ChromeStatus | undefined): string {
+	if (status === "success") return " ✓";
+	if (status === "error") return " ✗";
+	return "";
+}
+
+function formatCollapsedCurrent(item: CollapsedCurrentItem | undefined): string | undefined {
+	if (!item) return undefined;
+	const labels: Partial<Record<ChromeKind, string>> = {
+		tool: `TOOL ${item.toolName ?? "tool"}`,
+		toolPending: `TOOL ${item.toolName ?? "tool"}`,
+		toolSuccess: `TOOL ${item.toolName ?? "tool"}`,
+		toolError: `TOOL ${item.toolName ?? "tool"}`,
+		bash: "BASH",
+		custom: "CUSTOM",
+		skill: "SKILL",
+		compaction: "COMPACT",
+		branch: "BRANCH",
+		working: "WORKING",
+	};
+	const label = labels[item.kind] ?? String(item.kind).toUpperCase();
+	return `${label}${collapsedStatusGlyph(item.status)}${item.detail ? ` : ${item.detail}` : ""}`;
+}
+
 function isBlankTerminalLine(line: string): boolean {
 	return sanitizeTerminalText(line, { allowNewline: false, allowTab: false, preserveSgr: false }).trim().length === 0;
 }
@@ -832,7 +796,7 @@ function suppressInlineImageRows(lines: readonly string[]): string[] {
 
 function shouldCompactTool(kind: ChromeKind, toolName: string | undefined, instance: any, config: ChromeConfig): boolean {
 	if (kind !== "tool") return false;
-	if (!config.settings.chromeFrame.toolCompactMode) return false;
+	if (config.settings.chromeFrame.toolCompactMode !== "compact") return false;
 	if (Boolean(instance?.expanded)) return false;
 	if (toolName === "edit" && !config.settings.chromeFrame.compactEditTool) return false;
 	return true;
@@ -921,6 +885,8 @@ export function createWrappedRender(
 			}
 			const state = getGlobalPatchState();
 			const config = state.config;
+			const collapsedMode = config.settings.chromeFrame.toolCompactMode === "collapsed";
+			synchronizeCollapsedMode(collapsedMode);
 			if (kind === "assistant" && !config.settings.chromeFrame.assistantFrame) {
 				branch = "fallback";
 				const rawFallback = fallback();
@@ -936,33 +902,92 @@ export function createWrappedRender(
 			displayedLines = shouldCompactTool(renderKind, toolName, instance, config)
 				? compactToolLines(visibleInnerLines, instance)
 				: visibleInnerLines;
-			if (isEmptyMessageChrome(renderKind, displayedLines)) {
+			const visible = !isEmptyMessageChrome(renderKind, displayedLines);
+			const frameContribution = estimateContextContribution(renderKind, instance);
+			const collapsedSignature = [renderKind, toolName ?? "", status ?? "", visibleInnerLines.join("\n")].join(CACHE_KEY_SEPARATOR);
+			if (!visible) {
+				if (collapsedMode) {
+					observeCollapsedFrame({
+						instance,
+						identity: collapsedFrameIdentity(renderKind, instance),
+						kind: renderKind,
+						visible: false,
+						status,
+						toolName,
+						contribution: frameContribution,
+						signature: collapsedSignature,
+					});
+				}
 				branch = "empty";
 				return debugReturn ? debugReturn([], branch) : [];
 			}
-			const innerKey = displayedLines.join("\n");
-			const styleKey = createStyleSignature(id, renderKind, status, toolName, config, state.configVersion, Boolean(instance?.expanded));
-			cacheKeySummary = debugReturn ? summarizeChromeFrameCacheKey(innerKey) : null;
 			const timingContentKey = createTimingContentKey(renderKind, instance, innerLines);
 			const timingKey = [timingContentKey, renderKind, toolName ?? "", status ?? ""].join(CACHE_KEY_SEPARATOR);
 			const timing = updateTimingState(instance, renderKind, status, timingKey);
-			const elapsedText = formatElapsedSincePrevious(timing);
-			const tokenText = formatTokenText(estimateFrameTokens(renderKind, instance));
+			let elapsedText = formatElapsedSincePrevious(timing);
+			let tokenText = formatTokenText(frameContribution ? contextContributionTotalTokens(frameContribution) : undefined);
+			let boxKind = renderKind;
+			let boxToolName = toolName;
+			let boxStatus = status;
+			let boxLabel: string | undefined;
+			let truncateContent = false;
+			if (collapsedMode) {
+				const collapsed = observeCollapsedFrame({
+					instance,
+					identity: collapsedFrameIdentity(renderKind, instance),
+					kind: renderKind,
+					visible: true,
+					status,
+					toolName,
+					detail: collapsedDetail(renderKind, toolName, visibleInnerLines, instance),
+					contribution: frameContribution,
+					signature: collapsedSignature,
+					timing: {
+						lastUpdatedAt: timing.lastUpdatedAt,
+						activityOrder: timing.lifecycleActivityOrder || undefined,
+						active: timing.active,
+					},
+				});
+				if (collapsed) {
+					if (!collapsed.isAnchor) {
+						branch = "empty";
+						return debugReturn ? debugReturn([], branch) : [];
+					}
+					const countLine = `×${collapsed.count}${collapsed.failedCount > 0 ? ` · ${collapsed.failedCount} failed` : ""}`;
+					const currentLine = formatCollapsedCurrent(collapsed.current);
+					displayedLines = currentLine ? [countLine, currentLine] : [countLine];
+					boxKind = "tool";
+					boxToolName = undefined;
+					boxStatus = undefined;
+					boxLabel = "Tools";
+					truncateContent = true;
+					elapsedText = collapsed.elapsedMs === undefined
+						? undefined
+						: getTheme(instance).fg("success", formatElapsedDuration(collapsed.elapsedMs));
+					const directionalTokens = contextContributionTokens(collapsed.contribution);
+					tokenText = formatCollapsedDirectionalTokens(directionalTokens.upstream, directionalTokens.downstream);
+				}
+			}
+			const innerKey = displayedLines.join("\n");
+			const styleKey = createStyleSignature(id, boxKind, boxStatus, boxToolName, config, state.configVersion, Boolean(instance?.expanded));
+			cacheKeySummary = debugReturn ? summarizeChromeFrameCacheKey(innerKey) : null;
 			const cache = (instance as any)[RENDER_CACHE_KEY] as RenderCacheEntry | undefined;
 			if (cache && cache.width === numericWidth && cache.innerKey === innerKey && cache.styleKey === styleKey && cache.elapsedText === elapsedText && cache.tokenText === tokenText) {
 				branch = "cacheHit";
 				return debugReturn ? debugReturn(cache.lines, branch) : cache.lines;
 			}
-			const usesCompactThinking = shouldUseCompactThinkingBox(renderKind, instance);
+			const usesCompactThinking = shouldUseCompactThinkingBox(boxKind, instance);
 			branch = usesCompactThinking ? "compactThinking" : hasSuppressedImage ? "imageSuppressed" : "normal";
 			const lines = usesCompactThinking
 				? renderCompactThinkingBox(displayedLines, numericWidth, getTheme(instance), config, { elapsedText, tokenText })
-				: renderNeonBox(renderKind, displayedLines, numericWidth, getTheme(instance), {
-					toolName,
-					status,
+				: renderNeonBox(boxKind, displayedLines, numericWidth, getTheme(instance), {
+					toolName: boxToolName,
+					status: boxStatus,
 					config,
 					elapsedText,
 					tokenText,
+					label: boxLabel,
+					truncateContent,
 				});
 			(instance as any)[RENDER_CACHE_KEY] = { width: numericWidth, innerKey, styleKey, elapsedText, tokenText, lines } satisfies RenderCacheEntry;
 			return debugReturn ? debugReturn(lines, branch) : lines;

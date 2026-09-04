@@ -40,8 +40,10 @@ test("README 说明设置面板项目", async () => {
 
 	assert.match(readme, /Master Switch\s+统一启用或关闭消息线框、输入框美化、Footer 与动画，默认 ON/);
 	assert.match(readme, /Assistant Frame\s+控制 assistant 正文回复是否包线框，默认 ON/);
-	assert.match(readme, /Compact Tools\s+未展开 tool 只显示第一条有效文本行，默认 ON/);
-	assert.match(readme, /Compact Edit\s+允许 edit tool 也按极简模式展示，默认 OFF/);
+	assert.match(readme, /Compact Tools\s+Off \/ Compact \/ Collapsed 三态，默认 Compact/);
+	assert.match(readme, /Compact Edit\s+Compact 模式下允许 edit 也极简展示，默认 OFF；Collapsed 时隐藏但保留偏好/);
+	assert.match(readme, /`true -> "compact"`，`false -> "off"`/);
+	assert.match(readme, /Collapsed 第一行显示 `×N`/);
 	assert.doesNotMatch(readme, /Fixed Input\s+控制/);
 	assert.match(readme, /Beautified Input\s+控制输入框线框与嵌入边框状态，默认 ON/);
 	assert.match(readme, /Input Metrics\s+分别控制输入、输出、缓存命中率、Token 速度和耗时，默认全部 ON/);

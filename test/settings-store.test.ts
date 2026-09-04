@@ -55,7 +55,7 @@ test("显式独立路径读写使用锁与原子 JSON 并合并缺失字段", ()
 	const { dir, primary } = tempPaths();
 	try {
 		const settings = cloneStartupSettings();
-		settings.chromeFrame.toolCompactMode = false;
+		settings.chromeFrame.toolCompactMode = "off";
 		settings.fixedBottomEditor.enabled = false;
 		settings.beautifiedInput.enabled = false;
 		settings.inputMetrics.cacheHit = false;
@@ -99,6 +99,27 @@ test("四级读取优先级严格为 primary → namespace → legacy → defaul
 		} finally {
 			rmSync(paths.dir, { recursive: true, force: true });
 		}
+	}
+});
+
+test("Tool 展示模式兼容旧布尔值并保留显式三态", () => {
+	const { dir, primary } = tempPaths();
+	try {
+		for (const [raw, expected] of [
+			[true, "compact"],
+			[false, "off"],
+			["off", "off"],
+			["compact", "compact"],
+			["collapsed", "collapsed"],
+			["invalid", "compact"],
+		] as const) {
+			writeJson(primary, { chromeFrame: { toolCompactMode: raw } });
+			assert.equal(readPersistedSettings(primary).chromeFrame.toolCompactMode, expected);
+		}
+		writeJson(primary, { chromeFrame: {} });
+		assert.equal(readPersistedSettings(primary).chromeFrame.toolCompactMode, "compact");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
 	}
 });
 

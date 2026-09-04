@@ -12,6 +12,8 @@ export type RenderBoxOptions = {
 	config?: ChromeConfig;
 	elapsedText?: string;
 	tokenText?: string;
+	label?: string;
+	truncateContent?: boolean;
 };
 
 const MIN_FULL_BOX_WIDTH = 8;
@@ -198,7 +200,7 @@ export function renderNeonBox(kind: ChromeKind, contentLines: readonly string[],
 	if (isEmptyMessageChrome(kind, rawLines)) return [];
 	const status = options.status;
 	const style = getChromeStyle(kind, { toolName: options.toolName, status }, options.config ?? DEFAULT_CONFIG);
-	const label = getChromeLabel(kind, { toolName: options.toolName, status });
+	const label = options.label ?? getChromeLabel(kind, { toolName: options.toolName, status });
 	const innerWidth = Math.max(1, boxWidth - 4);
 
 	const lines: string[] = [];
@@ -213,7 +215,7 @@ export function renderNeonBox(kind: ChromeKind, contentLines: readonly string[],
 		const split = String(raw).split("\n");
 		for (const part of split) {
 			const partHasImage = isImageEscapeLine(part);
-			const wrapped = wrapContentLine(part, innerWidth, partHasImage);
+			const wrapped = options.truncateContent && !partHasImage ? [part] : wrapContentLine(part, innerWidth, partHasImage);
 			for (const wrappedLine of wrapped) {
 				if (partHasImage) {
 					pushContentLine(wrappedLine);
