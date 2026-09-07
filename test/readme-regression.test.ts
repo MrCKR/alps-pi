@@ -43,18 +43,21 @@ test("README 说明设置面板项目", async () => {
 	const readme = await readReadme();
 
 	assert.match(readme, /Master Switch\s+统一启用或关闭消息线框、输入框美化、Footer 与动画，默认 ON/);
-	assert.match(readme, /Assistant Frame\s+控制 assistant 正文回复是否包线框，默认 ON/);
+	assert.match(readme, /Assistant Frame\s+控制 assistant 回复及 thinking 是否包线框，默认 ON/);
 	assert.match(readme, /Compact Tools\s+Off \/ Compact \/ Collapsed 三态，默认 Compact/);
-	assert.match(readme, /Collapse Thinking\s+Collapsed 模式下将连续 Thinking 收起为一至两行稳定摘要，默认 ON/);
+	assert.doesNotMatch(readme, /Collapse Thinking/);
 	assert.match(readme, /Compact Edit\s+Compact 模式下允许 edit 也极简展示，默认 OFF；Collapsed 时隐藏但保留偏好/);
 	assert.match(readme, /`true -> "compact"`，`false -> "off"`/);
-	assert.match(readme, /Thinking 与 Tools 互相切组/);
-	assert.match(readme, /多行内容最多显示首尾两行/);
+	assert.match(readme, /Thinking 继续使用 Pi 原始逐组件渲染/);
+	assert.match(readme, /`Assistant Frame` 开启时 Thinking 与正文各自使用对应线框，关闭时两者都保持 Pi 原始无框输出/);
+	assert.match(readme, /Thinking.*切断前后的 Tools 分组/);
+	assert.doesNotMatch(readme, /多行内容最多显示首尾两行|移除 Markdown 结构|只显示首尾两行/);
 	assert.match(readme, /Tools 标题显示实际调用总数，例如 `Tools ×4`/);
 	assert.match(readme, /调用数量不设上限，单行超宽时以 `\.\.\.` 截断/);
 	assert.match(readme, /所有项都移除树形连接符，只保留同列对齐的 `●`/);
-	assert.match(readme, /`\[ N \]`/);
-	assert.doesNotMatch(readme, /按工具类型首次出现顺序|最新活动项 `TOOL|`\[ ↑N · ↓N \]`|\+ctx ~|`\[ in N · out N \]`/);
+	assert.match(readme, /所有 frame 标题都只显示一个 `\[ N \]`/);
+	assert.match(readme, /retained 原始内容会给后续模型上下文增加的估算量/);
+	assert.doesNotMatch(readme, /Assistant\/Thinking 保留 Pi 原有真实 usage|按工具类型首次出现顺序|最新活动项 `TOOL|`\[ ↑N · ↓N \]`|\+ctx ~|`\[ in N · out N \]`/);
 	assert.doesNotMatch(readme, /Fixed Input\s+控制/);
 	assert.match(readme, /Beautified Input\s+控制输入框线框与嵌入边框状态，默认 ON/);
 	assert.match(readme, /Input Metrics\s+分别控制输入、输出、缓存命中率、Token 速度和耗时，默认全部 ON/);
@@ -71,7 +74,9 @@ test("Collapsed 规格锁定逐调用列表和单一上下文贡献语义", asyn
 	assert.doesNotMatch(spec, /[├└]/);
 	assert.match(spec, /每次调用恰好占一行，不按类型合并，也不设置最大行数/);
 	assert.match(spec, /\[ <tokens> \]/);
-	assert.match(spec, /Thinking 贡献来自组内完整原始 thinking blocks/);
+	assert.match(spec, /Thinking 使用 Pi 原始逐组件渲染，不进入 registry/);
+	assert.match(spec, /所有 frame 标题都只显示一个上下文贡献字段/);
+	assert.match(spec, /Assistant 计入同一线框内的正文与 thinking，纯 Thinking 只计 thinking/);
 	assert.match(spec, /pending 不计尚未返回的结果/);
 	assert.match(spec, /先移除旧贡献再加入新贡献/);
 	assert.doesNotMatch(spec, /Read ×2|最近活动项|\[ ↑<input> · ↓<output> \]/);

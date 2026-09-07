@@ -153,7 +153,6 @@ function createScenario(width: number) {
 	const state = createInitialPatchState();
 	state.config.settings.chromeFrame.assistantFrame = true;
 	state.config.settings.chromeFrame.toolCompactMode = "collapsed";
-	state.config.settings.chromeFrame.collapseThinking = true;
 	(globalThis as any)[PATCH_KEY] = state;
 	const theme = getRuntimeTheme();
 	const renderAssistant = createWrappedRender(
@@ -210,13 +209,13 @@ test("真实 Pi Assistant 和 TuiAltScreen 渲染 Collapsed 执行态与完成�
 	const width = 84;
 	const scenario = createScenario(width);
 	const thinkingText = scenario.thinkingLines.map(stripAnsi).join("\n");
-	assert.match(thinkingText, /Thinking/);
+	assert.match(thinkingText, /THINK/);
 	assert.match(thinkingText, /Planning step one\./);
+	assert.match(thinkingText, /Planning step two\./);
 	assert.match(thinkingText, /Planning step three\./);
-	assert.doesNotMatch(thinkingText, /Planning step two\./);
 	assert.match(thinkingText, /\[ 15 \]/);
+	assert.doesNotMatch(thinkingText, /[↑↓]|·/);
 	assert.equal((stripAnsi(scenario.thinkingLines[0]!).match(/\[[^\]]+\]/g) ?? []).length, 1);
-	assert.doesNotMatch(thinkingText, /[↑↓]|\bin\b|\bout\b|·/i);
 
 	const activeText = scenario.activeToolLines.map(stripAnsi).join("\n");
 	assert.match(activeText, /Tools ×4/);
@@ -231,8 +230,8 @@ test("真实 Pi Assistant 和 TuiAltScreen 渲染 Collapsed 执行态与完成�
 	assert.match(completeText, /│ ● Grep query=TODO_Supercalifragilisticexpialidocious_与超长中文搜索条件/);
 	assert.doesNotMatch(completeText, /[├└]/);
 	const assistantText = scenario.assistantLines.map(stripAnsi).join("\n");
+	assert.match(assistantText, /This thinking must not be repeated\./);
 	assert.match(assistantText, /Final assistant answer\./);
-	assert.doesNotMatch(assistantText, /This thinking must not be repeated\./);
 
 	const thinkingTitle = scenario.thinkingLines[0]!;
 	const thinkingLine = findLine(scenario.thinkingLines, /Planning step one/);
@@ -269,7 +268,7 @@ test("真实 TuiAltScreen 在窄宽度 ANSI 与 CJK 内容下不破框", () => {
 		for (const line of lines) assert.equal(visibleWidth(line), width, JSON.stringify(stripAnsi(line)));
 	}
 	const terminalOutput = renderThroughTui([...scenario.thinkingLines, ...scenario.activeToolLines], width);
-	assert.match(terminalOutput, /Thinking/);
+	assert.match(terminalOutput, /THINK/);
 	assert.match(terminalOutput, /Tools ×4/);
 	assert.match(terminalOutput, /Grep query=TODO_Supercalif\w*\.\.\./);
 

@@ -287,7 +287,6 @@ test("shutdown 后下一次 TUI session_start 会按持久化设置恢复用户�
 	harness.emit("session_start", { id: "current" });
 	(globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled = true;
 	(globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled = false;
-	(globalThis as any)[PATCH_KEY].config.settings.chromeFrame.collapseThinking = false;
 
 	harness.emit("session_shutdown");
 	harness.emit("session_start", { id: "next" });
@@ -295,7 +294,6 @@ test("shutdown 后下一次 TUI session_start 会按持久化设置恢复用户�
 	assert.deepEqual(harness.runtimeCalls.slice(-6), ["bind:next", "resetTime", "prompt:", "shortcuts", "beautified:false", "footer:true"]);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, true);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled, false);
-	assert.equal((globalThis as any)[PATCH_KEY].config.settings.chromeFrame.collapseThinking, false);
 });
 
 test("session_start 会按持久化设置切换 beautified input", () => {
@@ -319,7 +317,7 @@ test("Beautified Input 安装失败时保留用户偏好 true", () => {
 test("扩展启动时读取持久化设置", () => {
 	const file = process.env.ALPS_PI_SETTINGS_PATH!;
 	writeFileSync(file, JSON.stringify({
-		chromeFrame: { enabled: false, assistantFrame: false, toolCompactMode: false, collapseThinking: false, compactEditTool: true },
+		chromeFrame: { enabled: false, assistantFrame: false, toolCompactMode: false, compactEditTool: true },
 		fixedBottomEditor: { enabled: false },
 		beautifiedInput: { enabled: false },
 		footer: { enabled: false },
@@ -334,7 +332,6 @@ test("扩展启动时读取持久化设置", () => {
 	assert.equal(settings.chromeFrame.enabled, false);
 	assert.equal(settings.chromeFrame.assistantFrame, false);
 	assert.equal(settings.chromeFrame.toolCompactMode, "off");
-	assert.equal(settings.chromeFrame.collapseThinking, false);
 	assert.equal(settings.chromeFrame.compactEditTool, true);
 	assert.equal(settings.fixedBottomEditor.enabled, false);
 	assert.equal(settings.beautifiedInput.enabled, false);

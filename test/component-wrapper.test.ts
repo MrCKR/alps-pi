@@ -123,12 +123,17 @@ test("隐藏 thinking 使用三行紧凑 THINK 线框，label 保持原 token，
 		lastMessage: { content: [{ type: "thinking", thinking: "hidden thought" }] },
 	});
 	const plain = lines.map(stripAnsi);
+	const visible = plain.map((line) => line
+		.replaceAll(OSC133_START, "")
+		.replaceAll(OSC133_END, "")
+		.replaceAll(OSC133_FINAL, ""));
 
 	assert.equal(lines.length, 3);
-	assert.match(plain[0]!, /THINK/);
-	assert.match(plain[1]!, /hidden thought|hello/);
-	assert.equal(plain.some((line) => line.trim() === "│" || line.trim() === ""), false);
-	assert.equal(lines.join("\n").includes("\x1b[38;2;"), false);
+	assert.match(visible[0]!, /^╭─ THINK ─ \[ 4 \] /);
+	assert.match(visible[1]!, /^│ hello\s+│$/);
+	assert.match(visible[2]!, /^╰─+╯$/);
+	assert.equal(visible.some((line) => line.trim() === "│" || line.trim() === ""), false);
+	assert.match(lines[0]!, /\x1b\[38;2;122;162;247m4\x1b\[39m/);
 	assert.ok(theme.calls.some((call) => call.kind === "fg" && call.token === "accent" && call.text.includes("THINK")));
 	assert.ok(theme.calls.some((call) => call.kind === "fg" && call.token === "borderAccent" && call.text.includes("│")));
 	assert.ok(theme.calls.some((call) => call.kind === "fg" && call.token === "borderAccent" && call.text.includes("hello")));
@@ -154,14 +159,13 @@ test("包含正文的 assistant 线框保持 ASSISTANT label", () => {
 	assert.doesNotMatch(stripAnsi(lines[0]!), /THINK/);
 });
 
-test("Collapsed streaming assistant 从纯 thinking 变为 mixed 时只显示最终正文", () => {
+test("Collapsed streaming assistant 保留 Pi 原始 thinking 与正文渲染", () => {
 	resetCollapsedRegistry();
 	StreamingMixedAssistantComponent.constructorCalls = 0;
 	StreamingMixedAssistantComponent.updateContentCalls = 0;
 	synchronizeCollapsedMode(true);
 	const state = (globalThis as any)[PATCH_KEY];
 	state.config.settings.chromeFrame.toolCompactMode = "collapsed";
-	state.config.settings.chromeFrame.collapseThinking = true;
 	const component = new StreamingMixedAssistantComponent();
 	const wrapped = createWrappedRender(
 		"StreamingMixedAssistant",
@@ -170,9 +174,7 @@ test("Collapsed streaming assistant 从纯 thinking 变为 mixed 时只显示最
 		() => createFakeTheme(),
 	);
 
-	const thinking = wrapped.call(component, 48);
-	assert.match(stripAnsi(thinking.join("\n")), /streaming thought/);
-
+	assert.match(stripAnsi(wrapped.call(component, 48).join("\n")), /streaming thought/);
 	component.updateContent({
 		role: "assistant",
 		timestamp: 1_000,
@@ -185,44 +187,13 @@ test("Collapsed streaming assistant 从纯 thinking 变为 mixed 时只显示最
 	const output = stripAnsi(completed.join("\n"));
 
 	assert.match(output, /ASSISTANT/);
-	assert.match(output, /final answer/);
-	assert.doesNotMatch(output, /streaming thought/);
+	assert.match(output, /streaming thought[\s\S]*final answer/);
 	assert.equal(component.lastMessage.content.length, 2);
-	assert.equal(StreamingMixedAssistantComponent.constructorCalls, 2);
-	assert.equal(StreamingMixedAssistantComponent.updateContentCalls, 2);
-
+	assert.equal(StreamingMixedAssistantComponent.constructorCalls, 1);
+	assert.equal(StreamingMixedAssistantComponent.updateContentCalls, 1);
 	assert.deepEqual(wrapped.call(component, 48), completed);
-	assert.equal(StreamingMixedAssistantComponent.constructorCalls, 2);
-	assert.equal(StreamingMixedAssistantComponent.updateContentCalls, 2);
-
-	const resized = stripAnsi(wrapped.call(component, 44).join("\n"));
-	assert.match(resized, /final answer/);
-	assert.equal(StreamingMixedAssistantComponent.constructorCalls, 2);
-	assert.equal(StreamingMixedAssistantComponent.updateContentCalls, 2);
-
-	component.outputPad = 2;
-	assert.match(stripAnsi(wrapped.call(component, 44).join("\n")), /final answer/);
-	assert.equal(StreamingMixedAssistantComponent.constructorCalls, 3);
-	assert.equal(StreamingMixedAssistantComponent.updateContentCalls, 3);
-
-	component.updateContent(component.lastMessage, false);
-	assert.match(stripAnsi(wrapped.call(component, 44).join("\n")), /final answer/);
-	assert.equal(StreamingMixedAssistantComponent.constructorCalls, 3);
-	assert.equal(StreamingMixedAssistantComponent.updateContentCalls, 5);
-
-	component.updateContent({
-		role: "assistant",
-		timestamp: 1_000,
-		content: [
-			{ type: "thinking", thinking: "streaming thought" },
-			{ type: "text", text: "updated answer" },
-		],
-	});
-	const updated = stripAnsi(wrapped.call(component, 48).join("\n"));
-	assert.match(updated, /updated answer/);
-	assert.doesNotMatch(updated, /streaming thought/);
-	assert.equal(StreamingMixedAssistantComponent.constructorCalls, 3);
-	assert.equal(StreamingMixedAssistantComponent.updateContentCalls, 7);
+	assert.equal(StreamingMixedAssistantComponent.constructorCalls, 1);
+	assert.equal(StreamingMixedAssistantComponent.updateContentCalls, 1);
 });
 
 test("tool pending / success / error kind 生成状态 label", () => {
@@ -652,7 +623,7 @@ test("重复渲染同一线框不刷新更新时间", () => {
 	}
 });
 
-test("Assistant frame 显示真实模型 usage 并随流式消息更新", () => {
+test("Assistant frame 显示 retained 正文贡献并忽略整次模型 usage", () => {
 	class AssistantUsageComponent {
 		lastMessage = {
 			content: [{ type: "text", text: "x".repeat(40) }],
@@ -666,30 +637,32 @@ test("Assistant frame 显示真实模型 usage 并随流式消息更新", () => 
 	const instance = new AssistantUsageComponent();
 	let lines = wrapped.call(instance, 52);
 
-	assert.match(stripAnsi(lines[0]!), /ASSISTANT ─ \[ ↑115 · ↓2 \]/);
-	assert.doesNotMatch(stripAnsi(lines[0]!), /\+ctx|~10/);
+	assert.match(stripAnsi(lines[0]!), /ASSISTANT ─ \[ 10 \]/);
+	assert.doesNotMatch(stripAnsi(lines[0]!), /[↑↓]|·/);
 
+	instance.lastMessage.content = [{ type: "text", text: "x".repeat(84) }];
 	instance.lastMessage.usage = { input: 12, output: 7, cacheRead: 120, cacheWrite: 6, totalTokens: 145 };
 	lines = wrapped.call(instance, 52);
-	assert.match(stripAnsi(lines[0]!), /ASSISTANT ─ \[ ↑138 · ↓7 \]/);
+	assert.match(stripAnsi(lines[0]!), /ASSISTANT ─ \[ 21 \]/);
 });
 
-test("Thinking frame 复用 AssistantMessage 真实 usage，缺失时不伪造估算", () => {
-	const withUsage = renderKind("assistant", 52, {
+test("Thinking frame 与 Assistant frame 都只显示 retained 内容贡献", () => {
+	const thinking = renderKind("assistant", 52, {
 		lastMessage: {
 			content: [{ type: "thinking", thinking: "x".repeat(80) }],
 			usage: { input: 3, output: 9, cacheRead: 40, cacheWrite: 2 },
 		},
 	});
-	assert.match(stripAnsi(withUsage.lines[0]!), /THINK ─ \[ ↑45 · ↓9 \]/);
+	assert.match(stripAnsi(thinking.lines[0]!), /THINK ─ \[ 20 \]/);
+	assert.doesNotMatch(stripAnsi(thinking.lines[0]!), /[↑↓]|·/);
 
-	const withoutUsage = renderKind("assistant", 52, {
+	const assistant = renderKind("assistant", 52, {
 		lastMessage: {
 			content: [{ type: "text", text: "x".repeat(80) }],
 			usage: { input: 10 },
 		},
 	});
-	assert.doesNotMatch(stripAnsi(withoutUsage.lines[0]!), /\[|\+ctx|~20/);
+	assert.match(stripAnsi(assistant.lines[0]!), /ASSISTANT ─ \[ 20 \]/);
 });
 
 test("wrapper 右下角 token 优先读取 Pi 0.84 UserMessage.text", () => {
@@ -1276,11 +1249,11 @@ test("工具 inner 返回空数组时仍有状态 box", () => {
 	assert.match(stripAnsi(lines[0]!), /TOOL read ✓/);
 });
 
-test("assistantFrame 关闭时 assistant 返回原始 render，开启时继续 box", () => {
+test("assistantFrame 同时控制正文和 Thinking 线框", () => {
 	class AssistantComponent {
 		calls: number[] = [];
 
-		// 记录调用宽度，确保关闭正文线框时不先渲染 innerWidth 再 fallback。
+		// 记录调用宽度，确保关闭线框时不先渲染 innerWidth 再 fallback。
 		render(width: number) {
 			this.calls.push(width);
 			return ["hello"];
@@ -1289,13 +1262,24 @@ test("assistantFrame 关闭时 assistant 返回原始 render，开启时继续 b
 	const wrapped = createWrappedRender("Assistant", "assistant", AssistantComponent.prototype.render, () => createFakeTheme());
 	const state = (globalThis as any)[PATCH_KEY];
 	state.config.settings.chromeFrame.assistantFrame = false;
-	const fallbackInstance = new AssistantComponent();
-	assert.deepEqual(wrapped.call(fallbackInstance, 30), ["hello"]);
-	assert.deepEqual(fallbackInstance.calls, [30]);
+	const fallbackAssistant = new AssistantComponent();
+	assert.deepEqual(wrapped.call(fallbackAssistant, 30), ["hello"]);
+	assert.deepEqual(fallbackAssistant.calls, [30]);
+	const fallbackThinking = Object.assign(new AssistantComponent(), {
+		lastMessage: { content: [{ type: "thinking", thinking: "hidden thought" }] },
+	});
+	assert.deepEqual(wrapped.call(fallbackThinking, 30), ["hello"]);
+	assert.deepEqual(fallbackThinking.calls, [30]);
+
 	state.config.settings.chromeFrame.assistantFrame = true;
-	const framedInstance = new AssistantComponent();
-	assert.match(stripAnsi(wrapped.call(framedInstance, 30)[0]!), /ASSISTANT/);
-	assert.deepEqual(framedInstance.calls, [26]);
+	const framedAssistant = new AssistantComponent();
+	assert.match(stripAnsi(wrapped.call(framedAssistant, 30)[0]!), /ASSISTANT/);
+	assert.deepEqual(framedAssistant.calls, [26]);
+	const framedThinking = Object.assign(new AssistantComponent(), {
+		lastMessage: { content: [{ type: "thinking", thinking: "hidden thought" }] },
+	});
+	assert.match(stripAnsi(wrapped.call(framedThinking, 30)[0]!), /THINK/);
+	assert.deepEqual(framedThinking.calls, [26]);
 });
 
 test("inner render 抛异常时返回原始 render fallback", () => {

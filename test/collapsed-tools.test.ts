@@ -56,62 +56,6 @@ test("Collapsed aggregates mixed retained-context sources once per stable entry"
 	assert.deepEqual(snapshot?.contribution, { upstreamChars: 24, downstreamChars: 5 });
 });
 
-test("Thinking 贡献只计算完整原始 thinking block 且不受展示设置影响", () => {
-	const raw = "**alpha**\n被两行摘要隐藏的中间内容\nomega";
-	const instance = {
-		lastMessage: {
-			content: [
-				{ type: "thinking", thinking: raw },
-				{ type: "text", text: "assistant body must not enter the Thinking metric" },
-			],
-		},
-	};
-	const expected = { upstreamChars: 0, downstreamChars: raw.length };
-	assert.deepEqual(estimateContextContribution("thinking", instance), expected);
-	assert.deepEqual(estimateContextContribution("thinking", {
-		message: { content: [{ type: "thinking", text: raw }] },
-	}), expected);
-
-	const state = (globalThis as any)[PATCH_KEY];
-	for (const collapseThinking of [false, true]) {
-		state.config.settings.chromeFrame.collapseThinking = collapseThinking;
-		assert.deepEqual(estimateContextContribution("thinking", instance), expected);
-	}
-});
-
-test("Thinking 流式替换、组件重建与历史恢复只保留最终原文贡献", () => {
-	const boundary = { instance: {}, identity: "thinking-metric-user", kind: "user" as const, visible: true, signature: "user" };
-	const identity = "thinking-metric-entry";
-	const input = (instance: object & { lastMessage: { content: unknown[] } }) => ({
-		instance,
-		identity,
-		kind: "thinking" as const,
-		visible: true,
-		contentLines: [(instance.lastMessage.content[0] as any).thinking],
-		contribution: estimateContextContribution("thinking", instance),
-		signature: JSON.stringify(instance.lastMessage.content),
-	});
-	const finalText = "first\nmiddle content hidden from the summary\nlast";
-
-	resetCollapsedRegistry();
-	synchronizeCollapsedMode(true);
-	observeCollapsedFrame(boundary);
-	const liveInstance = { lastMessage: { content: [{ type: "thinking", thinking: "first" }] } };
-	observeCollapsedFrame(input(liveInstance));
-	liveInstance.lastMessage.content = [{ type: "thinking", thinking: finalText }];
-	let live = observeCollapsedFrame(input(liveInstance));
-	assert.deepEqual(live?.contribution, { upstreamChars: 0, downstreamChars: finalText.length });
-	const rebuilt = { lastMessage: { content: [{ type: "thinking", thinking: finalText }] } };
-	live = observeCollapsedFrame(input(rebuilt));
-	assert.deepEqual(live?.contribution, { upstreamChars: 0, downstreamChars: finalText.length });
-
-	resetCollapsedRegistry();
-	synchronizeCollapsedMode(true);
-	observeCollapsedFrame({ ...boundary, instance: {} });
-	const restored = observeCollapsedFrame(input(rebuilt));
-	assert.deepEqual(restored?.contribution, live?.contribution);
-});
-
 class DialogueComponent {
 	readonly text: string;
 	readonly message: { timestamp: number; content?: unknown[] };
@@ -440,7 +384,7 @@ test("可见 User、Assistant、Thinking 切组，空内容不切组", () => {
 	assert.match(plain(firstGroupLines), /×2/);
 	const frozenContribution = estimatedContextMetric(firstGroupLines);
 
-	assert.match(plain(renderers.thinking.call(thinking, 72)), /Thinking/);
+	assert.match(plain(renderers.thinking.call(thinking, 72)), /THINK/);
 	assert.match(plain(renderers.tool.call(third, 72)), /Tools[\s\S]*×1[\s\S]*│ ● Read path=src\/c\.ts/);
 	assert.match(plain(renderers.assistant.call(assistant, 72)), /ASSISTANT/);
 	assert.match(plain(renderers.tool.call(fourth, 72)), /Tools[\s\S]*×1[\s\S]*│ ● Read path=src\/d\.ts/);
@@ -501,180 +445,62 @@ test("assistantFrame 开关不改变 Thinking 与正文的 Collapsed 分组边�
 		const output = plain(renderTimeline());
 		assert.match(output, /thinking one[\s\S]*Tools[\s\S]*×3[\s\S]*thinking two[\s\S]*Tools[\s\S]*×2[\s\S]*answer/);
 		assert.doesNotMatch(output, /×5/);
+		if (assistantFrame) assert.match(output, /THINK[\s\S]*ASSISTANT/);
+		else assert.doesNotMatch(output, /THINK|ASSISTANT/);
 	}
 });
 
-test("连续 Thinking 独立成组，摘要开关控制完整内容或稳定首尾两行", () => {
-	for (const collapseThinking of [false, true]) {
-		resetCollapsedRegistry();
-		const state = (globalThis as any)[PATCH_KEY];
-		state.config.settings.chromeFrame.assistantFrame = false;
-		state.config.settings.chromeFrame.collapseThinking = collapseThinking;
-		const renderers = createRenderers();
-		const user = new DialogueComponent("question", { timestamp: 1_000 });
-		const first = new AssistantDialogueComponent("first thought", 2_000, [
-			{ type: "thinking", thinking: "first thought" },
-		]);
-		const second = new AssistantDialogueComponent("alpha\nmiddle\nomega", 3_000, [
-			{ type: "thinking", thinking: "alpha\nmiddle\nomega" },
-		]);
-		const tool = new CollapsibleTool("thinking-group-tool", "read", { path: "src/a.ts" });
-		const last = new AssistantDialogueComponent("final thought", 5_000, [
-			{ type: "thinking", thinking: "final thought" },
-		]);
-		const body = new AssistantDialogueComponent("answer", 6_000, [{ type: "text", text: "answer" }]);
-
-		renderers.user.call(user, 72);
-		renderers.assistant.call(first, 72);
-		assert.deepEqual(renderers.assistant.call(second, 72), []);
-		renderers.tool.call(tool, 72);
-		const firstGroup = renderers.assistant.call(first, 72);
-		const firstPlain = plain(firstGroup);
-		assert.match(firstPlain, /Thinking/);
-		assert.equal((firstPlain.match(/Thinking/g) ?? []).length, 1);
-		if (collapseThinking) {
-			assert.equal(firstGroup.length, 4);
-			assert.match(firstPlain, /first thought/);
-			assert.match(firstPlain, /omega/);
-			assert.doesNotMatch(firstPlain, /alpha|middle/);
-		} else {
-			assert.equal(firstGroup.length, 6);
-			assert.match(firstPlain, /first thought[\s\S]*alpha[\s\S]*middle[\s\S]*omega/);
-		}
-
-		const lastGroup = renderers.assistant.call(last, 72);
-		assert.equal(lastGroup.length, 3);
-		assert.match(plain(lastGroup), /Thinking[\s\S]*final thought/);
-		assert.match(plain(renderers.assistant.call(body, 72)), /answer/);
-	}
-});
-
-test("Collapsed Thinking 摘要去除 Markdown、使用工具正文色并按宽度稳定省略", () => {
-	resetCollapsedRegistry();
+test("assistantFrame 关闭时连续 Thinking 保持原始无框多行内容", () => {
 	const state = (globalThis as any)[PATCH_KEY];
-	state.config.settings.chromeFrame.collapseThinking = true;
+	state.config.settings.chromeFrame.assistantFrame = false;
 	const renderers = createRenderers();
 	const user = new DialogueComponent("question", { timestamp: 1_000 });
-	const first = new AssistantDialogueComponent(
-		"fallback",
-		2_000,
-		[{ type: "thinking", thinking: "\x1b[1m**粗体** *斜体* _强调_ [链接](https://example.com) `代码` ~~删除~~ 第一段包含非常长的中文内容\x1b[0m" }],
-	);
-	const second = new AssistantDialogueComponent(
-		"fallback",
-		3_000,
-		[{ type: "thinking", thinking: "# 中间内容\n> 最后一段也非常长用于验证流式摘要稳定更新" }],
-	);
-
-	renderers.user.call(user, 34);
-	renderers.assistant.call(first, 34);
-	assert.deepEqual(renderers.assistant.call(second, 34), []);
-	const firstRender = renderers.assistant.call(first, 34);
-	const secondRender = renderers.assistant.call(first, 34);
-	const output = plain(firstRender);
-	const body = plain(firstRender.slice(1, -1));
-	assert.deepEqual(secondRender, firstRender);
-	assert.equal(firstRender.length, 4);
-	assertLinesWithin(firstRender, 34);
-	assert.doesNotMatch(body, /[*_`]|~~|https?:|# 中间内容|\x1b\[1m/);
-	assert.match(body, /粗体 斜体 强调 链接 代码(?: 删)?\.\.\./);
-	assert.match(output, /最后一段也非常长用于验证(?:流)?\.\.\./);
-	assert.equal((output.match(/\.\.\./g) ?? []).length, 2);
-	assert.ok(renderers.theme.calls.some((call) =>
-		call.kind === "fg" && call.token === "toolOutput" && call.text.includes("粗体")));
-	assert.equal(renderers.theme.calls.filter((call) => call.kind === "bold").length, 0);
-});
-
-test("Collapsed Thinking 标题仅显示完整原文的单一估算贡献", () => {
-	resetCollapsedRegistry();
-	const renderers = createRenderers();
-	const user = new DialogueComponent("question", { timestamp: 1_000 });
-	const first = new AssistantDialogueComponent(
-		"first thought",
-		2_000,
-		[{ type: "thinking", thinking: "first thought" }],
-		{ input: 3, output: 4, cacheRead: 40, cacheWrite: 2 },
-	);
-	const second = new AssistantDialogueComponent(
-		"second thought",
-		3_000,
-		[{ type: "thinking", thinking: "second thought" }],
-		{ input: 7, output: 8, cacheRead: 50, cacheWrite: 1 },
-	);
+	const first = new AssistantDialogueComponent("first thought", 2_000, [
+		{ type: "thinking", thinking: "first thought" },
+	]);
+	const second = new AssistantDialogueComponent("alpha\nmiddle\nomega", 3_000, [
+		{ type: "thinking", thinking: "alpha\nmiddle\nomega" },
+	]);
+	const tool = new CollapsibleTool("thinking-group-tool", "read", { path: "src/a.ts" });
+	const body = new AssistantDialogueComponent("answer", 6_000, [{ type: "text", text: "answer" }]);
 
 	renderers.user.call(user, 72);
-	renderers.assistant.call(first, 72);
-	assert.deepEqual(renderers.assistant.call(second, 72), []);
-	assert.equal(estimatedContextMetric(renderers.assistant.call(first, 72)), 7);
-
-	second.lastMessage.usage = { input: 10, output: 10, cacheRead: 60, cacheWrite: 2 };
-	assert.deepEqual(renderers.assistant.call(second, 72), []);
-	const liveLines = renderers.assistant.call(first, 72);
-	const live = plain(liveLines);
-	assert.equal(estimatedContextMetric(liveLines), 7);
-	assert.doesNotMatch(live, /[↑↓]/);
-
-	resetCollapsedRegistry();
-	const restoredRenderers = createRenderers();
-	const restoredFirst = new AssistantDialogueComponent(
-		"first thought",
-		2_000,
-		[{ type: "thinking", thinking: "first thought" }],
-		{ input: 3, output: 4, cacheRead: 40, cacheWrite: 2 },
-	);
-	const restoredSecond = new AssistantDialogueComponent(
-		"second thought",
-		3_000,
-		[{ type: "thinking", thinking: "second thought" }],
-		{ input: 10, output: 10, cacheRead: 60, cacheWrite: 2 },
-	);
-	restoredRenderers.user.call(new DialogueComponent("question", { timestamp: 1_000 }), 72);
-	restoredRenderers.assistant.call(restoredFirst, 72);
-	assert.deepEqual(restoredRenderers.assistant.call(restoredSecond, 72), []);
-	assert.equal(estimatedContextMetric(restoredRenderers.assistant.call(restoredFirst, 72)), 7);
+	const firstLines = renderers.assistant.call(first, 72);
+	const secondLines = renderers.assistant.call(second, 72);
+	assert.deepEqual(firstLines, ["first thought"]);
+	assert.deepEqual(secondLines, ["alpha\nmiddle\nomega"]);
+	assert.doesNotMatch(plain([...firstLines, ...secondLines]), /THINK/);
+	assert.match(plain(renderers.tool.call(tool, 72)), /Tools ×1/);
+	assert.match(plain(renderers.assistant.call(body, 72)), /answer/);
 });
 
-test("Thinking 与 Tools 交替时形成独立组，流式更新和历史恢复收敛", () => {
-	const boundary = { instance: {}, identity: "thinking-restore-user", kind: "user" as const, visible: true, signature: "user" };
-	const first = (instance: object, lines: string[]) => ({
-		instance,
-		identity: "thinking-restore-1",
-		kind: "thinking" as const,
-		visible: true,
-		contentLines: lines,
-		signature: lines.join("|"),
-	});
-	const second = (instance: object) => ({
-		instance,
-		identity: "thinking-restore-2",
-		kind: "thinking" as const,
-		visible: true,
-		contentLines: ["tail"],
-		signature: "tail",
-	});
-	const tool = { instance: {}, identity: "thinking-restore-tool", kind: "tool" as const, visible: true, signature: "tool" };
+test("Collapsed Thinking 不做摘要清理或首尾截取", () => {
+	const renderers = createRenderers();
+	const raw = "**粗体** *斜体*\n# 中间内容\n> 最后一段";
+	const thinking = new AssistantDialogueComponent(raw, 2_000, [
+		{ type: "thinking", thinking: raw },
+	]);
 
+	const output = plain(renderers.assistant.call(thinking, 72));
+	assert.match(output, /THINK/);
+	assert.match(output, /\*\*粗体\*\* \*斜体\*[\s\S]*# 中间内容[\s\S]*> 最后一段/);
+});
+
+test("Thinking 作为边界切断前后 Tools 聚合", () => {
 	resetCollapsedRegistry();
 	synchronizeCollapsedMode(true);
-	observeCollapsedFrame(boundary);
-	const liveInstance = {};
-	observeCollapsedFrame(first(liveInstance, ["draft"]));
-	observeCollapsedFrame(first(liveInstance, ["first", "middle", "last"]));
-	assert.equal(observeCollapsedFrame(second({}))?.isAnchor, false);
-	assert.equal(observeCollapsedFrame(tool)?.kind, "tools");
-	const live = observeCollapsedFrame(first(liveInstance, ["first", "middle", "last"]));
-	assert.deepEqual(live?.contentLines, ["first", "middle", "last", "tail"]);
+	const first = { instance: {}, identity: "thinking-boundary-tool-1", kind: "tool" as const, visible: true, signature: "tool-1" };
+	const second = { instance: {}, identity: "thinking-boundary-tool-2", kind: "tool" as const, visible: true, signature: "tool-2" };
+	const thinking = { instance: {}, identity: "thinking-boundary", kind: "thinking" as const, visible: true, signature: "thinking" };
+	const third = { instance: {}, identity: "thinking-boundary-tool-3", kind: "tool" as const, visible: true, signature: "tool-3" };
 
-	resetCollapsedRegistry();
-	synchronizeCollapsedMode(true);
-	observeCollapsedFrame({ ...boundary, instance: {} });
-	const restoredFirst = first({}, ["first", "middle", "last"]);
-	observeCollapsedFrame(restoredFirst);
-	observeCollapsedFrame(second({}));
-	assert.equal(observeCollapsedFrame({ ...tool, instance: {} })?.kind, "tools");
-	const restored = observeCollapsedFrame(restoredFirst);
-	assert.deepEqual(restored?.contentLines, live?.contentLines);
-	assert.equal(restored?.kind, "thinking");
+	observeCollapsedFrame(first);
+	observeCollapsedFrame(second);
+	assert.equal(observeCollapsedFrame(thinking), undefined);
+	observeCollapsedFrame(third);
+	assert.equal(observeCollapsedFrame(first)?.count, 2);
+	assert.equal(observeCollapsedFrame(second)?.isAnchor, false);
+	assert.equal(observeCollapsedFrame(third)?.count, 1);
 });
 
 test("assistantFrame 关闭时 ignored Assistant 转为可见 Thinking 后会重新切组", () => {
@@ -697,7 +523,8 @@ test("assistantFrame 关闭时 ignored Assistant 转为可见 Thinking 后会重
 	evolving.text = "late thinking";
 	evolving.lastMessage.content = [{ type: "thinking", thinking: "late thinking" }];
 	const thinkingLines = renderers.assistant.call(evolving, 72);
-	assert.match(plain(thinkingLines), /Thinking[\s\S]*late thinking/);
+	assert.deepEqual(thinkingLines, ["late thinking"]);
+	assert.doesNotMatch(plain(thinkingLines), /THINK/);
 
 	assert.match(plain(renderers.tool.call(first, 72)), /×2/);
 	assert.match(plain(renderers.tool.call(third, 72)), /×2/);
@@ -782,31 +609,28 @@ test("大连续工具组的常规追加和成员查询保持有界增长", () =>
 	assert.equal(stable.snapshotReads, memberCount * 2);
 });
 
-test("2000 个不同类型与 Thinking 成员只在锚点按版本线性构建聚合快照", () => {
-	for (const kind of ["tool", "thinking"] as const) {
-		resetCollapsedRegistry();
-		synchronizeCollapsedMode(true);
-		const members = Array.from({ length: 2_000 }, (_, index) => ({
-			instance: {},
-			identity: `aggregate-linear-${kind}-${index}`,
-			kind,
-			visible: true,
-			displayName: kind === "tool" ? `Type ${index}` : undefined,
-			contentLines: kind === "thinking" ? [`thought ${index}`] : undefined,
-			signature: `${kind}-${index}`,
-		}));
-		for (const member of members) observeCollapsedFrame(member);
-		const beforeAnchor = getCollapsedRegistryStats();
-		const snapshot = observeCollapsedFrame(members[0]!);
-		const afterAnchor = getCollapsedRegistryStats();
-		observeCollapsedFrame(members[0]!);
-		const stable = getCollapsedRegistryStats();
+test("2000 个 Tool 成员只在锚点按版本线性构建聚合快照", () => {
+	resetCollapsedRegistry();
+	synchronizeCollapsedMode(true);
+	const members = Array.from({ length: 2_000 }, (_, index) => ({
+		instance: {},
+		identity: `aggregate-linear-tool-${index}`,
+		kind: "tool" as const,
+		visible: true,
+		displayName: `Type ${index}`,
+		signature: `tool-${index}`,
+	}));
+	for (const member of members) observeCollapsedFrame(member);
+	const beforeAnchor = getCollapsedRegistryStats();
+	const snapshot = observeCollapsedFrame(members[0]!);
+	const afterAnchor = getCollapsedRegistryStats();
+	observeCollapsedFrame(members[0]!);
+	const stable = getCollapsedRegistryStats();
 
-		assert.equal(snapshot?.count, members.length);
-		assert.ok(afterAnchor.aggregateItemsRead - beforeAnchor.aggregateItemsRead <= members.length);
-		assert.equal(stable.aggregateItemsRead, afterAnchor.aggregateItemsRead);
-		assert.equal(afterAnchor.structuralRebuilds, 0);
-	}
+	assert.equal(snapshot?.count, members.length);
+	assert.ok(afterAnchor.aggregateItemsRead - beforeAnchor.aggregateItemsRead <= members.length);
+	assert.equal(stable.aggregateItemsRead, afterAnchor.aggregateItemsRead);
+	assert.equal(afterAnchor.structuralRebuilds, 0);
 });
 
 test("首次 Collapsed 聚合只请求一次合并刷新并在完整快照后稳定", async () => {
@@ -876,7 +700,6 @@ test("流式更新、组件重建与历史重放收敛到同一聚合快照", ()
 		timing: { lastUpdatedAt: 300, activityOrder: 3, active: false },
 	});
 	const comparable = (snapshot: ReturnType<typeof observeCollapsedFrame>) => snapshot && ({
-		kind: snapshot.kind,
 		count: snapshot.count,
 		failedCount: snapshot.failedCount,
 		active: snapshot.active,
@@ -897,7 +720,6 @@ test("流式更新、组件重建与历史重放收敛到同一聚合快照", ()
 	assert.equal(liveStats.appendedEntries, 3);
 	assert.equal(liveStats.entryUpdates, 1);
 	assert.deepEqual(live, {
-		kind: "tools",
 		count: 2,
 		failedCount: 1,
 		active: false,

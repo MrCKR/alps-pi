@@ -53,7 +53,7 @@ pi install git:https://github.com/MrCKR/alps-pi
 - 消息组件 monkey patch 可回滚；输入美化只使用 Pi 公开 UI API。
 - 普通空消息不会渲染成空白框。
 - 消息正文不铺大面积背景色，只渲染边框、标题和正文颜色。
-- 可关闭 assistant 正文线框，方便复制回复内容。
+- 可统一关闭 assistant 回复与 thinking 线框，方便复制原始内容。
 
 ## 命令
 
@@ -66,9 +66,8 @@ pi install git:https://github.com/MrCKR/alps-pi
 
 ```text
 Master Switch       统一启用或关闭消息线框、输入框美化、Footer 与动画，默认 ON
-Assistant Frame     控制 assistant 正文回复是否包线框，默认 ON
+Assistant Frame     控制 assistant 回复及 thinking 是否包线框，默认 ON
 Compact Tools       Off / Compact / Collapsed 三态，默认 Compact
-Collapse Thinking   Collapsed 模式下将连续 Thinking 收起为一至两行稳定摘要，默认 ON
 Compact Edit        Compact 模式下允许 edit 也极简展示，默认 OFF；Collapsed 时隐藏但保留偏好
 Beautified Input    控制输入框线框与嵌入边框状态，默认 ON
 Input Metrics       分别控制输入、输出、缓存命中率、Token 速度和耗时，默认全部 ON
@@ -85,13 +84,11 @@ Enter/Space 切换
 Esc/q 关闭
 ```
 
-`Compact Tools` 持久化为 `"off" | "compact" | "collapsed"`。旧 Boolean 配置自动迁移：`true -> "compact"`，`false -> "off"`。`Off` 保留完整工具内容，`Compact` 保留原有逐工具首条有效文本摘要。`Collapsed` 将连续 Thinking 合并为独立 `Thinking` frame，并将相邻的 Tool、Bash、Skill、Resource/Custom、Compaction、Branch、Working 等非对话 frame 合并为 `Tools` frame；Thinking 与 Tools 互相切组，可见且非空的 User 或 Assistant 正文也会切组。空内容、隐藏内容和只含 tool call 的 Assistant 不切组。
-
-`Collapse Thinking` 只在 Collapsed 模式中显示并独立持久化，默认 ON。关闭时 Thinking frame 保留连续段的完整内容；开启时先移除 ANSI 和 `**` 等 Markdown 装饰，再使用本地确定性规则生成纯文本摘要：一行内容保留一行，多行内容最多显示首尾两行。每条摘要固定一行，超过线框可用宽度时以 ASCII `...` 截断，不调用模型或外部摘要服务；正文使用与 Tool 正文相同的主题颜色。
+`Compact Tools` 持久化为 `"off" | "compact" | "collapsed"`。旧 Boolean 配置自动迁移：`true -> "compact"`，`false -> "off"`。`Off` 保留完整工具内容，`Compact` 保留原有逐工具首条有效文本摘要。`Collapsed` 只将相邻的 Tool、Bash、Skill、Resource/Custom、Compaction、Branch、Working 等非对话 frame 合并为 `Tools` frame。Thinking 继续使用 Pi 原始逐组件渲染，不做聚合、摘要、Markdown 清理或内容过滤，并与可见且非空的 User、Assistant 正文一样切断前后的 Tools 分组。`Assistant Frame` 开启时 Thinking 与正文各自使用对应线框，关闭时两者都保持 Pi 原始无框输出；该开关不改变分组边界。空内容、隐藏内容和只含 tool call 的 Assistant 不切组。
 
 Tools 标题显示实际调用总数，例如 `Tools ×4`。正文把 Compact 已提取的每次调用摘要按原始顺序收入同一线框，每次调用恰好一行：所有项都移除树形连接符，只保留同列对齐的 `●`；运行中的状态点复用 User label 的 `accent` 主题 token，完成和失败分别使用 `success`、`error`。Read 路径、Grep 条件、Bash 命令、Edit 目标等关键信息会保留；调用数量不设上限，单行超宽时以 `...` 截断。完成或失败只更新对应行，不移除该调用，也不读取 Compact Edit 偏好。
 
-所有实际显示的 frame 使用同一耗时口径：当前 frame 的最后更新时间减去上一个实际显示 frame 的最后更新时间；首个 frame 不显示耗时，流式执行中持续更新，完成后冻结，历史恢复不会继续增长。Collapsed Thinking 和 Tools 的标题都只显示一个 `[ N ]`，表示该线框所代表原始内容对后续模型上下文的估算贡献；当前实现按 4 字符约 1 Token 换算。Thinking 计算完整原始 thinking blocks，Tools 汇总实际工具名称、参数和已送模结果；尚未返回、送模前已截除的内容，以及标题、边框、状态色和 UI 摘要均不计入。流式更新按稳定身份替换旧值，不重复累计。非 Collapsed 的 Assistant/Thinking 仍保留原有真实 usage 显示，其他模式的上下文估算格式也保持不变。
+所有实际显示的 frame 使用同一耗时口径：当前 frame 的最后更新时间减去上一个实际显示 frame 的最后更新时间；首个 frame 不显示耗时，流式执行中持续更新，完成后冻结，历史恢复不会继续增长。所有 frame 标题都只显示一个 `[ N ]`，统一表示该线框内 retained 原始内容会给后续模型上下文增加的估算量；当前实现按 4 字符约 1 Token 换算，不显示 provider 整次请求的 input/output usage。Assistant 计入框内正文与 thinking，纯 Thinking 只计 thinking；Tools 汇总实际工具名称、参数和已送模结果。尚未返回、送模前已截除的内容，以及标题、边框、状态色和 UI 摘要均不计入；Collapsed 流式更新按稳定身份替换旧值，不重复累计。
 
 ## 覆盖范围
 

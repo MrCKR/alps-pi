@@ -1,7 +1,7 @@
 # Tool 显示模式规范
 
 > 状态：已实现
-> 配置：`chromeFrame.toolCompactMode`、`chromeFrame.collapseThinking`、`chromeFrame.compactEditTool`
+> 配置：`chromeFrame.toolCompactMode`、`chromeFrame.compactEditTool`
 
 ## 模式与迁移
 
@@ -12,7 +12,6 @@ type ToolDisplayMode = "off" | "compact" | "collapsed";
 
 chromeFrame: {
   toolCompactMode: "compact";
-  collapseThinking: true;
   compactEditTool: false;
 }
 ```
@@ -23,8 +22,6 @@ chromeFrame: {
 - `false -> "off"`
 
 写回时只保存三态字符串，不再产生 Boolean。未知值归一化为默认值 `compact`。
-
-`collapseThinking` 独立持久化并默认 `true`。旧配置缺少该字段时使用默认值。它只改变 Collapsed Thinking frame 的内容展示，不改变分组、计时或 token 语义。设置界面仅在选择 Collapsed 时显示该项；切换到其他模式会隐藏但保留原值。
 
 `compactEditTool` 也独立持久化。选择 Collapsed 时设置界面隐藏 Compact Edit，但不修改该偏好；离开 Collapsed 后恢复显示和原值。Collapsed 摘要不读取该偏好。
 
@@ -46,25 +43,13 @@ chromeFrame: {
 
 ### 分组
 
-Collapsed 有两类互斥的连续组：
+Collapsed 只有一类连续组：
 
-- `Thinking`：连续、可见且非空的 Thinking 内容。
 - `Tools`：连续、可见的非对话 frame，包括 Tool、Bash、Skill、Resource/Custom、Compaction、Branch 和 Working。
 
-Thinking 与 Tools 互相关闭前一组并开始新组。可见且非空的 User 或 Assistant 正文也会关闭当前组。空内容、隐藏内容和只含 tool call 的 Assistant 不创建 frame，也不改变分组。`assistantFrame` 只控制 Assistant 正文是否包框，不改变这些边界。
+可见且非空的 Thinking、User 或 Assistant 正文都会关闭当前 Tools 组。Thinking 使用 Pi 原始逐组件渲染，不进入 registry，也不做聚合、摘要、Markdown 清理或内容过滤。`assistantFrame` 开启时 Thinking 与 Assistant 正文各自使用对应线框，关闭时两者都保持 Pi 原始无框输出；该开关不改变分组边界。空内容、隐藏内容和只含 tool call 的 Assistant 不创建 frame，也不改变分组。
 
-组内仅首项作为锚点渲染，其他成员不再各自输出 frame。成员按稳定身份去重；重复渲染、streaming 更新和组件实例重建会替换原记录，不增加调用行或上下文贡献。历史恢复必须收敛到与实时渲染相同的顺序、状态、摘要和贡献值。
-
-### Thinking 显示
-
-Thinking frame 使用连续段的原始 Thinking 文本：
-
-- `collapseThinking: false` 时保留该段全部有效行。
-- `collapseThinking: true` 时先移除 ANSI 与 Markdown 标题、引用、列表、链接、强调和反引号装饰，再生成纯文本摘要；一行输入显示一行，多行输入最多显示首行和末行。
-- 摘要正文使用 Tool 正文 token，不使用粗体；每条摘要固定一行，超过可用宽度时以 ASCII `...` 截断。
-- 摘要规则完全确定，不调用模型或外部摘要服务。
-
-折叠只影响 frame 内的可见内容行。分组边界、原始上下文贡献和耗时不受开关影响。
+Tools 组内仅首项作为锚点渲染，其他成员不再各自输出 frame。成员按稳定身份去重；重复渲染、streaming 更新和组件实例重建会替换原记录，不增加调用行或上下文贡献。历史恢复必须收敛到与实时渲染相同的顺序、状态、摘要和贡献值。
 
 ### Tools 显示
 
@@ -89,17 +74,17 @@ Tools ×4 [ 24.6k ]
 
 ### Token 与上下文指标
 
-Collapsed Thinking 和 Tools 标题都只显示一个上下文贡献字段：
+所有 frame 标题都只显示一个上下文贡献字段：
 
 ```text
 [ <tokens> ]
 ```
 
-该值描述线框所代表的原始内容会给后续模型上下文增加多少，不是 provider billing、模型 input/output usage 或累计 session token。当前实现没有运行时模型 tokenizer，统一按 4 字符约 1 Token 估算；标题中不额外显示估算符号。
+该值描述线框内 retained 原始内容会给后续模型上下文增加多少，不是 provider billing、模型整次请求的 input/output usage 或累计 session token。当前实现没有运行时模型 tokenizer，统一按 4 字符约 1 Token 估算；标题中不额外显示估算符号。Assistant 计入同一线框内的正文与 thinking，纯 Thinking 只计 thinking；User、Custom、Skill、摘要和 Bash 按各自实际 retained 转换内容计入。
 
-Thinking 贡献来自组内完整原始 thinking blocks，包括可见摘要未展示的中间内容；普通 Assistant 正文、Markdown 清理结果、标题和边框不计入。Tools 贡献逐项汇总实际工具名称、参数和已送入模型的结果文本或错误/命令输出；pending 不计尚未返回的结果，工具内部保留但在送模前已截除的 full output 不计入。Compact 摘要、列表缩进、状态点、颜色、单行宽度裁剪和其他 UI 派生字符均不计入。
+Tools 贡献逐项汇总实际工具名称、参数和已送入模型的结果文本或错误/命令输出；pending 不计尚未返回的结果，工具内部保留但在送模前已截除的 full output 不计入。Compact 摘要、列表缩进、状态点、颜色、单行宽度裁剪和其他 UI 派生字符均不计入。
 
-成员 streaming 更新时先移除旧贡献再加入新贡献；重复 render、同 identity 组件重建和历史恢复不得重复累计。非 Collapsed 的 Assistant/Thinking 继续使用原有真实 usage，Off/Compact 的既有上下文估算格式不变。
+Collapsed 成员 streaming 更新时先移除旧贡献再加入新贡献；重复 render、同 identity 组件重建和历史恢复不得重复累计。Off、Compact、Collapsed 三种工具展示模式以及普通 Assistant/Thinking 线框均遵守相同的单值贡献语义。
 
 ### 耗时
 
@@ -122,4 +107,4 @@ Thinking 贡献来自组内完整原始 thinking blocks，包括可见摘要未�
 - 复用现有 Compact 提取、frame、图标、主题 token 和 timing 基础设施。
 - Collapsed 聚合更新保持 O(1)，聚合快照按组版本缓存；2000+ 成员不得出现成员查询乘全组扫描的 O(n²) 路径。
 - 不引入额外兼容 shim、第二套 Tool formatter、模型摘要调用或隐藏展开语义。
-- 配置、边界、摘要、逐调用顺序、去重、状态、单值上下文贡献、timing、normal/narrow 渲染及历史/流式收敛均由自动化测试覆盖。
+- 配置、Thinking 边界、逐调用摘要顺序、去重、状态、单值上下文贡献、timing、normal/narrow 渲染及历史/流式收敛均由自动化测试覆盖。

@@ -7,8 +7,6 @@ export type CollapsedTiming = {
 	active: boolean;
 };
 
-export type CollapsedGroupKind = "tools" | "thinking";
-
 export type CollapsedFrameInput = {
 	instance: object;
 	identity?: string;
@@ -20,7 +18,6 @@ export type CollapsedFrameInput = {
 	toolName?: string;
 	displayName?: string;
 	detail?: string;
-	contentLines?: readonly string[];
 	contribution?: ContextContribution;
 	signature: string;
 	timing?: CollapsedTiming;
@@ -35,13 +32,11 @@ export type CollapsedToolItemSnapshot = {
 
 export type CollapsedGroupSnapshot = {
 	isAnchor: boolean;
-	kind: CollapsedGroupKind;
 	count: number;
 	failedCount: number;
 	active: boolean;
 	status?: ChromeStatus;
 	items?: CollapsedToolItemSnapshot[];
-	contentLines?: string[];
 	contribution: ContextContribution;
 	elapsedMs?: number;
 };
@@ -79,7 +74,6 @@ type HeapNode = {
 };
 
 type CollapsedGroup = {
-	kind: CollapsedGroupKind;
 	anchor: CollapsedEntry;
 	members: CollapsedEntry[];
 	previous?: CollapsedEntry;
@@ -93,8 +87,6 @@ type CollapsedGroup = {
 	activeCount: number;
 	cachedToolItems?: CollapsedToolItemSnapshot[];
 	cachedToolItemsVersion: number;
-	cachedThinkingLines?: string[];
-	cachedThinkingLinesVersion: number;
 	timestampHeap: HeapNode[];
 	version: number;
 	anchorRenderedVersion: number;
@@ -102,7 +94,7 @@ type CollapsedGroup = {
 	frozenEndTimestamp?: number;
 };
 
-const BOUNDARY_KINDS = new Set<ChromeKind>(["user", "assistant"]);
+const BOUNDARY_KINDS = new Set<ChromeKind>(["user", "assistant", "thinking"]);
 const instanceEntries = new WeakMap<object, CollapsedEntry>();
 const identityEntries = new Map<string, CollapsedEntry>();
 const entries: CollapsedEntry[] = [];
@@ -136,10 +128,6 @@ function createStats(): CollapsedRegistryStats {
 function roleFor(kind: ChromeKind, visible: boolean): CollapsedEntryRole {
 	if (!visible) return "ignored";
 	return BOUNDARY_KINDS.has(kind) ? "boundary" : "member";
-}
-
-function groupKindFor(kind: ChromeKind): CollapsedGroupKind {
-	return kind === "thinking" ? "thinking" : "tools";
 }
 
 function resetEntries(): void {
@@ -286,7 +274,6 @@ function replaceMemberValues(group: CollapsedGroup, entry: CollapsedEntry, updat
 
 function createGroup(anchor: CollapsedEntry, previous?: CollapsedEntry): CollapsedGroup {
 	const group: CollapsedGroup = {
-		kind: groupKindFor(anchor.kind),
 		anchor,
 		members: [],
 		previous,
@@ -298,7 +285,6 @@ function createGroup(anchor: CollapsedEntry, previous?: CollapsedEntry): Collaps
 		downstreamChars: 0,
 		activeCount: 0,
 		cachedToolItemsVersion: -1,
-		cachedThinkingLinesVersion: -1,
 		timestampHeap: [],
 		version: 0,
 		anchorRenderedVersion: 0,
@@ -334,10 +320,6 @@ function appendEntry(entry: CollapsedEntry): void {
 		if (entry.framed !== false) lastFrame = entry;
 		return;
 	}
-	if (openGroup && openGroup.kind !== groupKindFor(entry.kind)) {
-		lastFrame = closeGroup(openGroup, entry);
-		openGroup = undefined;
-	}
 	if (!openGroup) openGroup = createGroup(entry, lastFrame);
 	addMember(openGroup, entry);
 }
@@ -362,10 +344,6 @@ function rebuildGroups(): void {
 			if (entry.framed !== false) lastFrame = entry;
 			continue;
 		}
-		if (openGroup && openGroup.kind !== groupKindFor(entry.kind)) {
-			lastFrame = closeGroup(openGroup, entry);
-			openGroup = undefined;
-		}
 		if (!openGroup) openGroup = createGroup(entry, lastFrame);
 		addMember(openGroup, entry);
 	}
@@ -388,12 +366,6 @@ function sameTiming(left: CollapsedTiming | undefined, right: CollapsedTiming | 
 	return left?.lastUpdatedAt === right?.lastUpdatedAt && left?.activityOrder === right?.activityOrder && left?.active === right?.active;
 }
 
-function sameLines(left: readonly string[] | undefined, right: readonly string[] | undefined): boolean {
-	if (left === right) return true;
-	if (!left || !right || left.length !== right.length) return false;
-	return left.every((line, index) => line === right[index]);
-}
-
 function entryDataChanged(entry: CollapsedEntry, input: CollapsedFrameInput): boolean {
 	return entry.kind !== input.kind
 		|| entry.visible !== input.visible
@@ -402,7 +374,6 @@ function entryDataChanged(entry: CollapsedEntry, input: CollapsedFrameInput): bo
 		|| entry.toolName !== input.toolName
 		|| entry.displayName !== input.displayName
 		|| entry.detail !== input.detail
-		|| !sameLines(entry.contentLines, input.contentLines)
 		|| entry.signature !== input.signature
 		|| !sameContribution(entry.contribution, input.contribution)
 		|| !sameTiming(entry.timing, input.timing);
@@ -422,7 +393,6 @@ function assignInput(entry: CollapsedEntry, input: CollapsedFrameInput, role: Co
 	entry.toolName = input.toolName;
 	entry.displayName = input.displayName;
 	entry.detail = input.detail;
-	entry.contentLines = input.contentLines ? [...input.contentLines] : undefined;
 	entry.contribution = input.contribution;
 	entry.signature = input.signature;
 	entry.timing = input.timing;
@@ -437,9 +407,7 @@ function assignInput(entry: CollapsedEntry, input: CollapsedFrameInput, role: Co
 function updateEntry(entry: CollapsedEntry, input: CollapsedFrameInput): void {
 	const nextRole = roleFor(input.kind, input.visible);
 	const structuralChange = entry.role !== nextRole
-		|| entry.framed !== input.framed
-		|| (entry.role === "member" && nextRole === "member"
-			&& groupKindFor(entry.kind) !== groupKindFor(input.kind));
+		|| entry.framed !== input.framed;
 	const changed = structuralChange || entryDataChanged(entry, input);
 	if (!changed) {
 		instanceEntries.set(input.instance, entry);
@@ -482,24 +450,14 @@ function registerEntry(input: CollapsedFrameInput): CollapsedEntry {
 	return entry;
 }
 
-function thinkingContentLines(group: CollapsedGroup): string[] | undefined {
-	if (group.kind !== "thinking") return undefined;
-	if (group.cachedThinkingLinesVersion === group.version) return group.cachedThinkingLines;
-	stats.aggregateItemsRead += group.members.length;
-	group.cachedThinkingLines = group.members.flatMap((member) => member.contentLines ?? []);
-	group.cachedThinkingLinesVersion = group.version;
-	return group.cachedThinkingLines;
-}
-
 function statusFromCounts(pendingCount: number, successCount: number, failedCount: number): ChromeStatus | undefined {
 	if (pendingCount > 0) return "pending";
 	if (failedCount > 0) return "error";
 	return successCount > 0 ? "success" : undefined;
 }
 
-function toolItemSnapshots(group: CollapsedGroup): CollapsedToolItemSnapshot[] | undefined {
-	if (group.kind !== "tools") return undefined;
-	if (group.cachedToolItemsVersion === group.version) return group.cachedToolItems;
+function toolItemSnapshots(group: CollapsedGroup): CollapsedToolItemSnapshot[] {
+	if (group.cachedToolItemsVersion === group.version) return group.cachedToolItems ?? [];
 	stats.aggregateItemsRead += group.members.length;
 	group.cachedToolItems = group.members.map((member) => ({
 		kind: member.kind,
@@ -523,13 +481,11 @@ function snapshotFor(entry: CollapsedEntry, group: CollapsedGroup, now: number):
 			: latest;
 	return {
 		isAnchor,
-		kind: group.kind,
 		count: group.count,
 		failedCount: group.failedCount,
 		active: group.activeCount > 0 || group.pendingCount > 0,
 		status: statusFromCounts(group.pendingCount, group.successCount, group.failedCount),
 		items: isAnchor ? toolItemSnapshots(group) : undefined,
-		contentLines: isAnchor ? thinkingContentLines(group) : undefined,
 		contribution: {
 			upstreamChars: group.upstreamChars,
 			downstreamChars: group.downstreamChars,

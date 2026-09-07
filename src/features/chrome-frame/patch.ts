@@ -14,7 +14,6 @@ import {
 	contextContributionTotalTokens,
 	estimateContextContribution,
 } from "./contribution.ts";
-import { getModelUsageTokens, isAssistantUsage, type ModelUsageTokens } from "../model-usage.ts";
 import { isChromeFrameDebugEnabled, summarizeChromeFrameCacheKey, writeChromeFrameDebugLog, type ChromeFrameDebugBranch } from "./debug.ts";
 import { containsImageLine, isImageEscapeLine } from "./image.ts";
 import { cloneDefaultSettings, normalizeToolDisplayMode, type AlpsPiSettings } from "../../settings.ts";
@@ -72,25 +71,12 @@ type RenderCacheEntry = {
 	lines: string[];
 };
 
-type MixedAssistantRenderCacheEntry = {
-	renderer: any;
-	signature: readonly unknown[];
-	lines: string[];
-	width: number;
-	hideThinkingBlock: unknown;
-	markdownTheme: unknown;
-	hiddenThinkingLabel: unknown;
-	outputPad: unknown;
-	markdownTransformers: unknown;
-};
-
 // 缓存键随终端内联图片抑制语义升级，避免热加载复用带图片占位的旧输出。
 const RENDER_CACHE_KEY = Symbol.for("alps.pi.renderCache.v6");
-const MIXED_ASSISTANT_RENDER_CACHE_KEY = Symbol.for("alps.pi.mixedAssistantRenderCache.v1");
 const TIMING_STATE_KEY = Symbol.for("alps.pi.timingState.v1");
 const TRACKED_SETTINGS_KEY = Symbol.for("alps.pi.trackedSettings.v1");
 const WRAPPED_RENDER_KEY = Symbol.for("alps.pi.wrappedRender.v2");
-const WRAPPED_RENDER_VERSION = 13;
+const WRAPPED_RENDER_VERSION = 14;
 const CACHE_KEY_SEPARATOR = "\x1f";
 
 export type ChromeFrameLifecycleEvent =
@@ -426,7 +412,6 @@ function normalizeSettings(settings: AlpsPiSettings | any, enabled?: boolean): A
 			enabled: typeof enabled === "boolean" ? enabled : Boolean(settings?.enabled ?? DEFAULT_CONFIG.settings.chromeFrame.enabled),
 			assistantFrame: Boolean(settings?.assistantFrame ?? DEFAULT_CONFIG.settings.chromeFrame.assistantFrame),
 			toolCompactMode: normalizeToolDisplayMode(settings?.toolCompactMode, DEFAULT_CONFIG.settings.chromeFrame.toolCompactMode),
-			collapseThinking: Boolean(settings?.collapseThinking ?? DEFAULT_CONFIG.settings.chromeFrame.collapseThinking),
 			compactEditTool: Boolean(settings?.compactEditTool ?? DEFAULT_CONFIG.settings.chromeFrame.compactEditTool),
 		},
 		fixedBottomEditor: {
@@ -556,11 +541,7 @@ export function estimateFrameTokens(kind: ChromeKind, instance: any): number | u
 	return contribution ? contextContributionTotalTokens(contribution) : undefined;
 }
 
-const COLLAPSED_METRIC_COLORS = {
-	input: "#7AA2F7",
-	output: "#73DACA",
-	separator: "#FF8B39",
-} as const;
+const CONTEXT_METRIC_COLOR = "#7AA2F7";
 
 function colorizeHex(text: string, hex: string): string {
 	const value = hex.replace("#", "");
@@ -585,30 +566,9 @@ function formatRoundedTokenCount(tokens: number): string {
 	return count.toLocaleString();
 }
 
-function formatActualUsageTokens(usage: ModelUsageTokens | undefined): string | undefined {
-	if (!usage) return undefined;
-	const input = colorizeHex(`↑${formatRoundedTokenCount(usage.input)}`, COLLAPSED_METRIC_COLORS.input);
-	const separator = colorizeHex("·", COLLAPSED_METRIC_COLORS.separator);
-	const output = colorizeHex(`↓${formatRoundedTokenCount(usage.output)}`, COLLAPSED_METRIC_COLORS.output);
-	return `[ ${input} ${separator} ${output} ]`;
-}
-
-function formatEstimatedContextTokens(tokens: number | undefined): string | undefined {
+function formatContextContributionTokens(tokens: number | undefined): string | undefined {
 	if (tokens === undefined) return undefined;
-	return `[ ${colorizeHex(formatRoundedTokenCount(tokens), COLLAPSED_METRIC_COLORS.input)} ]`;
-}
-
-function formatCollapsedContextTokens(tokens: number | undefined): string | undefined {
-	if (tokens === undefined) return undefined;
-	return `[ ${colorizeHex(formatRoundedTokenCount(tokens), COLLAPSED_METRIC_COLORS.input)} ]`;
-}
-
-function readFrameUsage(kind: ChromeKind, instance: any): ModelUsageTokens | undefined {
-	if (kind !== "assistant" && kind !== "thinking") return undefined;
-	for (const candidate of [instance?.lastMessage?.usage, instance?.message?.usage]) {
-		if (isAssistantUsage(candidate)) return getModelUsageTokens(candidate);
-	}
-	return undefined;
+	return `[ ${colorizeHex(formatRoundedTokenCount(tokens), CONTEXT_METRIC_COLOR)} ]`;
 }
 
 function assistantContentKinds(instance: any): { hasThinking: boolean; hasText: boolean } {
@@ -627,98 +587,6 @@ function assistantContentKinds(instance: any): { hasThinking: boolean; hasText: 
 function isThinkingOnlyAssistant(instance: any): boolean {
 	const { hasThinking, hasText } = assistantContentKinds(instance);
 	return hasThinking && !hasText;
-}
-
-function isMixedThinkingAssistant(instance: any): boolean {
-	const { hasThinking, hasText } = assistantContentKinds(instance);
-	return hasThinking && hasText;
-}
-
-function mixedAssistantRenderSignature(message: any, isStreaming: boolean): readonly unknown[] {
-	const signature: unknown[] = [isStreaming, message?.stopReason, message?.errorMessage];
-	for (const block of message?.content ?? []) {
-		if (block?.type === "text") {
-			signature.push("text", block.text);
-		} else if (block?.type === "toolCall") {
-			signature.push("toolCall");
-		}
-	}
-	return signature;
-}
-
-function signaturesMatch(left: readonly unknown[], right: readonly unknown[]): boolean {
-	return left.length === right.length && left.every((value, index) => Object.is(value, right[index]));
-}
-
-function mixedAssistantRendererMatches(instance: any, cached: MixedAssistantRenderCacheEntry): boolean {
-	return cached.hideThinkingBlock === instance.hideThinkingBlock
-		&& cached.markdownTheme === instance.markdownTheme
-		&& cached.hiddenThinkingLabel === instance.hiddenThinkingLabel
-		&& cached.outputPad === instance.outputPad
-		&& cached.markdownTransformers === instance.markdownTransformers;
-}
-
-function createMixedAssistantRenderer(instance: any): any {
-	const Renderer = instance?.constructor;
-	if (typeof Renderer !== "function") throw new TypeError("Assistant renderer constructor is unavailable");
-	return new Renderer(
-		undefined,
-		instance.hideThinkingBlock,
-		instance.markdownTheme,
-		instance.hiddenThinkingLabel,
-		instance.outputPad,
-		instance.markdownTransformers,
-	);
-}
-
-function renderMixedAssistantTextOnly(instance: any, originalRender: Function, width: number): string[] {
-	const message = instance?.lastMessage;
-	if (!message || !Array.isArray(message.content) || typeof instance?.updateContent !== "function") {
-		return asLines(originalRender.call(instance, width));
-	}
-	const wasStreaming = instance?.isStreaming === true;
-	const signature = mixedAssistantRenderSignature(message, wasStreaming);
-	const cached = instance[MIXED_ASSISTANT_RENDER_CACHE_KEY] as MixedAssistantRenderCacheEntry | undefined;
-	const rendererMatches = cached ? mixedAssistantRendererMatches(instance, cached) : false;
-	if (cached && rendererMatches && cached.width === width && signaturesMatch(cached.signature, signature)) {
-		return cached.lines;
-	}
-	const textOnlyMessage = {
-		...message,
-		content: message.content.filter((block: any) => block?.type !== "thinking"),
-	};
-	try {
-		const renderer = rendererMatches ? cached?.renderer : createMixedAssistantRenderer(instance);
-		if (!renderer || typeof renderer.updateContent !== "function") {
-			throw new TypeError("Assistant renderer updateContent is unavailable");
-		}
-		if (!cached || !rendererMatches || !signaturesMatch(cached.signature, signature)) {
-			renderer.updateContent(textOnlyMessage, wasStreaming);
-		}
-		const lines = asLines(originalRender.call(renderer, width));
-		instance[MIXED_ASSISTANT_RENDER_CACHE_KEY] = {
-			renderer,
-			signature,
-			lines,
-			width,
-			hideThinkingBlock: instance.hideThinkingBlock,
-			markdownTheme: instance.markdownTheme,
-			hiddenThinkingLabel: instance.hiddenThinkingLabel,
-			outputPad: instance.outputPad,
-			markdownTransformers: instance.markdownTransformers,
-		} satisfies MixedAssistantRenderCacheEntry;
-		return lines;
-	} catch {
-		delete instance[MIXED_ASSISTANT_RENDER_CACHE_KEY];
-		const updateContent = instance.updateContent;
-		try {
-			// Unsupported custom components retain the previous fail-soft behavior.
-			updateContent.call(instance, textOnlyMessage, wasStreaming);
-			return asLines(originalRender.call(instance, width));
-		} finally {
-			updateContent.call(instance, message, wasStreaming);
-		}
-	}
 }
 
 function resolveRenderKind(kind: ChromeKind, instance: any): ChromeKind {
@@ -970,51 +838,6 @@ function shouldUseCompactThinkingBox(kind: ChromeKind, instance: any): boolean {
 	return kind === "thinking" && instance?.hideThinkingBlock === true;
 }
 
-function collapsedThinkingSourceLines(instance: any, fallbackLines: readonly string[]): string[] {
-	const content = Array.isArray(instance?.lastMessage?.content)
-		? instance.lastMessage.content
-		: Array.isArray(instance?.message?.content) ? instance.message.content : undefined;
-	if (content) {
-		const sourceLines = content.flatMap((block: any) => {
-			if (block?.type !== "thinking") return [];
-			const text = typeof block.thinking === "string"
-				? block.thinking
-				: typeof block.text === "string" ? block.text : "";
-			return text.split(/\r?\n/).map((line: string) => line.trimEnd()).filter((line: string) => line.trim().length > 0);
-		});
-		if (sourceLines.length > 0) return sourceLines;
-	}
-	return fallbackLines.filter((line) => line.trim().length > 0);
-}
-
-function normalizeCollapsedThinkingLine(line: string): string {
-	return sanitizeTerminalText(String(line), {
-		allowNewline: false,
-		allowTab: false,
-		preserveSgr: false,
-	})
-		.trim()
-		.replace(/^(?:#{1,6}|>|[-+*]|\d+[.)])\s+/, "")
-		.replace(/\[([^\]]+)]\([^)]+\)/g, "$1")
-		.replace(/\*\*(.+?)\*\*/g, "$1")
-		.replace(/__(.+?)__/g, "$1")
-		.replace(/(^|[\s([{])\*([^*\n]+)\*(?=$|[\s)\]},.!?:;])/g, "$1$2")
-		.replace(/(^|[\s([{])_([^_\n]+)_(?=$|[\s)\]},.!?:;])/g, "$1$2")
-		.replace(/~~(.+?)~~/g, "$1")
-		.replace(/`+([^`]+?)`+/g, "$1")
-		.trim();
-}
-
-function collapsedThinkingDisplayLines(lines: readonly string[], collapse: boolean): string[] {
-	if (!collapse) return [...lines];
-	const normalized = lines
-		.flatMap((line) => String(line).split(/\r?\n/))
-		.map(normalizeCollapsedThinkingLine)
-		.filter(Boolean);
-	if (normalized.length <= 2) return normalized;
-	return [normalized[0]!, normalized.at(-1)!];
-}
-
 export function createSafeBoxRender(kind: ChromeKind, inner: (innerWidth: number) => string[], options: SafeBoxRenderOptions): (width: number) => string[] {
 	return (width: number) => {
 		const innerWidth = Math.max(1, Math.floor(width) - 4);
@@ -1085,7 +908,6 @@ export function createWrappedRender(
 			const config = state.config;
 			const collapsedMode = config.settings.chromeFrame.toolCompactMode === "collapsed";
 			const unframedAssistant = kind === "assistant"
-				&& renderKind !== "thinking"
 				&& !config.settings.chromeFrame.assistantFrame;
 			synchronizeCollapsedMode(collapsedMode);
 			if (unframedAssistant && !collapsedMode) {
@@ -1096,10 +918,7 @@ export function createWrappedRender(
 				return debugReturn ? debugReturn(rawFallback, branch) : rawFallback;
 			}
 			innerWidth = unframedAssistant ? numericWidth : Math.max(1, numericWidth - 4);
-			innerLines =
-				collapsedMode && kind === "assistant" && renderKind === "assistant" && isMixedThinkingAssistant(instance)
-					? renderMixedAssistantTextOnly(instance, originalRender, innerWidth)
-					: asLines(originalRender.call(instance, innerWidth));
+			innerLines = asLines(originalRender.call(instance, innerWidth));
 			const hasSuppressedImage = Boolean(extra.suppressInlineImages) && containsImageLine(innerLines);
 			const visibleInnerLines = hasSuppressedImage ? suppressInlineImageRows(innerLines) : innerLines;
 			// 当前终端不显示图片：不输出 Kitty/iTerm payload，也不保留 Pi 为图片分配的高度占位。
@@ -1108,10 +927,6 @@ export function createWrappedRender(
 				: visibleInnerLines;
 			const visible = !isEmptyMessageChrome(renderKind, displayedLines);
 			const frameContribution = estimateContextContribution(renderKind, instance);
-			const frameUsage = readFrameUsage(renderKind, instance);
-			const thinkingSourceLines = renderKind === "thinking"
-				? collapsedThinkingSourceLines(instance, visibleInnerLines)
-				: undefined;
 			const displayName = renderKind === "thinking" || renderKind === "user" || renderKind === "assistant"
 				? undefined
 				: collapsedToolDisplayName(renderKind, toolName);
@@ -1130,7 +945,6 @@ export function createWrappedRender(
 						status,
 						toolName,
 						displayName,
-						contentLines: thinkingSourceLines,
 						contribution: frameContribution,
 						signature: collapsedSignature,
 						timing: {
@@ -1145,19 +959,15 @@ export function createWrappedRender(
 				return debugReturn ? debugReturn(lines, branch) : lines;
 			}
 			let elapsedText = formatElapsedSincePrevious(timing);
-			let tokenText = frameUsage
-				? formatActualUsageTokens(frameUsage)
-				: renderKind === "assistant" || renderKind === "thinking"
-					? undefined
-					: formatEstimatedContextTokens(frameContribution ? contextContributionTotalTokens(frameContribution) : undefined);
+			let tokenText = formatContextContributionTokens(
+				frameContribution ? contextContributionTotalTokens(frameContribution) : undefined,
+			);
 			let boxKind = renderKind;
 			let boxToolName = toolName;
 			let boxStatus = status;
 			let boxLabel: string | undefined;
 			let truncateContent = false;
 			let truncateSuffix: string | undefined;
-			let contentTextToken: string | undefined;
-			let collapsedThinking = false;
 			if (collapsedMode) {
 				const collapsedInput = {
 					instance,
@@ -1169,7 +979,6 @@ export function createWrappedRender(
 					toolName,
 					displayName,
 					detail: collapsedDetail(renderKind, toolName, visibleInnerLines, instance),
-					contentLines: thinkingSourceLines,
 					contribution: frameContribution,
 					signature: collapsedSignature,
 					timing: {
@@ -1184,38 +993,18 @@ export function createWrappedRender(
 						branch = "empty";
 						return debugReturn ? debugReturn([], branch) : [];
 					}
-					if (collapsed.kind === "thinking") {
-						displayedLines = collapsedThinkingDisplayLines(
-							collapsed.contentLines ?? displayedLines,
-							config.settings.chromeFrame.collapseThinking,
-						);
-						boxKind = "thinking";
-						boxToolName = undefined;
-						boxStatus = undefined;
-						boxLabel = "Thinking";
-						collapsedThinking = config.settings.chromeFrame.collapseThinking;
-						if (collapsedThinking) {
-							truncateContent = true;
-							truncateSuffix = "...";
-							contentTextToken = getChromeStyle("tool", { status: "pending" }, config).text;
-						}
-						tokenText = formatCollapsedContextTokens(contextContributionTotalTokens(collapsed.contribution));
-					} else {
-						const theme = getTheme(instance);
-						displayedLines = formatCollapsedToolItems(collapsed.items ?? [], theme, config);
-						boxKind = "tool";
-						boxToolName = undefined;
-						boxStatus = collapsed.status;
-						boxLabel = `Tools ×${collapsed.count}`;
-						truncateContent = true;
-						truncateSuffix = "...";
-					}
+					const theme = getTheme(instance);
+					displayedLines = formatCollapsedToolItems(collapsed.items ?? [], theme, config);
+					boxKind = "tool";
+					boxToolName = undefined;
+					boxStatus = collapsed.status;
+					boxLabel = `Tools ×${collapsed.count}`;
+					truncateContent = true;
+					truncateSuffix = "...";
 					elapsedText = collapsed.elapsedMs === undefined
 						? undefined
 						: getTheme(instance).fg("success", formatElapsedDuration(collapsed.elapsedMs));
-					if (collapsed.kind === "tools") {
-						tokenText = formatCollapsedContextTokens(contextContributionTotalTokens(collapsed.contribution));
-					}
+					tokenText = formatContextContributionTokens(contextContributionTotalTokens(collapsed.contribution));
 				} else {
 					const boundaryElapsedMs = getCollapsedBoundaryElapsed(collapsedInput);
 					elapsedText = boundaryElapsedMs === undefined
@@ -1235,7 +1024,7 @@ export function createWrappedRender(
 				branch = "cacheHit";
 				return debugReturn ? debugReturn(cache.lines, branch) : cache.lines;
 			}
-			const usesCompactThinking = !collapsedThinking && shouldUseCompactThinkingBox(boxKind, instance);
+			const usesCompactThinking = shouldUseCompactThinkingBox(boxKind, instance);
 			branch = usesCompactThinking ? "compactThinking" : hasSuppressedImage ? "imageSuppressed" : "normal";
 			const lines = usesCompactThinking
 				? renderCompactThinkingBox(displayedLines, numericWidth, getTheme(instance), config, { elapsedText, tokenText })
@@ -1248,7 +1037,6 @@ export function createWrappedRender(
 					label: boxLabel,
 					truncateContent,
 					truncateSuffix,
-					contentTextToken,
 				});
 			(instance as any)[RENDER_CACHE_KEY] = { width: numericWidth, innerKey, styleKey, elapsedText, tokenText, lines } satisfies RenderCacheEntry;
 			return debugReturn ? debugReturn(lines, branch) : lines;

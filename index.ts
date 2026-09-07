@@ -35,7 +35,6 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 		state.config.settings.chromeFrame.enabled = persistedSettings.chromeFrame.enabled;
 		state.config.settings.chromeFrame.assistantFrame = persistedSettings.chromeFrame.assistantFrame;
 		state.config.settings.chromeFrame.toolCompactMode = persistedSettings.chromeFrame.toolCompactMode;
-		state.config.settings.chromeFrame.collapseThinking = persistedSettings.chromeFrame.collapseThinking;
 		state.config.settings.chromeFrame.compactEditTool = persistedSettings.chromeFrame.compactEditTool;
 		state.config.settings.fixedBottomEditor.enabled = persistedSettings.fixedBottomEditor.enabled;
 		state.config.settings.beautifiedInput.enabled = persistedSettings.beautifiedInput.enabled;
@@ -209,7 +208,6 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 			state.config.settings.chromeFrame.enabled = persisted.chromeFrame.enabled;
 			state.config.settings.chromeFrame.assistantFrame = persisted.chromeFrame.assistantFrame;
 			state.config.settings.chromeFrame.toolCompactMode = persisted.chromeFrame.toolCompactMode;
-			state.config.settings.chromeFrame.collapseThinking = persisted.chromeFrame.collapseThinking;
 			state.config.settings.chromeFrame.compactEditTool = persisted.chromeFrame.compactEditTool;
 			state.config.settings.fixedBottomEditor.enabled = persisted.fixedBottomEditor.enabled;
 			state.config.settings.beautifiedInput.enabled = persisted.beautifiedInput.enabled;

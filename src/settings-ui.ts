@@ -60,7 +60,6 @@ type MainSettingId =
 	| "chromeFrame.enabled"
 	| "chromeFrame.assistantFrame"
 	| "chromeFrame.toolCompactMode"
-	| "chromeFrame.collapseThinking"
 	| "chromeFrame.compactEditTool"
 	| "beautifiedInput.enabled"
 	| "inputMetrics"
@@ -261,7 +260,7 @@ export class AlpsPiSettingsComponent extends Container {
 			{
 				id: "chromeFrame.assistantFrame",
 				label: "Assistant Frame",
-				description: "控制 assistant 正文回复是否包线框",
+				description: "控制 assistant 回复及 thinking 是否包线框",
 				currentValue: booleanLabel(settings.chromeFrame.assistantFrame),
 				values: [ON, OFF],
 			},
@@ -273,15 +272,7 @@ export class AlpsPiSettingsComponent extends Container {
 				values: [...TOOL_DISPLAY_VALUES],
 			},
 		];
-		if (settings.chromeFrame.toolCompactMode === "collapsed") {
-			items.push({
-				id: "chromeFrame.collapseThinking",
-				label: "Collapse Thinking",
-				description: "连续 Thinking 只保留一至两行稳定摘要",
-				currentValue: booleanLabel(settings.chromeFrame.collapseThinking),
-				values: [ON, OFF],
-			});
-		} else {
+		if (settings.chromeFrame.toolCompactMode !== "collapsed") {
 			items.push({
 				id: "chromeFrame.compactEditTool",
 				label: "Compact Edit",
@@ -347,10 +338,6 @@ export class AlpsPiSettingsComponent extends Container {
 				this.ops.onSettingsChanged(state.config.settings);
 				this.refreshMainItems(id);
 				return;
-			case "chromeFrame.collapseThinking":
-				state.config.settings.chromeFrame.collapseThinking = booleanValue(newValue);
-				this.ops.onSettingsChanged(state.config.settings);
-				return;
 			case "chromeFrame.compactEditTool":
 				state.config.settings.chromeFrame.compactEditTool = booleanValue(newValue);
 				this.ops.onSettingsChanged(state.config.settings);
@@ -373,7 +360,6 @@ export class AlpsPiSettingsComponent extends Container {
 		this.syncMainValue("chromeFrame.enabled", settings.chromeFrame.enabled);
 		this.syncMainValue("chromeFrame.assistantFrame", settings.chromeFrame.assistantFrame);
 		this.syncMainValue("chromeFrame.toolCompactMode", toolDisplayModeLabel(settings.chromeFrame.toolCompactMode));
-		this.syncMainValue("chromeFrame.collapseThinking", settings.chromeFrame.collapseThinking);
 		this.syncMainValue("chromeFrame.compactEditTool", settings.chromeFrame.compactEditTool);
 		this.syncMainValue("beautifiedInput.enabled", settings.beautifiedInput.enabled);
 		this.syncMainValue("footer.enabled", settings.footer.enabled);
