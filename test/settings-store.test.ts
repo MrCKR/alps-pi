@@ -37,6 +37,7 @@ function readJson(path: string) {
 test("启动默认设置保留 legacy fixed 字段且现代功能默认开启", () => {
 	const settings = cloneStartupSettings();
 	assert.equal(settings.chromeFrame.enabled, true);
+	assert.equal(settings.chromeFrame.collapseThinking, true);
 	assert.equal(settings.fixedBottomEditor.enabled, true);
 	assert.equal(settings.beautifiedInput.enabled, true);
 	assert.deepEqual(settings.inputMetrics, {
@@ -118,6 +119,21 @@ test("Tool 展示模式兼容旧布尔值并保留显式三态", () => {
 		}
 		writeJson(primary, { chromeFrame: {} });
 		assert.equal(readPersistedSettings(primary).chromeFrame.toolCompactMode, "compact");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("Thinking 折叠偏好缺失时默认开启，显式关闭可持久化", () => {
+	const { dir, primary } = tempPaths();
+	try {
+		writeJson(primary, { chromeFrame: {} });
+		assert.equal(readPersistedSettings(primary).chromeFrame.collapseThinking, true);
+
+		const settings = readPersistedSettings(primary);
+		settings.chromeFrame.collapseThinking = false;
+		writePersistedSettings(settings, primary);
+		assert.equal(readPersistedSettings(primary).chromeFrame.collapseThinking, false);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

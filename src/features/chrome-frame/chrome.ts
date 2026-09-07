@@ -14,6 +14,8 @@ export type RenderBoxOptions = {
 	tokenText?: string;
 	label?: string;
 	truncateContent?: boolean;
+	truncateSuffix?: string;
+	contentTextToken?: string;
 };
 
 const MIN_FULL_BOX_WIDTH = 8;
@@ -32,6 +34,47 @@ function safeWidth(width: number): number {
 
 function styleText(theme: ThemeLike, token: string, text: string): string {
 	return theme.fg(token, text);
+}
+
+const SGR_PATTERN = /\x1b\[([0-9;:]*)m/g;
+
+function updateForegroundState(parameters: string, active: boolean): boolean {
+	const groups = parameters === "" ? ["0"] : parameters.split(";");
+	let next = active;
+	for (let index = 0; index < groups.length; index += 1) {
+		const fields = groups[index]!.split(":");
+		const value = Number.parseInt(fields[0]!, 10);
+		if (value === 38 || value === 48 || value === 58) {
+			if (value === 38) next = true;
+			if (fields.length > 1) continue;
+			const mode = Number.parseInt(groups[index + 1] ?? "", 10);
+			if (mode === 5) index += 2;
+			else if (mode === 2) index += 4;
+			continue;
+		}
+		if (value === 0 || value === 39) next = false;
+		else if ((value >= 30 && value <= 37) || (value >= 90 && value <= 97)) next = true;
+	}
+	return next;
+}
+
+/** 内层前景色优先；其 reset 后的静态文本重新套用线框所属 token。 */
+function styleTextWithEmbeddedForeground(theme: ThemeLike, token: string, text: string): string {
+	if (!text.includes("\x1b[")) return styleText(theme, token, text);
+	let output = "";
+	let cursor = 0;
+	let foregroundActive = false;
+	SGR_PATTERN.lastIndex = 0;
+	for (let match = SGR_PATTERN.exec(text); match; match = SGR_PATTERN.exec(text)) {
+		const plain = text.slice(cursor, match.index);
+		if (plain) output += foregroundActive ? plain : styleText(theme, token, plain);
+		output += match[0];
+		foregroundActive = updateForegroundState(match[1] ?? "", foregroundActive);
+		cursor = match.index + match[0].length;
+	}
+	const tail = text.slice(cursor);
+	if (tail) output += foregroundActive ? tail : styleText(theme, token, tail);
+	return output;
 }
 
 function applyLineBackground(_theme: ThemeLike, _bgToken: string, line: string, width: number): string {
@@ -57,7 +100,7 @@ function buildTopBorder(label: string, width: number, theme: ThemeLike, borderTo
 	const labelBudget = Math.max(0, width - visibleWidth(left + separator + right));
 	const visibleLabel = truncateToWidth(titleText, labelBudget, "", false);
 	const leftBorder = styleText(theme, borderToken, left);
-	const styledLabel = styleText(theme, labelToken, visibleLabel);
+	const styledLabel = styleTextWithEmbeddedForeground(theme, labelToken, visibleLabel);
 	const dashCount = Math.max(0, width - visibleWidth(left + visibleLabel + separator + right));
 	const rightBorder = styleText(theme, borderToken, separator + "─".repeat(dashCount) + right);
 	return leftBorder + styledLabel + rightBorder;
@@ -113,9 +156,11 @@ function buildBottomBorder(width: number, theme: ThemeLike, borderToken: string,
 	if (!visibleText) {
 		return styleText(theme, borderToken, "╰" + "─".repeat(Math.max(0, width - 2)) + "╯");
 	}
-	const suffix = ` ${visibleText} `;
-	const dashCount = Math.max(0, width - visibleWidth(`╰${suffix}╯`));
-	return styleText(theme, borderToken, "╰" + "─".repeat(dashCount) + suffix + "╯");
+	const suffixWidth = visibleWidth(` ${visibleText} ╯`);
+	const dashCount = Math.max(0, width - visibleWidth("╰") - suffixWidth);
+	return styleText(theme, borderToken, "╰" + "─".repeat(dashCount) + " ")
+		+ styleTextWithEmbeddedForeground(theme, borderToken, visibleText)
+		+ styleText(theme, borderToken, " ╯");
 }
 
 function wrapContentLine(line: string, innerWidth: number, hasImage: boolean): string[] {
@@ -124,11 +169,18 @@ function wrapContentLine(line: string, innerWidth: number, hasImage: boolean): s
 	return wrapped.length > 0 ? wrapped : [""];
 }
 
-function renderContentLine(line: string, width: number, theme: ThemeLike, borderToken: string, textToken: string): string {
+function renderContentLine(
+	line: string,
+	width: number,
+	theme: ThemeLike,
+	borderToken: string,
+	textToken: string,
+	truncateSuffix = "",
+): string {
 	const innerWidth = Math.max(0, width - 4);
-	const clipped = truncateToWidth(line, innerWidth, "", false);
+	const clipped = truncateToWidth(line, innerWidth, truncateSuffix, false);
 	const padded = padToWidth(clipped, innerWidth);
-	return styleText(theme, borderToken, "│") + " " + styleText(theme, textToken, padded) + " " + styleText(theme, borderToken, "│");
+	return styleText(theme, borderToken, "│") + " " + styleTextWithEmbeddedForeground(theme, textToken, padded) + " " + styleText(theme, borderToken, "│");
 }
 
 function stripControlMarkers(line: string): string {
@@ -201,6 +253,8 @@ export function renderNeonBox(kind: ChromeKind, contentLines: readonly string[],
 	const status = options.status;
 	const style = getChromeStyle(kind, { toolName: options.toolName, status }, options.config ?? DEFAULT_CONFIG);
 	const label = options.label ?? getChromeLabel(kind, { toolName: options.toolName, status });
+	const textToken = options.contentTextToken ?? style.text;
+	const truncateSuffix = options.truncateContent ? options.truncateSuffix ?? "" : "";
 	const innerWidth = Math.max(1, boxWidth - 4);
 
 	const lines: string[] = [];
@@ -220,13 +274,13 @@ export function renderNeonBox(kind: ChromeKind, contentLines: readonly string[],
 				if (partHasImage) {
 					pushContentLine(wrappedLine);
 				} else {
-					pushContentLine(applyLineBackground(theme, style.bg, renderContentLine(wrappedLine, boxWidth, theme, style.border, style.text), boxWidth));
+					pushContentLine(applyLineBackground(theme, style.bg, renderContentLine(wrappedLine, boxWidth, theme, style.border, textToken, truncateSuffix), boxWidth));
 				}
 			}
 		}
 	}
 	if (lines.length === 1) {
-		pushContentLine(applyLineBackground(theme, style.bg, renderContentLine("", boxWidth, theme, style.border, style.text), boxWidth));
+		pushContentLine(applyLineBackground(theme, style.bg, renderContentLine("", boxWidth, theme, style.border, textToken), boxWidth));
 	}
 	pushTextLine(buildBottomBorder(boxWidth, theme, style.border, options.elapsedText));
 

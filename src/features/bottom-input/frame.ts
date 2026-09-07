@@ -111,7 +111,7 @@ function buildBottomMetricSegments(status: BottomInputFrameStatus): BottomMetric
 	}
 	if (visibility?.elapsedTime !== false && status.elapsed?.trim()) {
 		const elapsed = stripAnsi(status.elapsed.trim());
-		const elapsedValue = elapsed.startsWith(icons.time) ? `${icons.time} ${elapsed.slice(icons.time.length)}` : elapsed;
+		const elapsedValue = elapsed.startsWith(icons.time) ? `${icons.time} ${elapsed.slice(icons.time.length).trimStart()}` : elapsed;
 		segments.push({ key: "elapsed", value: colorizeMetric(elapsedValue, BOTTOM_METRIC_COLORS.elapsed) });
 	}
 

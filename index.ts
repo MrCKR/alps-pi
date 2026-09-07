@@ -2,7 +2,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerAlpsPiCommand } from "./src/commands.ts";
-import { disablePatch, enablePatch, getGlobalPatchState, recordChromeFrameLifecycleEvent, setChromeFramePreference } from "./src/features/chrome-frame/index.ts";
+import { configureCollapsedRenderRequest, disablePatch, enablePatch, getGlobalPatchState, recordChromeFrameLifecycleEvent, setChromeFramePreference } from "./src/features/chrome-frame/index.ts";
 import { cloneSettings, readPersistedSettings, trackSettingsBaseline, writePersistedSettings } from "./src/settings-store.ts";
 import { configureBottomInputDebug } from "./src/features/bottom-input/debug.ts";
 import { createBottomInputRuntime, registerBottomInputShortcuts, type BottomInputRuntime } from "./src/features/bottom-input/index.ts";
@@ -35,6 +35,7 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 		state.config.settings.chromeFrame.enabled = persistedSettings.chromeFrame.enabled;
 		state.config.settings.chromeFrame.assistantFrame = persistedSettings.chromeFrame.assistantFrame;
 		state.config.settings.chromeFrame.toolCompactMode = persistedSettings.chromeFrame.toolCompactMode;
+		state.config.settings.chromeFrame.collapseThinking = persistedSettings.chromeFrame.collapseThinking;
 		state.config.settings.chromeFrame.compactEditTool = persistedSettings.chromeFrame.compactEditTool;
 		state.config.settings.fixedBottomEditor.enabled = persistedSettings.fixedBottomEditor.enabled;
 		state.config.settings.beautifiedInput.enabled = persistedSettings.beautifiedInput.enabled;
@@ -85,6 +86,7 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 		const state = applyPersistedSettings();
 		configureBottomInputDebug(undefined);
 		configureAnimationsRenderRequest(() => bottomInputRuntime.requestRender());
+		configureCollapsedRenderRequest(() => bottomInputRuntime.requestRender());
 		const capabilities = inspectCapabilities();
 		for (const failure of formatPiCapabilityFailures(capabilities)) console.debug?.(`[alps-pi] ${failure}`);
 		configureAnimations({
@@ -207,6 +209,7 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 			state.config.settings.chromeFrame.enabled = persisted.chromeFrame.enabled;
 			state.config.settings.chromeFrame.assistantFrame = persisted.chromeFrame.assistantFrame;
 			state.config.settings.chromeFrame.toolCompactMode = persisted.chromeFrame.toolCompactMode;
+			state.config.settings.chromeFrame.collapseThinking = persisted.chromeFrame.collapseThinking;
 			state.config.settings.chromeFrame.compactEditTool = persisted.chromeFrame.compactEditTool;
 			state.config.settings.fixedBottomEditor.enabled = persisted.fixedBottomEditor.enabled;
 			state.config.settings.beautifiedInput.enabled = persisted.beautifiedInput.enabled;
@@ -217,6 +220,7 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 			writePersistedSettings(state.config.settings);
 			configureBottomInputDebug(undefined);
 			configureAnimationsRenderRequest(undefined);
+			configureCollapsedRenderRequest(undefined);
 			disposeAnimations();
 			disablePatch();
 		}

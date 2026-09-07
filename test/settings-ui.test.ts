@@ -117,6 +117,34 @@ test("设置界面可切换 Tool 三种模式并在 Collapsed 时隐藏 edit 选
 	assert.equal(state.config.settings.chromeFrame.toolCompactMode, "compact");
 });
 
+test("Collapsed 模式可独立切换 Thinking 摘要并在隐藏后保留偏好", () => {
+	const { state, component } = createPanel();
+	assert.equal(state.config.settings.chromeFrame.collapseThinking, true);
+
+	for (let i = 0; i < 2; i++) component.handleInput("\x1b[B");
+	component.handleInput(" ");
+	let output = stripAnsi(component.render(80).join("\n"));
+	assert.match(output, /Compact Tools\s+Collapsed/);
+	assert.match(output, /Collapse Thinking\s+ON/);
+	assert.doesNotMatch(output, /Compact Edit/);
+
+	component.handleInput("\x1b[B");
+	component.handleInput(" ");
+	assert.equal(state.config.settings.chromeFrame.collapseThinking, false);
+	component.handleInput("\x1b[A");
+	component.handleInput(" ");
+	output = stripAnsi(component.render(80).join("\n"));
+	assert.doesNotMatch(output, /Collapse Thinking/);
+	assert.match(output, /Compact Edit/);
+
+	component.handleInput(" ");
+	component.handleInput(" ");
+	component.handleInput("\x1b[B");
+	output = stripAnsi(component.render(80).join("\n"));
+	assert.match(output, /Collapse Thinking\s+OFF/);
+	assert.equal(state.config.settings.chromeFrame.collapseThinking, false);
+});
+
 test("设置界面第五项切换美化输入框且不改 legacy fixed 偏好", () => {
 	const { state, beautifiedInputCalls, component } = createPanel();
 	state.config.settings.fixedBottomEditor.enabled = true;

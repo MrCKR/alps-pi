@@ -4,16 +4,10 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { sanitizeTerminalSingleLineText, sanitizeTerminalText } from "../../terminal-sanitizer.ts";
 import type { ThemeLike } from "../chrome-frame/styles.ts";
 import { getBottomInputIcons, type BottomInputIconSet } from "./icons.ts";
+import { getUsageTokenTotal, isAssistantUsage, type AssistantUsage } from "../model-usage.ts";
 import { normalizeInputMetricsSettings, type InputMetricsSettings } from "./metrics.ts";
 
-export type AssistantUsage = {
-	input: number;
-	output: number;
-	cacheRead: number;
-	cacheWrite: number;
-	totalTokens?: number;
-	cost?: { total?: number };
-};
+export { getUsageTokenTotal, isAssistantUsage, type AssistantUsage } from "../model-usage.ts";
 
 export type ContextUsage = {
 	tokens: number;
@@ -222,20 +216,6 @@ export function getVisibleExtensionStatuses(footerData: any): string[] {
 /** 压缩 prompt 到单行，并在进入 footer/fixed 展示链路前剥离危险终端控制序列。 */
 export function normalizePromptText(value: unknown): string {
 	return sanitizeTerminalSingleLineText(value, { preserveSgr: false });
-}
-
-export function isAssistantUsage(value: unknown): value is AssistantUsage {
-	return isRecord(value)
-		&& typeof value.input === "number"
-		&& typeof value.output === "number"
-		&& typeof value.cacheRead === "number"
-		&& typeof value.cacheWrite === "number";
-}
-
-export function getUsageTokenTotal(usage: AssistantUsage): number {
-	return typeof usage.totalTokens === "number" && usage.totalTokens > 0
-		? usage.totalTokens
-		: usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
 }
 
 export function readContextUsageSnapshot(

@@ -79,7 +79,9 @@ test("未设置 ALPS_PI_FRAME_DEBUG_LOG 时不创建日志且渲染保持 chrome
 			const wrapped = createWrappedRender("DebugUser", "user", WidthDebugComponent.prototype.render, () => createFakeTheme());
 			const instance = new WidthDebugComponent(["hello"]);
 			const lines = wrapped.call(instance, 40);
-			assert.deepEqual(lines, renderNeonBox("user", ["hello"], 40, createFakeTheme(), { tokenText: "[ 0 ]" }));
+			assert.deepEqual(lines, renderNeonBox("user", ["hello"], 40, createFakeTheme(), {
+				tokenText: "[ \x1b[38;2;122;162;247m0\x1b[39m ]",
+			}));
 			assert.equal(instance.seenWidth, 36);
 			assert.ok(lines.every((line) => visibleWidth(line) <= 40));
 			assert.ok(lines.some((line) => visibleWidth(line) === 40));

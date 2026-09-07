@@ -19,6 +19,8 @@ export type ChromeFrameSettings = {
 	assistantFrame: boolean;
 	/** Tool 展示模式：关闭、逐项极简或连续操作聚合。 */
 	toolCompactMode: ToolDisplayMode;
+	/** Collapsed 下收起连续 Thinking：显示稳定的一至两行摘要。 */
+	collapseThinking: boolean;
 	/** 极简下收起 edit：允许 edit tool 也按极简模式展示。 */
 	compactEditTool: boolean;
 };
@@ -104,6 +106,7 @@ export const DEFAULT_SETTINGS: AlpsPiSettings = {
 		enabled: true,
 		assistantFrame: true,
 		toolCompactMode: "compact",
+		collapseThinking: true,
 		compactEditTool: false,
 	},
 	fixedBottomEditor: {

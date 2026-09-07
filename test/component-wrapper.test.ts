@@ -2,6 +2,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
+import { resetCollapsedRegistry, synchronizeCollapsedMode } from "../src/features/chrome-frame/collapsed.ts";
 import { createInitialPatchState, createWrappedRender, disablePatch, estimateFrameTokens, formatElapsedDuration, PATCH_KEY, recordChromeFrameLifecycleEvent } from "../src/features/chrome-frame/patch.ts";
 import { createFakeTheme, assertLinesWithin, stripAnsi } from "./helpers.test.ts";
 
@@ -18,6 +19,57 @@ class FakeComponent {
 	render(width: number) {
 		this.seenWidth = width;
 		return ["hello"];
+	}
+}
+
+class StreamingMixedAssistantComponent {
+	static constructorCalls = 0;
+	static updateContentCalls = 0;
+	lastMessage: {
+		role: "assistant";
+		timestamp: number;
+		content: Array<{ type: string; thinking?: string; text?: string }>;
+	};
+	isStreaming = true;
+	hideThinkingBlock = false;
+	markdownTheme: object = {};
+	hiddenThinkingLabel = "Thinking...";
+	outputPad = 0;
+	markdownTransformers: unknown[] = [];
+
+	constructor(
+		message?: StreamingMixedAssistantComponent["lastMessage"],
+		hideThinkingBlock = false,
+		markdownTheme: object = {},
+		hiddenThinkingLabel = "Thinking...",
+		outputPad = 0,
+		markdownTransformers: unknown[] = [],
+	) {
+		StreamingMixedAssistantComponent.constructorCalls += 1;
+		this.lastMessage = message ?? {
+			role: "assistant",
+			timestamp: 1_000,
+			content: [{ type: "thinking", thinking: "streaming thought" }],
+		};
+		this.hideThinkingBlock = hideThinkingBlock;
+		this.markdownTheme = markdownTheme;
+		this.hiddenThinkingLabel = hiddenThinkingLabel;
+		this.outputPad = outputPad;
+		this.markdownTransformers = markdownTransformers;
+	}
+
+	updateContent(message: StreamingMixedAssistantComponent["lastMessage"], isStreaming = this.isStreaming) {
+		StreamingMixedAssistantComponent.updateContentCalls += 1;
+		this.lastMessage = message;
+		this.isStreaming = isStreaming;
+	}
+
+	render(_width: number) {
+		return this.lastMessage.content.flatMap((block) => {
+			if (block.type === "thinking" && block.thinking) return [block.thinking];
+			if (block.type === "text" && block.text) return [block.text];
+			return [];
+		});
 	}
 }
 
@@ -100,6 +152,77 @@ test("包含正文的 assistant 线框保持 ASSISTANT label", () => {
 
 	assert.match(stripAnsi(lines[0]!), /ASSISTANT/);
 	assert.doesNotMatch(stripAnsi(lines[0]!), /THINK/);
+});
+
+test("Collapsed streaming assistant 从纯 thinking 变为 mixed 时只显示最终正文", () => {
+	resetCollapsedRegistry();
+	StreamingMixedAssistantComponent.constructorCalls = 0;
+	StreamingMixedAssistantComponent.updateContentCalls = 0;
+	synchronizeCollapsedMode(true);
+	const state = (globalThis as any)[PATCH_KEY];
+	state.config.settings.chromeFrame.toolCompactMode = "collapsed";
+	state.config.settings.chromeFrame.collapseThinking = true;
+	const component = new StreamingMixedAssistantComponent();
+	const wrapped = createWrappedRender(
+		"StreamingMixedAssistant",
+		"assistant",
+		StreamingMixedAssistantComponent.prototype.render,
+		() => createFakeTheme(),
+	);
+
+	const thinking = wrapped.call(component, 48);
+	assert.match(stripAnsi(thinking.join("\n")), /streaming thought/);
+
+	component.updateContent({
+		role: "assistant",
+		timestamp: 1_000,
+		content: [
+			{ type: "thinking", thinking: "streaming thought" },
+			{ type: "text", text: "final answer" },
+		],
+	});
+	const completed = wrapped.call(component, 48);
+	const output = stripAnsi(completed.join("\n"));
+
+	assert.match(output, /ASSISTANT/);
+	assert.match(output, /final answer/);
+	assert.doesNotMatch(output, /streaming thought/);
+	assert.equal(component.lastMessage.content.length, 2);
+	assert.equal(StreamingMixedAssistantComponent.constructorCalls, 2);
+	assert.equal(StreamingMixedAssistantComponent.updateContentCalls, 2);
+
+	assert.deepEqual(wrapped.call(component, 48), completed);
+	assert.equal(StreamingMixedAssistantComponent.constructorCalls, 2);
+	assert.equal(StreamingMixedAssistantComponent.updateContentCalls, 2);
+
+	const resized = stripAnsi(wrapped.call(component, 44).join("\n"));
+	assert.match(resized, /final answer/);
+	assert.equal(StreamingMixedAssistantComponent.constructorCalls, 2);
+	assert.equal(StreamingMixedAssistantComponent.updateContentCalls, 2);
+
+	component.outputPad = 2;
+	assert.match(stripAnsi(wrapped.call(component, 44).join("\n")), /final answer/);
+	assert.equal(StreamingMixedAssistantComponent.constructorCalls, 3);
+	assert.equal(StreamingMixedAssistantComponent.updateContentCalls, 3);
+
+	component.updateContent(component.lastMessage, false);
+	assert.match(stripAnsi(wrapped.call(component, 44).join("\n")), /final answer/);
+	assert.equal(StreamingMixedAssistantComponent.constructorCalls, 3);
+	assert.equal(StreamingMixedAssistantComponent.updateContentCalls, 5);
+
+	component.updateContent({
+		role: "assistant",
+		timestamp: 1_000,
+		content: [
+			{ type: "thinking", thinking: "streaming thought" },
+			{ type: "text", text: "updated answer" },
+		],
+	});
+	const updated = stripAnsi(wrapped.call(component, 48).join("\n"));
+	assert.match(updated, /updated answer/);
+	assert.doesNotMatch(updated, /streaming thought/);
+	assert.equal(StreamingMixedAssistantComponent.constructorCalls, 3);
+	assert.equal(StreamingMixedAssistantComponent.updateContentCalls, 7);
 });
 
 test("tool pending / success / error kind 生成状态 label", () => {
@@ -247,6 +370,11 @@ test("线框间隔格式最小为 1s 且向上取整", () => {
 	assert.equal(formatElapsedDuration(2200), "3s");
 	assert.equal(formatElapsedDuration(61_000), "1m01s");
 	assert.equal(formatElapsedDuration(3_660_000), "1h01m");
+});
+
+test("首个实际显示线框没有前序时省略耗时", () => {
+	const { lines } = renderKind("assistant", 36);
+	assert.doesNotMatch(stripAnsi(lines.at(-1)!), /\d+(?:s|m|h)/);
 });
 
 test("第二个线框右下角显示相对上一条的向上取整间隔", () => {
@@ -425,6 +553,61 @@ test("历史 frame 首次渲染优先使用原始消息 timestamp", () => {
 	}
 });
 
+test("历史 frame 重建实例时复用稳定 timing 身份", () => {
+	class TimestampedComponent extends FakeComponent {
+		readonly message: { id: string; timestamp: number };
+
+		constructor(id: string, timestamp: number) {
+			super();
+			this.message = { id, timestamp };
+		}
+	}
+	const wrapped = createWrappedRender("StableTimestamped", "custom", TimestampedComponent.prototype.render, () => createFakeTheme());
+	const originalNow = Date.now;
+	try {
+		Date.now = () => 10_000;
+		wrapped.call(new TimestampedComponent("first", 1_000), 40);
+		wrapped.call(new TimestampedComponent("second", 3_000), 40);
+		const restored = wrapped.call(new TimestampedComponent("second", 3_000), 40);
+		assert.match(stripAnsi(restored.at(-1)!), /2s ╯$/);
+	} finally {
+		Date.now = originalNow;
+	}
+});
+
+test("延迟恢复的 hidden frame 插回原显示顺序且前后间隔随之收敛", () => {
+	class DelayedComponent {
+		readonly message: { id: string; timestamp: number };
+		readonly text: string;
+
+		constructor(id: string, timestamp: number, text: string) {
+			this.message = { id, timestamp };
+			this.text = text;
+		}
+
+		render(_width: number) {
+			return this.text ? [this.text] : [];
+		}
+	}
+	const wrapped = createWrappedRender("Delayed", "custom", DelayedComponent.prototype.render, () => createFakeTheme());
+	const originalNow = Date.now;
+	try {
+		Date.now = () => 20_000;
+		const first = new DelayedComponent("first", 1_000, "first");
+		const hidden = new DelayedComponent("middle", 4_000, "");
+		const last = new DelayedComponent("last", 9_000, "last");
+		wrapped.call(first, 40);
+		assert.deepEqual(wrapped.call(hidden, 40), []);
+		assert.match(stripAnsi(wrapped.call(last, 40).at(-1)!), /8s ╯$/);
+
+		const restoredMiddle = new DelayedComponent("middle", 4_000, "middle");
+		assert.match(stripAnsi(wrapped.call(restoredMiddle, 40).at(-1)!), /3s ╯$/);
+		assert.match(stripAnsi(wrapped.call(last, 40).at(-1)!), /5s ╯$/);
+	} finally {
+		Date.now = originalNow;
+	}
+});
+
 test("设置样式变化不刷新线框更新时间", () => {
 	const originalNow = Date.now;
 	const original = FakeComponent.prototype.render;
@@ -469,18 +652,44 @@ test("重复渲染同一线框不刷新更新时间", () => {
 	}
 });
 
-test("wrapper 右下角 token 使用原始 assistant content 估算", () => {
-	class AssistantRawComponent {
-		lastMessage = { content: [{ type: "text", text: "x".repeat(40) }] };
+test("Assistant frame 显示真实模型 usage 并随流式消息更新", () => {
+	class AssistantUsageComponent {
+		lastMessage = {
+			content: [{ type: "text", text: "x".repeat(40) }],
+			usage: { input: 10, output: 2, cacheRead: 100, cacheWrite: 5, totalTokens: 117 },
+		};
 		render(_width: number) {
 			return ["short rendered"];
 		}
 	}
-	const wrapped = createWrappedRender("AssistantRaw", "assistant", AssistantRawComponent.prototype.render, () => createFakeTheme());
-	const lines = wrapped.call(new AssistantRawComponent(), 42);
+	const wrapped = createWrappedRender("AssistantUsage", "assistant", AssistantUsageComponent.prototype.render, () => createFakeTheme());
+	const instance = new AssistantUsageComponent();
+	let lines = wrapped.call(instance, 52);
 
-	assert.match(stripAnsi(lines[0]!), /ASSISTANT ─ \[ 10 \]/);
-	assert.doesNotMatch(stripAnsi(lines.at(-1)!), /\[ 10 \]/);
+	assert.match(stripAnsi(lines[0]!), /ASSISTANT ─ \[ ↑115 · ↓2 \]/);
+	assert.doesNotMatch(stripAnsi(lines[0]!), /\+ctx|~10/);
+
+	instance.lastMessage.usage = { input: 12, output: 7, cacheRead: 120, cacheWrite: 6, totalTokens: 145 };
+	lines = wrapped.call(instance, 52);
+	assert.match(stripAnsi(lines[0]!), /ASSISTANT ─ \[ ↑138 · ↓7 \]/);
+});
+
+test("Thinking frame 复用 AssistantMessage 真实 usage，缺失时不伪造估算", () => {
+	const withUsage = renderKind("assistant", 52, {
+		lastMessage: {
+			content: [{ type: "thinking", thinking: "x".repeat(80) }],
+			usage: { input: 3, output: 9, cacheRead: 40, cacheWrite: 2 },
+		},
+	});
+	assert.match(stripAnsi(withUsage.lines[0]!), /THINK ─ \[ ↑45 · ↓9 \]/);
+
+	const withoutUsage = renderKind("assistant", 52, {
+		lastMessage: {
+			content: [{ type: "text", text: "x".repeat(80) }],
+			usage: { input: 10 },
+		},
+	});
+	assert.doesNotMatch(stripAnsi(withoutUsage.lines[0]!), /\[|\+ctx|~20/);
 });
 
 test("wrapper 右下角 token 优先读取 Pi 0.84 UserMessage.text", () => {
@@ -569,17 +778,17 @@ test("excludeFromContext Bash frame 不显示 token", () => {
 	assert.doesNotMatch(stripAnsi(lines.join("\n")), /\[ \d/);
 });
 
-test("token 数超过千位时向上进位显示", () => {
-	class LargeAssistantComponent {
-		lastMessage = { content: [{ type: "text", text: "x".repeat(4004) }] };
+test("上下文 token 超过千位时向上进位到一位小数", () => {
+	class LargeUserComponent {
+		text = "x".repeat(4004);
 		render(_width: number) {
 			return ["short rendered"];
 		}
 	}
-	const wrapped = createWrappedRender("LargeAssistant", "assistant", LargeAssistantComponent.prototype.render, () => createFakeTheme());
-	const lines = wrapped.call(new LargeAssistantComponent(), 48);
+	const wrapped = createWrappedRender("LargeUser", "user", LargeUserComponent.prototype.render, () => createFakeTheme());
+	const lines = wrapped.call(new LargeUserComponent(), 52);
 
-	assert.match(stripAnsi(lines[0]!), /ASSISTANT ─ \[ 1\.1k \]/);
+	assert.match(stripAnsi(lines[0]!), /USER ─ \[ 1\.1k \]/);
 	assert.doesNotMatch(stripAnsi(lines.at(-1)!), /\[ 1\.1k \]/);
 });
 

@@ -7,6 +7,7 @@ import { DEFAULT_SETTINGS, cloneDefaultSettings } from "../src/settings.ts";
 test("默认开启消息线框并使用 Tool Compact 模式且默认不收起 edit", () => {
 	assert.equal(DEFAULT_SETTINGS.chromeFrame.enabled, true);
 	assert.equal(DEFAULT_SETTINGS.chromeFrame.toolCompactMode, "compact");
+	assert.equal(DEFAULT_SETTINGS.chromeFrame.collapseThinking, true);
 	assert.equal(DEFAULT_SETTINGS.chromeFrame.compactEditTool, false);
 });
 
@@ -47,6 +48,7 @@ test("cloneDefaultSettings 返回包含固定输入框、美化输入框、Input
 			enabled: true,
 			assistantFrame: true,
 			toolCompactMode: "compact",
+			collapseThinking: true,
 			compactEditTool: false,
 		},
 		fixedBottomEditor: {

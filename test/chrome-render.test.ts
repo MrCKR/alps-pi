@@ -2,9 +2,51 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { renderCompactThinkingBox, renderNeonBox } from "../src/features/chrome-frame/chrome.ts";
+import { getRuntimeTheme } from "../src/features/chrome-frame/patch.ts";
 import { createFakeTheme, assertLinesWithin, stripAnsi } from "./helpers.test.ts";
+
+const ANSI_TOKEN_CODES: Record<string, number> = {
+	borderAccent: 41,
+	success: 42,
+	error: 43,
+	toolTitle: 44,
+	toolOutput: 45,
+};
+
+function createResetTheme(reset: "0" | "39") {
+	return {
+		name: `reset-${reset}`,
+		fg(token: string, text: string) {
+			return `\x1b[38;5;${ANSI_TOKEN_CODES[token] ?? 46}m${text}\x1b[${reset}m`;
+		},
+		bg(_token: string, text: string) {
+			return text;
+		},
+	};
+}
+
+function foregroundAt(line: string, target: string, fromEnd = false): string {
+	const targetIndex = fromEnd ? line.lastIndexOf(target) : line.indexOf(target);
+	assert.ok(targetIndex >= 0, `missing ${JSON.stringify(target)} in ${JSON.stringify(line)}`);
+	let foreground = "default";
+	for (const match of line.slice(0, targetIndex).matchAll(/\x1b\[([0-9;:]*)m/g)) {
+		const values = (match[1] || "0").split(/[;:]/).map((value) => Number.parseInt(value, 10));
+		for (let index = 0; index < values.length; index += 1) {
+			const value = values[index];
+			if (value === 0 || value === 39) foreground = "default";
+			else if (value === 38) {
+				foreground = values.slice(index).join(";");
+				break;
+			} else if ((value >= 30 && value <= 37) || (value >= 90 && value <= 97)) {
+				foreground = String(value);
+			}
+		}
+	}
+	return foreground;
+}
 
 test("renderNeonBox 输出完整三段 box 且包含 label 与内容", () => {
 	const theme = createFakeTheme();
@@ -196,6 +238,90 @@ test("bottom border 宽度不足时仍保持外框闭合", () => {
 	assert.ok(bottom.startsWith("╰"));
 	assert.ok(bottom.endsWith("╯"));
 	assert.equal(visibleWidth(bottom), 8);
+});
+
+test("嵌套前景 reset 后标题括号、正文与底边角保持所属主题 token", () => {
+	for (const reset of ["39", "0"] as const) {
+		for (const status of ["pending", "success", "error"] as const) {
+			const theme = createResetTheme(reset);
+			const borderToken = status === "pending" ? "borderAccent" : status;
+			const tokenText = `[ ${theme.fg("borderAccent", "12")} · ${theme.fg("success", "3")} ]`;
+			const elapsedText = theme.fg("success", "20s");
+			const body = `├ ${theme.fg(borderToken, "●")} Read ×1 · 中文`;
+			const lines = renderNeonBox("tool", [body], 28, theme, {
+				status,
+				label: "Tools ×1",
+				tokenText,
+				elapsedText,
+			});
+			const top = lines[0]!;
+			const content = lines.find((line) => stripAnsi(line).includes("Read"))!;
+			const bottom = lines.at(-1)!;
+
+			assert.equal(foregroundAt(top, "]", true), `38;5;${ANSI_TOKEN_CODES.toolTitle}`, `${reset}/${status} title`);
+			assert.equal(foregroundAt(content, "Read"), `38;5;${ANSI_TOKEN_CODES.toolOutput}`, `${reset}/${status} body`);
+			assert.equal(foregroundAt(content, "│", true), `38;5;${ANSI_TOKEN_CODES[borderToken]}`, `${reset}/${status} right border`);
+			assert.equal(foregroundAt(bottom, "╯", true), `38;5;${ANSI_TOKEN_CODES[borderToken]}`, `${reset}/${status} bottom corner`);
+			assertLinesWithin(lines, 28);
+		}
+	}
+});
+
+test("窄宽 ANSI 与 CJK 内容在 reset 后仍保持右边框颜色", () => {
+	const theme = createResetTheme("0");
+	const body = `● ${theme.fg("error", "失败")} 后续中文内容需要换行`;
+	const lines = renderNeonBox("tool", [body], 16, theme, { status: "error", label: "Tools ×1" });
+	for (const line of lines.slice(1, -1)) {
+		assert.equal(foregroundAt(line, "│", true), `38;5;${ANSI_TOKEN_CODES.error}`);
+	}
+	assertLinesWithin(lines, 16);
+});
+
+test("扩展前景色参数中的 0 和 39 不会被误判为 reset", () => {
+	const theme = {
+		name: "extended-colors",
+		fg(token: string, text: string) {
+			const sequence = token === "error"
+				? "38;5;39"
+				: token === "toolOutput"
+					? "38;2;0;39;255"
+					: `38;5;${ANSI_TOKEN_CODES[token] ?? 46}`;
+			return `\x1b[${sequence}m${text}\x1b[39m`;
+		},
+		bg(_token: string, text: string) {
+			return text;
+		},
+	};
+	const body = `${theme.fg("error", "●")} Read ×1`;
+	const lines = renderNeonBox("tool", [body], 24, theme, { status: "error", label: "Tools ×1" });
+	const content = lines.find((line) => stripAnsi(line).includes("Read"))!;
+
+	assert.equal(foregroundAt(content, "●"), "38;5;39");
+	assert.equal(foregroundAt(content, "Read"), "38;2;0;39;255");
+	assert.equal(foregroundAt(content, "│", true), "38;5;39");
+	assertLinesWithin(lines, 24);
+});
+
+test("真实 Pi dark 主题彩色 smoke 中静态标题与边框不回落默认前景色", () => {
+	initTheme("dark");
+	const theme = getRuntimeTheme();
+	const lines = renderNeonBox("tool", [`└ ${theme.fg("error", "●")} Read ×2 · 1 failed`], 40, theme, {
+		status: "error",
+		label: "Tools ×2",
+		tokenText: `[ ${theme.fg("borderAccent", "↑1.6k")} · ${theme.fg("success", "↓3")} ]`,
+		elapsedText: theme.fg("success", "20s"),
+	});
+	const top = lines[0]!;
+	const content = lines[1]!;
+	const bottom = lines.at(-1)!;
+
+	assert.match(lines.join(""), /\x1b\[/);
+	assert.notEqual(foregroundAt(top, "]", true), "default");
+	assert.equal(foregroundAt(top, "]", true), foregroundAt(top, "Tools"));
+	assert.notEqual(foregroundAt(content, "Read"), "default");
+	assert.equal(foregroundAt(content, "│", true), foregroundAt(bottom, "╰"));
+	assert.equal(foregroundAt(bottom, "╯", true), foregroundAt(bottom, "╰"));
+	assertLinesWithin(lines, 40);
 });
 
 test("top border label 后会重新应用 border token，避免嵌套 fg reset 丢色", () => {

@@ -1,16 +1,22 @@
 /** 功能：使用真实 Pi ToolExecutionComponent 验证内联图片被抑制且 Alps 工具框保持紧凑。 */
 
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 import { initTheme, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
-import {
+
+const agentEntry = import.meta.resolve("@earendil-works/pi-coding-agent");
+const agentRequire = createRequire(agentEntry);
+const agentTui = await import(pathToFileURL(agentRequire.resolve("@earendil-works/pi-tui")).href);
+const {
 	getCapabilities,
 	getCellDimensions,
 	setCapabilities,
 	setCellDimensions,
 	Text,
 	stripTerminalSequences,
-} from "@earendil-works/pi-tui";
+} = agentTui;
 import { isImageEscapeLine } from "../src/features/chrome-frame/image.ts";
 import { createInitialPatchState, disablePatch, enablePatch, PATCH_KEY } from "../src/features/chrome-frame/patch.ts";
 

@@ -38,14 +38,32 @@ function estimateTextAndImageContentChars(content: unknown): number {
 	return total;
 }
 
+function assistantContent(instance: any): unknown {
+	return instance?.lastMessage?.content ?? instance?.message?.content ?? instance?.content;
+}
+
 function estimateAssistantChars(instance: any): number {
-	const content = instance?.lastMessage?.content;
+	const content = assistantContent(instance);
 	if (!Array.isArray(content)) return 0;
 	let total = 0;
 	for (const item of content) {
 		if (!item || typeof item !== "object") continue;
 		if ((item as any).type === "text" && typeof (item as any).text === "string") total += (item as any).text.length;
 		else if ((item as any).type === "thinking" && typeof (item as any).thinking === "string") total += (item as any).thinking.length;
+	}
+	return total;
+}
+
+function estimateThinkingChars(instance: any): number {
+	const content = assistantContent(instance);
+	if (!Array.isArray(content)) return 0;
+	let total = 0;
+	for (const item of content) {
+		if (!item || typeof item !== "object" || (item as any).type !== "thinking") continue;
+		const text = typeof (item as any).thinking === "string"
+			? (item as any).thinking
+			: typeof (item as any).text === "string" ? (item as any).text : "";
+		total += text.length;
 	}
 	return total;
 }
@@ -158,8 +176,9 @@ export function estimateContextContribution(kind: ChromeKind, instance: any): Co
 		case "user":
 			return upstream(estimateUserChars(instance));
 		case "assistant":
-		case "thinking":
 			return downstream(estimateAssistantChars(instance));
+		case "thinking":
+			return downstream(estimateThinkingChars(instance));
 		case "tool":
 		case "toolPending":
 		case "toolSuccess":

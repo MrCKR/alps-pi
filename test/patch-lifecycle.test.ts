@@ -260,7 +260,12 @@ test("模拟同 key 不同版本 wrapper 热重载后会重新包裹", () => {
 		return original.call(this, width);
 	};
 	Object.defineProperty(oldWrapped, Symbol.for("alps.pi.wrappedRender.v2"), {
-		value: { id: "UserMessageComponent", version: 4, originalRender: original },
+		value: {
+			id: "UserMessageComponent",
+			version: 12,
+			originalRender: original,
+			owner: Symbol.for("alps.pi.chromeFrame.patchOwner.v1"),
+		},
 		configurable: false,
 	});
 	UserFake.prototype.render = oldWrapped as typeof UserFake.prototype.render;

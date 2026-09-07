@@ -86,10 +86,10 @@ Pi 一手文档：
 
 ### `alps-pi` 0.3.0
 
-- **功能：** Compact Tools 提供 Off、Compact、Collapsed 三态，默认 Compact。Compact 保留逐 Tool 首条有效文本摘要；Collapsed 把连续非对话/非 Thinking frame 聚合成一个 `Tools` frame，并显示计数、失败数、当前 Tool、方向性上下文贡献和冻结耗时。
+- **功能：** Compact Tools 提供 Off、Compact、Collapsed 三态，默认 Compact。Compact 保留逐 Tool 首条有效文本摘要；Collapsed 将连续 Thinking 与连续工具分别聚合为独立 frame。Tools 按原始顺序逐调用显示 Compact 摘要且不设行数上限；Thinking 可显示完整内容或无 Markdown 装饰的首尾两行纯文本摘要。Collapsed Thinking/Tools 均显示单一 `[ N ]` 原始上下文贡献估算。
 - **安装：** `pi install npm:alps-pi@0.3.0`
 - **适用范围：** 对 Pi 内部消息与工具执行组件做通用 TUI patch，覆盖 Tool、Bash、Skill、Resource/Custom、Compaction、Branch 和 Working 等运行时 kind。包同时提供消息框、输入框、动画和主题。
-- **限制与不确定性：** 这是对 Pi 内部 TUI component 的 patch，比只实现公开 custom renderer API 更依赖 Pi 内部结构。默认值为 `toolCompactMode: "compact"`、`compactEditTool: false`；旧 Boolean 自动迁移为 `true -> "compact"`、`false -> "off"`。
+- **限制与不确定性：** 这是对 Pi 内部 TUI component 的 patch，比只实现公开 custom renderer API 更依赖 Pi 内部结构。默认值为 `toolCompactMode: "compact"`、`collapseThinking: true`、`compactEditTool: false`；旧 Boolean 自动迁移为 `true -> "compact"`、`false -> "off"`。
 - **一手来源：** [npm 0.3.0](https://www.npmjs.com/package/alps-pi/v/0.3.0) · [GitHub Release](https://github.com/MrCKR/alps-pi/releases/tag/v0.3.0) · [模式规范](./tool-compact-mode-spec.md) · [聚合源码](../src/features/chrome-frame/collapsed.ts) · [渲染源码](../src/features/chrome-frame/patch.ts)
 
 ## 可选压缩模式，由 Pi 原生 Ctrl+O 展开
@@ -153,12 +153,12 @@ Pi 一手文档：
 
 ### `alps-pi` 0.3.0 Collapsed：锚点加 sibling 隐藏
 
-- **数据结构：** [`collapsed.ts`](../src/features/chrome-frame/collapsed.ts) 用线性 `entries` 保存首次观察顺序，按组件实例和稳定 Tool/message identity 去重。`CollapsedGroupSnapshot` 汇总 count、failedCount、current、冻结耗时和方向性上下文贡献。
-- **分组边界：** `roleFor()` 把可见非空 `user`、`assistant`、`thinking` 标为 boundary，其余可见 frame 标为 member；空或隐藏 frame ignored。空的 tool-call-only Assistant 不切组。
-- **渲染：** [`patch.ts`](../src/features/chrome-frame/patch.ts) 让组内第一项作为 anchor，渲染 `Tools`、`×N`、失败数、当前活动 Tool、方向指标和耗时；其他 member 返回空数组。current 按 lifecycle 时间和事件顺序稳定选择。
-- **摘要：** Collapsed 复用现有 Compact 提取，Edit 只显示路径。组关闭后保留最终摘要和冻结耗时；迟到的 streaming/rerender 不重复计数或延长时间。
+- **数据结构：** [`collapsed.ts`](../src/features/chrome-frame/collapsed.ts) 用线性 `entries` 保存首次观察顺序，按组件实例和稳定 Tool/message identity 去重。registry 维护互斥的 Tools/Thinking 组，并按组版本缓存逐调用条目或 Thinking 内容快照；更新路径保持 O(1)，锚点聚合保持 O(n)。
+- **分组边界：** 可见 Thinking 是 Thinking member，其他可见非对话 frame 是 Tools member，两类 member 互相切组。可见非空 User 或 Assistant 正文关闭当前组；空、隐藏或只含 tool call 的 Assistant ignored。`assistantFrame` 不改变边界。
+- **渲染：** [`patch.ts`](../src/features/chrome-frame/patch.ts) 让组内第一项作为 anchor，其他 member 返回空数组。Tools 标题显示 `Tools ×N`，正文按调用原序逐项显示：所有项都移除树形连接符，仅保留同列对齐的 `● <Compact summary>`；无类型聚合和行数上限；运行态状态点复用 User label 的 `accent` token，完成和失败使用 `success`、`error`，状态变化只更新对应行。Thinking 使用独立 frame，并由设置决定显示完整内容或移除 Markdown 后确定性的首尾两行摘要，正文与 Tool 正文同色。
+- **指标：** Collapsed Thinking/Tools 都只用 `[ N ]` 显示线框原始内容的上下文贡献估算；Thinking 取完整 thinking blocks，Tools 取名称、参数与实际送模结果，排除 UI 和未送模内容。非 Collapsed model frame 的真实 usage 保持原行为。所有实际显示 frame 的耗时都按当前最后更新时间减前一显示 frame 最后更新时间计算，完成后冻结，历史恢复稳定。
+- **摘要：** Tools 复用现有 Compact 提取，Edit 只显示路径；每项超宽以 `...` 截断且不换行。迟到的 streaming/rerender 会替换稳定成员，不重复增加行或贡献。
 - **展开：** Collapsed 是聚合视图，不把原生 `Ctrl+O` 解释为组成员树展开；要恢复逐项视图，应在设置中选择 Compact 或 Off。
-- **Thinking：** 可见非空 Thinking 是 boundary，不属于工具组。
 
 它比 clean 摘要更轻，但首次 render 顺序就是隐式 transcript 顺序；要支持可靠展开，需要额外保存组成员并让 expanded 分支恢复这些成员。
 
@@ -168,7 +168,7 @@ Pi 一手文档：
 | --- | --- | --- | --- | --- |
 | `pi-claude-style-tools` | 是，相邻 component | 是，`tools[]` | 是，全局展开所有组 | 否，独立处理 |
 | `pi-pretty-tui` clean | 是，同一 run 的连续序列 | 原 component 保留，摘要不持有 | 是，依赖原 transcript | 否，只隐藏 collapsed thinking |
-| `alps-pi` 0.3.0 Collapsed | 是，两条可见对话之间 | 仅内部 registry/snapshot | 否 | 否，Thinking 是边界 |
+| `alps-pi` 0.3.0 Collapsed | 是，Tools/Thinking 各自连续成组 | 仅内部 registry/snapshot | 否 | 是，独立 Thinking 组 |
 | 其余候选 | 否 | 单项 renderer | 只展开单项 | 否 |
 
 ### 为什么普通 custom renderer 做不到
