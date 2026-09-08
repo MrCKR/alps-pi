@@ -860,8 +860,8 @@ function formatCollapsedToolItems(
 		const statusToken = status === "pending"
 			? getChromeStyle("user", {}, config).label
 			: getChromeStyle("tool", { status }, config).border;
-		const dot = theme.fg(statusToken, "●");
-		return `${dot} ${item.name}${item.detail ? ` ${item.detail}` : ""}`;
+		const statusLabel = theme.fg(statusToken, `● ${item.name}`);
+		return `${statusLabel}${item.detail ? ` ${item.detail}` : ""}`;
 	});
 }
 

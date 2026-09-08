@@ -86,7 +86,7 @@ Esc/q 关闭
 
 `Compact Tools` 持久化为 `"off" | "compact" | "collapsed"`。旧 Boolean 配置自动迁移：`true -> "compact"`，`false -> "off"`。`Off` 保留完整工具内容，`Compact` 保留原有逐工具首条有效文本摘要。`Collapsed` 只将相邻的 Tool、Bash、Skill、Resource/Custom、Compaction、Branch、Working 等非对话 frame 合并为 `Tools` frame。Thinking 继续使用 Pi 原始逐组件渲染，不做聚合、摘要、Markdown 清理或内容过滤，并与可见且非空的 User、Assistant 正文一样切断前后的 Tools 分组。`Assistant Frame` 开启时 Thinking 与正文各自使用对应线框，关闭时两者都保持 Pi 原始无框输出；该开关不改变分组边界。空内容、隐藏内容和只含 tool call 的 Assistant 不切组。
 
-Tools 标题显示实际调用总数，例如 `Tools ×4`。正文把 Compact 已提取的每次调用摘要按原始顺序收入同一线框，每次调用恰好一行：所有项都移除树形连接符，只保留同列对齐的 `●`；运行中的状态点复用 User label 的 `accent` 主题 token，完成和失败分别使用 `success`、`error`。Read 路径、Grep 条件、Bash 命令、Edit 目标等关键信息会保留；调用数量不设上限，单行超宽时以 `...` 截断。完成或失败只更新对应行，不移除该调用，也不读取 Compact Edit 偏好。
+Tools 标题显示实际调用总数，例如 `Tools ×4`。正文把 Compact 已提取的每次调用摘要按原始顺序收入同一线框，每次调用恰好一行：所有项都移除树形连接符，只保留同列对齐的 `●`；运行中的状态点和工具名共用 User label 的 `accent` 主题 token，完成和失败时两者分别共用 `success`、`error`。Read 路径、Grep 条件、Bash 命令、Edit 目标等关键信息会保留；调用数量不设上限，单行超宽时以 `...` 截断。完成或失败只更新对应行，不移除该调用，也不读取 Compact Edit 偏好。
 
 所有实际显示的 frame 使用同一耗时口径：当前 frame 的最后更新时间减去上一个实际显示 frame 的最后更新时间；首个 frame 不显示耗时，流式执行中持续更新，完成后冻结，历史恢复不会继续增长。所有 frame 标题都只显示一个 `[ N ]`，统一表示该线框内 retained 原始内容会给后续模型上下文增加的估算量；当前实现按 4 字符约 1 Token 换算，不显示 provider 整次请求的 input/output usage。Assistant 计入框内正文与 thinking，纯 Thinking 只计 thinking；Tools 汇总实际工具名称、参数和已送模结果。尚未返回、送模前已截除的内容，以及标题、边框、状态色和 UI 摘要均不计入；Collapsed 流式更新按稳定身份替换旧值，不重复累计。
 

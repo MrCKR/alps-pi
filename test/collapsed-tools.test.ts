@@ -336,7 +336,7 @@ test("Collapsed 更新对应调用的状态且不把重建的同一 Tool 计为�
 	const failedBorderToken = renderers.theme.calls.filter((call) => call.kind === "fg" && call.text.includes("╭")).at(-1)?.token;
 	assert.match(grouped, /Tools ×2/);
 	assert.match(grouped, /│ ● Read path=src\/a\.ts[\s\S]*│ ● Edit path=src\/b\.ts/);
-	assert.ok(renderers.theme.calls.some((call) => call.kind === "fg" && call.text === "●" && call.token === "error"));
+	assert.ok(renderers.theme.calls.some((call) => call.kind === "fg" && call.text === "● Edit" && call.token === "error"));
 	assert.equal(failedBorderToken, pendingBorderToken);
 	const narrowLines = renderers.tool.call(first, 20);
 	const narrowBody = plain(narrowLines.slice(1, -1));
@@ -799,7 +799,7 @@ test("Tools 按原始顺序逐调用显示，完成状态不会移除调用行",
 	assert.doesNotMatch(output, /[├└]/);
 	assert.equal((output.match(/path=src\/[ab]\.ts/g) ?? []).length, 2);
 	assert.deepEqual(
-		new Set(renderers.theme.calls.filter((call) => call.kind === "fg" && call.text === "●").map((call) => call.token)),
+		new Set(renderers.theme.calls.filter((call) => call.kind === "fg" && call.text.startsWith("● ")).map((call) => call.token)),
 		new Set(["accent", "error", "success"]),
 	);
 
@@ -842,7 +842,7 @@ test("Tools 不设行数上限并保留 Read、Grep、Bash、Edit 摘要与原�
 	}
 });
 
-test("单一 Tool 调用行的 pending 状态点复用 User label token，完成和失败使用状态 token", () => {
+test("单一 Tool 调用行的状态点和工具名共用状态 token", () => {
 	for (const status of ["pending", "success", "error"] as const) {
 		resetCollapsedRegistry();
 		const state = (globalThis as any)[PATCH_KEY];
@@ -857,11 +857,11 @@ test("单一 Tool 调用行的 pending 状态点复用 User label token，完成
 		const output = plain(wrapped.call(tool, 72));
 		assert.match(output, /│ ● Read path=src\/a\.ts/);
 		const expectedToken = status === "pending" ? "accent" : status;
-		assert.ok(theme.calls.some((call) => call.kind === "fg" && call.text === "●" && call.token === expectedToken));
+		assert.ok(theme.calls.some((call) => call.kind === "fg" && call.text === "● Read" && call.token === expectedToken));
 	}
 });
 
-test("Collapsed 仅为 pending 状态点增加 User label token，其他 frame token 与 Compact 一致", () => {
+test("Collapsed 仅为 pending 状态点和工具名增加 User label token，其他 frame token 与 Compact 一致", () => {
 	const renderTokens = (mode: "compact" | "collapsed", status: "pending" | "success" | "error") => {
 		resetCollapsedRegistry();
 		const state = (globalThis as any)[PATCH_KEY];

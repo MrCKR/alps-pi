@@ -246,9 +246,12 @@ test("真实 Pi Assistant 和 TuiAltScreen 渲染 Collapsed 执行态与完成�
 	const grepLine = findLine(scenario.activeToolLines, /Grep query=TODO/);
 	const bottom = scenario.activeToolLines.at(-1)!;
 	assert.equal(foregroundAt(title, "]", true), expectedForeground(scenario.theme, "toolTitle"));
-	assert.equal(foregroundAt(readLine, "Read"), expectedForeground(scenario.theme, "toolOutput"));
 	assert.equal(foregroundAt(readLine, "●"), expectedForeground(scenario.theme, "success"));
+	assert.equal(foregroundAt(readLine, "Read"), expectedForeground(scenario.theme, "success"));
+	assert.equal(foregroundAt(readLine, "path=src/alpha.ts"), expectedForeground(scenario.theme, "toolOutput"));
 	assert.equal(foregroundAt(grepLine, "●"), expectedForeground(scenario.theme, "accent"));
+	assert.equal(foregroundAt(grepLine, "Grep"), expectedForeground(scenario.theme, "accent"));
+	assert.equal(foregroundAt(grepLine, "query=TODO"), expectedForeground(scenario.theme, "toolOutput"));
 	assert.equal(foregroundAt(readLine, "│", true), expectedForeground(scenario.theme, "borderAccent"));
 	assert.equal(foregroundAt(bottom, "╯", true), expectedForeground(scenario.theme, "borderAccent"));
 
@@ -275,6 +278,8 @@ test("真实 TuiAltScreen 在窄宽度 ANSI 与 CJK 内容下不破框", () => {
 	const failedGrep = findLine(scenario.completeToolLines, /Grep query=TODO/);
 	const bottom = scenario.completeToolLines.at(-1)!;
 	assert.equal(foregroundAt(failedGrep, "●"), expectedForeground(scenario.theme, "error"));
+	assert.equal(foregroundAt(failedGrep, "Grep"), expectedForeground(scenario.theme, "error"));
+	assert.equal(foregroundAt(failedGrep, "query=TODO"), expectedForeground(scenario.theme, "toolOutput"));
 	assert.equal(foregroundAt(failedGrep, "│", true), expectedForeground(scenario.theme, "error"));
 	assert.equal(foregroundAt(bottom, "╯", true), expectedForeground(scenario.theme, "error"));
 });

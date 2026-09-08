@@ -55,6 +55,7 @@ test("README 说明设置面板项目", async () => {
 	assert.match(readme, /Tools 标题显示实际调用总数，例如 `Tools ×4`/);
 	assert.match(readme, /调用数量不设上限，单行超宽时以 `\.\.\.` 截断/);
 	assert.match(readme, /所有项都移除树形连接符，只保留同列对齐的 `●`/);
+	assert.match(readme, /状态点和工具名共用 User label 的 `accent`/);
 	assert.match(readme, /所有 frame 标题都只显示一个 `\[ N \]`/);
 	assert.match(readme, /retained 原始内容会给后续模型上下文增加的估算量/);
 	assert.doesNotMatch(readme, /Assistant\/Thinking 保留 Pi 原有真实 usage|按工具类型首次出现顺序|最新活动项 `TOOL|`\[ ↑N · ↓N \]`|\+ctx ~|`\[ in N · out N \]`/);
@@ -73,6 +74,7 @@ test("Collapsed 规格锁定逐调用列表和单一上下文贡献语义", asyn
 	assert.match(spec, / ● Read package\.json[\s\S]* ● Grep "collapsed" in src\/[\s\S]* ● Bash npm test[\s\S]* ● Read src\/features\/chrome-frame\/patch\.ts/);
 	assert.doesNotMatch(spec, /[├└]/);
 	assert.match(spec, /每次调用恰好占一行，不按类型合并，也不设置最大行数/);
+	assert.match(spec, /运行中的 `●` 和工具名共用 User label 的 `accent`/);
 	assert.match(spec, /\[ <tokens> \]/);
 	assert.match(spec, /Thinking 使用 Pi 原始逐组件渲染，不进入 registry/);
 	assert.match(spec, /稳定 Tool 成员，必须在 Pi 原生 render 前短路/);

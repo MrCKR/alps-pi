@@ -68,7 +68,7 @@ Tools ×4 [ 24.6k ]
  ● Read src/features/chrome-frame/patch.ts
 ```
 
-每次调用恰好占一行，不按类型合并，也不设置最大行数。所有项都移除树形连接符，只保留同列对齐的 `●`；运行中的 `●` 复用 User label 的 `accent` 语义 token，完成和失败的 `●` 分别使用 `success`、`error`。Read 路径、Grep 条件、Bash 命令、Edit 目标等关键信息来自现有 Compact 提取。流式结果与状态变化只替换同一稳定调用的行，完成或失败不会移除该行。Edit 不显示 diff，也不读取 `compactEditTool`。
+每次调用恰好占一行，不按类型合并，也不设置最大行数。所有项都移除树形连接符，只保留同列对齐的 `●`；运行中的 `●` 和工具名共用 User label 的 `accent` 语义 token，完成和失败时两者分别共用 `success`、`error`。Read 路径、Grep 条件、Bash 命令、Edit 目标等关键信息来自现有 Compact 提取。流式结果与状态变化只替换同一稳定调用的行，完成或失败不会移除该行。Edit 不显示 diff，也不读取 `compactEditTool`。
 
 窄终端按现有 frame 宽度和 ANSI/CJK 可见宽度规则把每次调用截断在同一行，并以 ASCII `...` 结束；不允许自动换出额外内容行。静态标题括号、分隔符、正文、状态点、边框和底栏字符在内嵌 ANSI reset 后必须恢复所属主题 token，不能泄漏为终端默认色。
 

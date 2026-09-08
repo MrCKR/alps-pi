@@ -155,7 +155,7 @@ Pi 一手文档：
 
 - **数据结构：** [`collapsed.ts`](../src/features/chrome-frame/collapsed.ts) 用线性 `entries` 保存首次观察顺序，按组件实例和稳定 Tool/message identity 去重。registry 维护互斥的 Tools/Thinking 组，并按组版本缓存逐调用条目或 Thinking 内容快照；更新路径保持 O(1)，锚点聚合保持 O(n)。
 - **分组边界：** 可见 Thinking 是 Thinking member，其他可见非对话 frame 是 Tools member，两类 member 互相切组。可见非空 User 或 Assistant 正文关闭当前组；空、隐藏或只含 tool call 的 Assistant ignored。`assistantFrame` 不改变边界。
-- **渲染：** [`patch.ts`](../src/features/chrome-frame/patch.ts) 让组内第一项作为 anchor，其他 member 返回空数组。Tools 标题显示 `Tools ×N`，正文按调用原序逐项显示：所有项都移除树形连接符，仅保留同列对齐的 `● <Compact summary>`；无类型聚合和行数上限；运行态状态点复用 User label 的 `accent` token，完成和失败使用 `success`、`error`，状态变化只更新对应行。Thinking 使用独立 frame，并由设置决定显示完整内容或移除 Markdown 后确定性的首尾两行摘要，正文与 Tool 正文同色。
+- **渲染：** [`patch.ts`](../src/features/chrome-frame/patch.ts) 让组内第一项作为 anchor，其他 member 返回空数组。Tools 标题显示 `Tools ×N`，正文按调用原序逐项显示：所有项都移除树形连接符，仅保留同列对齐的 `● <Compact summary>`；无类型聚合和行数上限；运行态状态点和工具名共用 User label 的 `accent` token，完成和失败时两者共用 `success`、`error`，状态变化只更新对应行。Thinking 使用独立 frame，并由设置决定显示完整内容或移除 Markdown 后确定性的首尾两行摘要，正文与 Tool 正文同色。
 - **指标：** Collapsed Thinking/Tools 都只用 `[ N ]` 显示线框原始内容的上下文贡献估算；Thinking 取完整 thinking blocks，Tools 取名称、参数与实际送模结果，排除 UI 和未送模内容。非 Collapsed model frame 的真实 usage 保持原行为。所有实际显示 frame 的耗时都按当前最后更新时间减前一显示 frame 最后更新时间计算，完成后冻结，历史恢复稳定。
 - **摘要：** Tools 复用现有 Compact 提取，Edit 只显示路径；每项超宽以 `...` 截断且不换行。迟到的 streaming/rerender 会替换稳定成员，不重复增加行或贡献。
 - **展开：** Collapsed 是聚合视图，不把原生 `Ctrl+O` 解释为组成员树展开；要恢复逐项视图，应在设置中选择 Compact 或 Off。
