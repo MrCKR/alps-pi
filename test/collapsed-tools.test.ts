@@ -97,6 +97,7 @@ class AssistantDialogueComponent {
 class CollapsibleTool {
 	isPartial = true;
 	result: any;
+	renderCalls = 0;
 	readonly toolCallId: string;
 	readonly toolName: string;
 	readonly args: Record<string, unknown>;
@@ -108,6 +109,7 @@ class CollapsibleTool {
 	}
 
 	render(_width: number) {
+		this.renderCalls += 1;
 		return [`${this.toolName} ${Object.entries(this.args).map(([key, value]) => `${key}=${String(value)}`).join(" ")}`];
 	}
 }
@@ -350,6 +352,37 @@ test("Collapsed 更新对应调用的状态且不把重建的同一 Tool 计为�
 	grouped = plain(renderers.tool.call(first, 72));
 	assert.match(grouped, /Tools ×2/);
 	assert.equal((grouped.match(/Edit path=src\/b\.ts/g) ?? []).length, 1);
+});
+
+test("Collapsed 稳定重绘只原生渲染 Tool 组锚点", () => {
+	resetCollapsedRegistry();
+	const renderers = createRenderers();
+	const user = new DialogueComponent("question", { timestamp: 1_000 });
+	const tools = Array.from(
+		{ length: 2_000 },
+		(_, index) => new CollapsibleTool(`tool-native-${index}`, "read", { path: `src/${index}.ts` }),
+	);
+
+	renderers.user.call(user, 72);
+	for (const tool of tools) renderers.tool.call(tool, 72);
+	assert.equal(tools.reduce((total, tool) => total + tool.renderCalls, 0), tools.length);
+
+	for (const tool of tools) renderers.tool.call(tool, 72);
+	assert.equal(tools[0]!.renderCalls, 2, "the visible group anchor must still render");
+	assert.equal(
+		tools.slice(1).reduce((total, tool) => total + tool.renderCalls, 0),
+		tools.length - 1,
+		"stable hidden members must bypass native render",
+	);
+
+	const changed = tools.at(-1)!;
+	changed.isPartial = false;
+	changed.result = { isError: true, content: [{ type: "text", text: "failed" }] };
+	assert.deepEqual(renderers.tool.call(changed, 72), []);
+	assert.equal(changed.renderCalls, 2, "status/result changes must take the full render path once");
+	assert.deepEqual(renderers.tool.call(changed, 72), []);
+	assert.equal(changed.renderCalls, 2, "the refreshed fingerprint must become stable again");
+	assert.match(plain(renderers.tool.call(tools[0], 72)), /Tools ×2000/);
 });
 
 test("可见 User、Assistant、Thinking 切组，空内容不切组", () => {

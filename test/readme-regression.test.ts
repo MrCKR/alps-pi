@@ -22,12 +22,12 @@ test("README 说明固定输入由 Pi fullscreen 原生提供", async () => {
 	assert.match(readme, /regular.*不会模拟固定 dock/);
 });
 
-test("README 说明独立设置路径、迁移优先级与 namespace 回滚保留", async () => {
+test("README 说明 Pi namespace 是唯一主存储并清理迁移来源", async () => {
 	const readme = await readReadme();
 
-	assert.match(readme, /~\/\.pi\/agent\/alps-pi\/settings\.json/);
-	assert.match(readme, /独立主文件.*Pi settings.*namespace.*alps-pi\.json.*默认值/);
-	assert.match(readme, /保留原 namespace 供回滚/);
+	assert.match(readme, /只持久化到 Pi 原生 `~\/\.pi\/agent\/settings\.json` 的 `"alps-pi"` namespace/);
+	assert.match(readme, /alps-pi\/settings\.json.*alps-pi\.json.*迁入该 namespace/);
+	assert.match(readme, /写入成功后删除旧独立设置文件/);
 });
 
 test("README 说明内置 alps 主题", async () => {
@@ -75,6 +75,8 @@ test("Collapsed 规格锁定逐调用列表和单一上下文贡献语义", asyn
 	assert.match(spec, /每次调用恰好占一行，不按类型合并，也不设置最大行数/);
 	assert.match(spec, /\[ <tokens> \]/);
 	assert.match(spec, /Thinking 使用 Pi 原始逐组件渲染，不进入 registry/);
+	assert.match(spec, /稳定 Tool 成员，必须在 Pi 原生 render 前短路/);
+	assert.match(spec, /状态、参数、结果、展开状态或 lifecycle 变化时恢复一次完整 render/);
 	assert.match(spec, /所有 frame 标题都只显示一个上下文贡献字段/);
 	assert.match(spec, /Assistant 计入同一线框内的正文与 thinking，纯 Thinking 只计 thinking/);
 	assert.match(spec, /pending 不计尚未返回的结果/);
@@ -91,6 +93,8 @@ test("README 说明美化输入框默认开启与 Alt+S 行为", async () => {
 	assert.match(readme, /`\[图标\] \[数据\]` 紧凑格式/);
 	assert.match(readme, /缓存命中率按 `>= 90%`、`>= 60%`、`< 60%` 分别显示为绿、金、红/);
 	assert.match(readme, /缓存、输出、输入、速度的顺序整项隐藏/);
+	assert.match(readme, /会话耗时随输入、流式输出、工具状态等真实 UI 事件刷新/);
+	assert.match(readme, /不启动会让长历史完整重渲染的独立秒级时钟/);
 	assert.match(readme, /extension statuses 与上一个问题保持在线框下方/);
 	assert.match(readme, /缺失的数据不会显示占位/);
 	assert.match(readme, /Alt\+S.*暂存并清空输入框/);

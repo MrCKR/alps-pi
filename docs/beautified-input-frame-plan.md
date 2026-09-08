@@ -107,7 +107,7 @@ fixedBottomEditor: {
 - 读取旧持久化设置时忽略并丢弃 `bottomStatus`。
 - 写回 `~/.pi/agent/settings.json["alps-pi"]` 时不再输出 `bottomStatus`。
 - 不要因为删除 `bottomStatus` 而影响其它 Pi 原生 settings 字段。
-- `ALPS_PI_SETTINGS_PATH` 继续作为测试隔离路径。
+- `ALPS_PI_SETTINGS_PATH` 继续作为测试隔离路径，并指向测试用的完整 Pi settings 根文件。
 
 ## 设置 UI
 

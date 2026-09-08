@@ -153,8 +153,8 @@ bottomStatus
 - 命名空间继续是 `"alps-pi"`。
 - 默认写入 `~/.pi/agent/settings.json["alps-pi"]`。
 - 写入时保留 Pi settings 其它字段。
-- legacy fallback 只读取/迁移，不删除旧文件。
-- `ALPS_PI_SETTINGS_PATH` 存在时完全走独立 path。
+- legacy 独立文件只读取/迁移，namespace 写入成功后删除。
+- `ALPS_PI_SETTINGS_PATH` 存在时把该路径作为测试用的完整 Pi settings 根文件。
 - JSON parse 失败时不覆盖用户原生 settings。
 
 ## 测试门禁

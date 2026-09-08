@@ -1,4 +1,4 @@
-/** 功能：验证 0.2.0 独立设置的优先级、迁移、锁与原子写入。 */
+/** 功能：验证 Pi settings namespace 的优先级、迁移、锁与原子写入。 */
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -19,8 +19,8 @@ function tempPaths() {
 	const dir = mkdtempSync(join(tmpdir(), "alps-pi-settings-"));
 	return {
 		dir,
-		primary: join(dir, "alps-pi", "settings.json"),
 		piSettings: join(dir, "settings.json"),
+		standalone: join(dir, "alps-pi", "settings.json"),
 		legacy: join(dir, "alps-pi.json"),
 	};
 }
@@ -30,8 +30,12 @@ function writeJson(path: string, value: unknown) {
 	writeFileSync(path, JSON.stringify(value, null, 2), "utf-8");
 }
 
-function readJson(path: string) {
+function readJson(path: string): any {
 	return JSON.parse(readFileSync(path, "utf-8"));
+}
+
+function readNamespace(path: string): any {
+	return readJson(path)[PI_SETTINGS_NAMESPACE];
 }
 
 test("启动默认设置保留 legacy fixed 字段且现代功能默认开启", () => {
@@ -51,9 +55,10 @@ test("启动默认设置保留 legacy fixed 字段且现代功能默认开启", 
 	assert.equal("bottomStatus" in settings, false);
 });
 
-test("显式独立路径读写使用锁与原子 JSON 并合并缺失字段", () => {
-	const { dir, primary } = tempPaths();
+test("Pi namespace 读写使用锁与原子 JSON 并保留宿主字段", () => {
+	const { dir, piSettings } = tempPaths();
 	try {
+		writeJson(piSettings, { theme: "alps", extensions: ["npm:alps-pi"] });
 		const settings = cloneStartupSettings();
 		settings.chromeFrame.toolCompactMode = "off";
 		settings.fixedBottomEditor.enabled = false;
@@ -62,40 +67,51 @@ test("显式独立路径读写使用锁与原子 JSON 并合并缺失字段", ()
 		settings.inputMetrics.elapsedTime = false;
 		settings.footer.enabled = false;
 		settings.animations.thinking = "aurora";
-		writePersistedSettings(settings, primary);
-		const raw = readJson(primary);
-		assert.equal(raw.bottomStatus, undefined);
-		assert.equal(existsSync(`${primary}.lock`), false);
-		assert.equal(readPersistedSettings(primary).fixedBottomEditor.enabled, false);
-		assert.equal(readPersistedSettings(primary).footer.enabled, false);
-		assert.equal(readPersistedSettings(primary).inputMetrics.cacheHit, false);
-		assert.equal(readPersistedSettings(primary).inputMetrics.elapsedTime, false);
-		assert.equal(readPersistedSettings(primary).animations.thinking, "aurora");
-		assert.equal(readPersistedSettings(primary).chromeFrame.assistantFrame, true);
+		writePersistedSettings(settings, piSettings);
+
+		const root = readJson(piSettings);
+		assert.equal(root.theme, "alps");
+		assert.deepEqual(root.extensions, ["npm:alps-pi"]);
+		assert.equal(root[PI_SETTINGS_NAMESPACE].bottomStatus, undefined);
+		assert.equal(root[PI_SETTINGS_NAMESPACE]._storageVersion, 1);
+		assert.equal(existsSync(`${piSettings}.lock`), false);
+		assert.equal(readPersistedSettings(piSettings).fixedBottomEditor.enabled, false);
+		assert.equal(readPersistedSettings(piSettings).footer.enabled, false);
+		assert.equal(readPersistedSettings(piSettings).inputMetrics.cacheHit, false);
+		assert.equal(readPersistedSettings(piSettings).inputMetrics.elapsedTime, false);
+		assert.equal(readPersistedSettings(piSettings).animations.thinking, "aurora");
+		assert.equal(readPersistedSettings(piSettings).chromeFrame.assistantFrame, true);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
 
-test("四级读取优先级严格为 primary → namespace → legacy → defaults", () => {
-	for (const source of ["primary", "namespace", "legacy", "defaults"] as const) {
+test("读取优先级严格为当前 Pi namespace → 独立目录迁移 → 旧单文件 → defaults", () => {
+	for (const source of ["namespace", "standalone", "legacy", "defaults"] as const) {
 		const paths = tempPaths();
 		try {
-			writeJson(paths.piSettings, {
-				theme: "alps",
-				[PI_SETTINGS_NAMESPACE]: { beautifiedInput: { enabled: source === "namespace" ? false : true } },
-			});
-			writeJson(paths.legacy, { beautifiedInput: { enabled: source === "legacy" ? false : true } });
-			if (source === "primary") writeJson(paths.primary, { beautifiedInput: { enabled: false } });
-			if (source === "legacy" || source === "defaults") writeJson(paths.piSettings, { theme: "alps" });
-			if (source === "defaults") rmSync(paths.legacy, { force: true });
-			const piBefore = readFileSync(paths.piSettings, "utf-8");
+			writeJson(paths.piSettings, { theme: "alps" });
+			if (source === "namespace") {
+				const settings = cloneStartupSettings();
+				settings.beautifiedInput.enabled = false;
+				writePersistedSettings(settings, paths.piSettings);
+				writeJson(paths.standalone, { beautifiedInput: { enabled: true } });
+				writeJson(paths.legacy, { beautifiedInput: { enabled: true } });
+			} else if (source === "standalone") {
+				writeJson(paths.standalone, { beautifiedInput: { enabled: false } });
+				writeJson(paths.legacy, { beautifiedInput: { enabled: true } });
+			} else if (source === "legacy") {
+				writeJson(paths.legacy, { beautifiedInput: { enabled: false } });
+			}
 
 			const loaded = readPersistedSettingsFromPaths(paths);
-			assert.equal(loaded.beautifiedInput.enabled, source === "defaults" ? true : false, source);
-			assert.equal(readFileSync(paths.piSettings, "utf-8"), piBefore);
-			if (source === "namespace" || source === "legacy") assert.equal(readJson(paths.primary).beautifiedInput.enabled, false);
-			if (source === "defaults") assert.equal(existsSync(paths.primary), false);
+			assert.equal(loaded.beautifiedInput.enabled, source === "defaults", source);
+			const persistedRoot = readJson(paths.piSettings);
+			assert.equal(persistedRoot.theme, "alps");
+			if (source === "defaults") assert.equal(persistedRoot[PI_SETTINGS_NAMESPACE], undefined);
+			else assert.equal(persistedRoot[PI_SETTINGS_NAMESPACE].beautifiedInput.enabled, false);
+			assert.equal(existsSync(paths.standalone), false);
+			assert.equal(existsSync(paths.legacy), false);
 		} finally {
 			rmSync(paths.dir, { recursive: true, force: true });
 		}
@@ -103,7 +119,7 @@ test("四级读取优先级严格为 primary → namespace → legacy → defaul
 });
 
 test("Tool 展示模式兼容旧布尔值并保留显式三态", () => {
-	const { dir, primary } = tempPaths();
+	const { dir, piSettings } = tempPaths();
 	try {
 		for (const [raw, expected] of [
 			[true, "compact"],
@@ -113,24 +129,26 @@ test("Tool 展示模式兼容旧布尔值并保留显式三态", () => {
 			["collapsed", "collapsed"],
 			["invalid", "compact"],
 		] as const) {
-			writeJson(primary, { chromeFrame: { toolCompactMode: raw } });
-			assert.equal(readPersistedSettings(primary).chromeFrame.toolCompactMode, expected);
+			writeJson(piSettings, { [PI_SETTINGS_NAMESPACE]: { chromeFrame: { toolCompactMode: raw } } });
+			assert.equal(readPersistedSettings(piSettings).chromeFrame.toolCompactMode, expected);
 		}
-		writeJson(primary, { chromeFrame: {} });
-		assert.equal(readPersistedSettings(primary).chromeFrame.toolCompactMode, "compact");
+		writeJson(piSettings, { [PI_SETTINGS_NAMESPACE]: { chromeFrame: {} } });
+		assert.equal(readPersistedSettings(piSettings).chromeFrame.toolCompactMode, "compact");
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
 
 test("旧配置缺少 Footer 和 Input Metrics 时默认开启，显式 false 保留", () => {
-	const { dir, primary } = tempPaths();
+	const { dir, piSettings } = tempPaths();
 	try {
-		writeJson(primary, { beautifiedInput: { enabled: false } });
-		assert.equal(readPersistedSettings(primary).footer.enabled, true);
-		assert.deepEqual(readPersistedSettings(primary).inputMetrics, DEFAULT_SETTINGS.inputMetrics);
-		writeJson(primary, { footer: { enabled: false }, inputMetrics: { inputTokens: false, cacheHit: "invalid" } });
-		const loaded = readPersistedSettings(primary);
+		writeJson(piSettings, { [PI_SETTINGS_NAMESPACE]: { beautifiedInput: { enabled: false } } });
+		assert.equal(readPersistedSettings(piSettings).footer.enabled, true);
+		assert.deepEqual(readPersistedSettings(piSettings).inputMetrics, DEFAULT_SETTINGS.inputMetrics);
+		writeJson(piSettings, {
+			[PI_SETTINGS_NAMESPACE]: { footer: { enabled: false }, inputMetrics: { inputTokens: false, cacheHit: "invalid" } },
+		});
+		const loaded = readPersistedSettings(piSettings);
 		assert.equal(loaded.footer.enabled, false);
 		assert.equal(loaded.inputMetrics.inputTokens, false);
 		assert.equal(loaded.inputMetrics.cacheHit, true);
@@ -140,36 +158,62 @@ test("旧配置缺少 Footer 和 Input Metrics 时默认开启，显式 false �
 	}
 });
 
-test("primary 存在时不读取或改写 namespace/legacy", () => {
+test("当前 namespace 为唯一来源并清理两个旧设置文件", () => {
 	const paths = tempPaths();
 	try {
-		writeJson(paths.primary, { fixedBottomEditor: { enabled: false }, beautifiedInput: { enabled: false } });
-		writeJson(paths.piSettings, { [PI_SETTINGS_NAMESPACE]: { fixedBottomEditor: { enabled: true }, beautifiedInput: { enabled: true } } });
+		writeJson(paths.piSettings, { theme: "alps" });
+		const current = cloneStartupSettings();
+		current.fixedBottomEditor.enabled = false;
+		current.beautifiedInput.enabled = false;
+		writePersistedSettings(current, paths.piSettings);
+		writeJson(paths.standalone, { fixedBottomEditor: { enabled: true }, beautifiedInput: { enabled: true } });
 		writeJson(paths.legacy, { fixedBottomEditor: { enabled: true }, beautifiedInput: { enabled: true } });
-		const beforePi = readFileSync(paths.piSettings, "utf-8");
-		const beforeLegacy = readFileSync(paths.legacy, "utf-8");
 		const loaded = readPersistedSettingsFromPaths(paths);
 		assert.equal(loaded.fixedBottomEditor.enabled, false);
 		assert.equal(loaded.beautifiedInput.enabled, false);
-		assert.equal(readFileSync(paths.piSettings, "utf-8"), beforePi);
-		assert.equal(readFileSync(paths.legacy, "utf-8"), beforeLegacy);
+		assert.equal(readJson(paths.piSettings).theme, "alps");
+		assert.equal(existsSync(paths.standalone), false);
+		assert.equal(existsSync(paths.legacy), false);
+	} finally {
+		rmSync(paths.dir, { recursive: true, force: true });
+	}
+});
+
+test("升级时独立主文件覆盖陈旧 namespace，之后只以 namespace 为准", () => {
+	const paths = tempPaths();
+	try {
+		writeJson(paths.piSettings, {
+			theme: "alps",
+			[PI_SETTINGS_NAMESPACE]: { beautifiedInput: { enabled: false } },
+		});
+		writeJson(paths.standalone, { beautifiedInput: { enabled: true } });
+
+		const migrated = readPersistedSettingsFromPaths(paths);
+		assert.equal(migrated.beautifiedInput.enabled, true);
+		assert.equal(readNamespace(paths.piSettings).beautifiedInput.enabled, true);
+		assert.equal(readNamespace(paths.piSettings)._storageVersion, 1);
+		assert.equal(existsSync(paths.standalone), false);
+
+		writeJson(paths.standalone, { beautifiedInput: { enabled: false } });
+		assert.equal(readPersistedSettingsFromPaths(paths).beautifiedInput.enabled, true);
+		assert.equal(existsSync(paths.standalone), false);
 	} finally {
 		rmSync(paths.dir, { recursive: true, force: true });
 	}
 });
 
 test("同进程两个陈旧快照只合并各自改变字段", () => {
-	const { dir, primary } = tempPaths();
+	const { dir, piSettings } = tempPaths();
 	try {
-		writePersistedSettings(cloneStartupSettings(), primary);
-		const first = readPersistedSettings(primary);
-		const second = readPersistedSettings(primary);
+		writePersistedSettings(cloneStartupSettings(), piSettings);
+		const first = readPersistedSettings(piSettings);
+		const second = readPersistedSettings(piSettings);
 		first.chromeFrame.assistantFrame = false;
 		first.inputMetrics.tokenSpeed = false;
 		second.beautifiedInput.enabled = false;
-		writePersistedSettings(first, primary);
-		writePersistedSettings(second, primary);
-		const loaded = readPersistedSettings(primary);
+		writePersistedSettings(first, piSettings);
+		writePersistedSettings(second, piSettings);
+		const loaded = readPersistedSettings(piSettings);
 		assert.equal(loaded.chromeFrame.assistantFrame, false);
 		assert.equal(loaded.beautifiedInput.enabled, false);
 		assert.equal(loaded.inputMetrics.tokenSpeed, false);
@@ -179,8 +223,8 @@ test("同进程两个陈旧快照只合并各自改变字段", () => {
 	}
 });
 
-test("多进程压力写入保留每个独立字段且不留 lock/tmp", async () => {
-	const { dir, primary } = tempPaths();
+test("多进程压力写入 namespace，保留宿主字段且不留 lock/tmp", async () => {
+	const { dir, piSettings } = tempPaths();
 	try {
 		const worker = resolve(import.meta.dirname, "settings-writer-worker.ts");
 		const specs = [
@@ -193,11 +237,11 @@ test("多进程压力写入保留每个独立字段且不留 lock/tmp", async ()
 			["shortcuts", "copyEditor", "\"ctrl+alt+g\""],
 		] as const;
 		for (let round = 0; round < 3; round += 1) {
-			writeJson(primary, cloneStartupSettings());
+			writeJson(piSettings, { theme: "alps", [PI_SETTINGS_NAMESPACE]: cloneStartupSettings() });
 			const go = join(dir, `go-${round}`);
 			const children = specs.map(([section, key, value], index) => {
 				const ready = join(dir, `ready-${round}-${index}`);
-				const child = spawn(process.execPath, ["--experimental-strip-types", worker, primary, ready, go, section, key, value], { stdio: "inherit" });
+				const child = spawn(process.execPath, ["--experimental-strip-types", worker, piSettings, ready, go, section, key, value], { stdio: "inherit" });
 				return { child, ready };
 			});
 			const waitArray = new Int32Array(new SharedArrayBuffer(4));
@@ -209,7 +253,9 @@ test("多进程压力写入保留每个独立字段且不留 lock/tmp", async ()
 				child.once("error", reject);
 				child.once("exit", (code) => code === 0 ? resolvePromise() : reject(new Error(`worker exit ${code}`)));
 			})));
-			const raw = readJson(primary);
+			const root = readJson(piSettings);
+			const raw = root[PI_SETTINGS_NAMESPACE];
+			assert.equal(root.theme, "alps");
 			assert.equal(raw.chromeFrame.assistantFrame, false);
 			assert.equal(raw.beautifiedInput.enabled, false);
 			assert.equal(raw.footer.enabled, false);
@@ -218,25 +264,26 @@ test("多进程压力写入保留每个独立字段且不留 lock/tmp", async ()
 			assert.equal(raw.animations.fps, 24);
 			assert.equal(raw.shortcuts.copyEditor, "ctrl+alt+g");
 			assert.equal(raw.fixedBottomEditor.enabled, true);
-			assert.equal(existsSync(`${primary}.lock`), false);
-			assert.equal(readdirSync(dirname(primary)).some((name) => name.endsWith(".tmp")), false);
+			assert.equal(existsSync(`${piSettings}.lock`), false);
+			assert.equal(readdirSync(dirname(piSettings)).some((name) => name.endsWith(".tmp")), false);
 		}
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
 
-test("测试隔离路径只写独立文件，不触碰 Pi settings", () => {
+test("ALPS_PI_SETTINGS_PATH 指向测试用 Pi settings 根文件", () => {
 	const paths = tempPaths();
 	const previous = process.env.ALPS_PI_SETTINGS_PATH;
 	try {
-		process.env.ALPS_PI_SETTINGS_PATH = paths.primary;
+		process.env.ALPS_PI_SETTINGS_PATH = paths.piSettings;
 		writeJson(paths.piSettings, { theme: "dark" });
 		const settings = cloneStartupSettings();
 		settings.beautifiedInput.enabled = false;
 		writePersistedSettings(settings);
-		assert.equal(readJson(paths.primary).beautifiedInput.enabled, false);
-		assert.deepEqual(readJson(paths.piSettings), { theme: "dark" });
+		const root = readJson(paths.piSettings);
+		assert.equal(root.theme, "dark");
+		assert.equal(root[PI_SETTINGS_NAMESPACE].beautifiedInput.enabled, false);
 	} finally {
 		if (previous === undefined) delete process.env.ALPS_PI_SETTINGS_PATH;
 		else process.env.ALPS_PI_SETTINGS_PATH = previous;
@@ -244,11 +291,33 @@ test("测试隔离路径只写独立文件，不触碰 Pi settings", () => {
 	}
 });
 
-test("旧快捷键字段保持可读但 UI 只使用现代 editor/input 子集", () => {
-	const { dir, primary } = tempPaths();
+test("损坏的 Pi settings 不被覆盖，旧设置保留供恢复", () => {
+	const paths = tempPaths();
+	const previousDebug = console.debug;
 	try {
-		writeJson(primary, { shortcuts: { ...DEFAULT_SETTINGS.shortcuts, jumpChatBottom: "ctrl+alt+g" } });
-		const loaded = readPersistedSettings(primary);
+		console.debug = () => {};
+		writeFileSync(paths.piSettings, "{ broken", "utf-8");
+		writeJson(paths.standalone, { beautifiedInput: { enabled: false } });
+		const loaded = readPersistedSettingsFromPaths(paths);
+		assert.equal(loaded.beautifiedInput.enabled, false);
+		assert.equal(readFileSync(paths.piSettings, "utf-8"), "{ broken");
+		assert.equal(existsSync(paths.standalone), true);
+		writePersistedSettings(loaded, paths.piSettings);
+		assert.equal(readFileSync(paths.piSettings, "utf-8"), "{ broken");
+		assert.equal(existsSync(paths.standalone), true);
+	} finally {
+		console.debug = previousDebug;
+		rmSync(paths.dir, { recursive: true, force: true });
+	}
+});
+
+test("旧快捷键字段保持可读但 UI 只使用现代 editor/input 子集", () => {
+	const { dir, piSettings } = tempPaths();
+	try {
+		writeJson(piSettings, {
+			[PI_SETTINGS_NAMESPACE]: { shortcuts: { ...DEFAULT_SETTINGS.shortcuts, jumpChatBottom: "ctrl+alt+g" } },
+		});
+		const loaded = readPersistedSettings(piSettings);
 		assert.equal(loaded.shortcuts.jumpChatBottom, "ctrl+alt+g");
 		assert.equal(loaded.shortcuts.stashEditor, DEFAULT_SETTINGS.shortcuts.stashEditor);
 	} finally {

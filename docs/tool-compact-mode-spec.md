@@ -49,7 +49,7 @@ Collapsed 只有一类连续组：
 
 可见且非空的 Thinking、User 或 Assistant 正文都会关闭当前 Tools 组。Thinking 使用 Pi 原始逐组件渲染，不进入 registry，也不做聚合、摘要、Markdown 清理或内容过滤。`assistantFrame` 开启时 Thinking 与 Assistant 正文各自使用对应线框，关闭时两者都保持 Pi 原始无框输出；该开关不改变分组边界。空内容、隐藏内容和只含 tool call 的 Assistant 不创建 frame，也不改变分组。
 
-Tools 组内仅首项作为锚点渲染，其他成员不再各自输出 frame。成员按稳定身份去重；重复渲染、streaming 更新和组件实例重建会替换原记录，不增加调用行或上下文贡献。历史恢复必须收敛到与实时渲染相同的顺序、状态、摘要和贡献值。
+Tools 组内仅首项作为锚点渲染，其他成员不再各自输出 frame。成员按稳定身份去重；重复渲染、streaming 更新和组件实例重建会替换原记录，不增加调用行或上下文贡献。已完整观察且由锚点代为显示的稳定 Tool 成员，必须在 Pi 原生 render 前短路；width、配置、状态、参数、结果、展开状态或 lifecycle 变化时恢复一次完整 render 并更新聚合。历史恢复必须收敛到与实时渲染相同的顺序、状态、摘要和贡献值。
 
 ### Tools 显示
 

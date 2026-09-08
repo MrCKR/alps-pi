@@ -30,8 +30,8 @@
 - 不 patch `SettingsSelectorComponent` 或 `InteractiveMode.showSettingsSelector()`。
 - 不继续使用 settings overlay。
 - `/alps-pi preview` 保持 overlay，因为它是展示预览，不是设置页。
-- `ALPS_PI_SETTINGS_PATH` 仍作为测试隔离路径；存在时不读写 Pi 原生 settings。
-- 旧路径 `~/.pi/agent/alps-pi/settings.json` 只做 fallback 读取和一次迁移，不主动删除。
+- `ALPS_PI_SETTINGS_PATH` 仍作为测试隔离路径；它指向测试用的完整 Pi settings 根文件，不读写用户的默认 settings。
+- 旧路径 `~/.pi/agent/alps-pi/settings.json` 和 `~/.pi/agent/alps-pi.json` 只做 fallback 读取和一次迁移，namespace 写入成功后删除。
 
 ## 存储策略
 
@@ -43,10 +43,10 @@
 
 读取顺序：
 
-1. 如果 `ALPS_PI_SETTINGS_PATH` 存在，读取该文件。
-2. 否则读取 `~/.pi/agent/settings.json` 的 `"alps-pi"` 字段。
-3. 如果字段不存在，再读取旧 `~/.pi/agent/alps-pi/settings.json`。
-4. 如果旧设置有效，则写入 `~/.pi/agent/settings.json` 的 `"alps-pi"` 字段。
+1. 如果 `ALPS_PI_SETTINGS_PATH` 存在，把它作为测试用的完整 Pi settings 根文件；否则使用 `~/.pi/agent/settings.json`。
+2. 已由当前存储层写入的 `"alps-pi"` namespace 是唯一主源。
+3. 升级时如果旧 `~/.pi/agent/alps-pi/settings.json` 仍存在且 namespace 尚未标记为当前存储格式，优先迁移旧主文件，避免被更早的陈旧 namespace 覆盖。
+4. 其余情况依次读取已有 namespace、`~/.pi/agent/alps-pi.json` 和默认值；旧设置写入 namespace 成功后删除两个独立设置文件。
 
 写入要求：
 

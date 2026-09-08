@@ -87,9 +87,21 @@ test("regular/fullscreen mode switch 保持单一公开 editor/footer owner 且�
 			setStatus() {},
 		},
 	};
-	const runtime = createBottomInputRuntime({ startClock: false });
-	runtime.bindSession(ctx);
-	const status = runtime.configure({ beautifiedInputEnabled: true });
+	const runtime = createBottomInputRuntime();
+	let intervalCalls = 0;
+	const originalSetInterval = globalThis.setInterval;
+	globalThis.setInterval = ((..._args: Parameters<typeof setInterval>) => {
+		intervalCalls += 1;
+		throw new Error("Bottom Input must not schedule a full-tree render clock");
+	}) as unknown as typeof setInterval;
+	let status;
+	try {
+		runtime.bindSession(ctx);
+		status = runtime.configure({ beautifiedInputEnabled: true });
+	} finally {
+		globalThis.setInterval = originalSetInterval;
+	}
+	assert.equal(intervalCalls, 0);
 	assert.equal(status.installed, true);
 	assert.equal(editorInstallCount, 1);
 	assert.equal(footerInstallCount, 1);

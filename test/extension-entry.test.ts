@@ -10,6 +10,7 @@ import { createInitialPatchState, PATCH_KEY } from "../src/features/chrome-frame
 import { configureAnimations, disposeAnimations, getAnimationsPatchState, getAnimationsRuntimeState } from "../src/features/animations/index.ts";
 import type { BottomInputRuntime } from "../src/features/bottom-input/index.ts";
 import { DEFAULT_SETTINGS } from "../src/settings.ts";
+import { PI_SETTINGS_NAMESPACE } from "../src/settings-store.ts";
 import type { PiRuntimeCapabilities } from "../src/pi-compat.ts";
 
 const TUI_OWNER_KEY = Symbol.for("alps.pi.tui-owner.v1");
@@ -129,6 +130,14 @@ function createHarness(options: { failEnable?: boolean; configureFailure?: boole
 
 const settingsDirs: string[] = [];
 
+function writeTestSettings(path: string, settings: unknown): void {
+	writeFileSync(path, JSON.stringify({ [PI_SETTINGS_NAMESPACE]: settings }), "utf-8");
+}
+
+function readTestSettings(path: string): any {
+	return JSON.parse(readFileSync(path, "utf-8"))[PI_SETTINGS_NAMESPACE];
+}
+
 test.beforeEach(() => {
 	const dir = mkdtempSync(join(tmpdir(), "alps-pi-entry-"));
 	settingsDirs.push(dir);
@@ -202,11 +211,11 @@ test("session_start 配置 animations 并调用统一 runtime", () => {
 
 test("Master Switch OFF 门控输入框与动画且保留子项偏好", () => {
 	const file = process.env.ALPS_PI_SETTINGS_PATH!;
-	writeFileSync(file, JSON.stringify({
+	writeTestSettings(file, {
 		chromeFrame: { enabled: false },
 		beautifiedInput: { enabled: true },
 		animations: { enabled: true },
-	}), "utf-8");
+	});
 	const harness = createHarness();
 
 	harness.emit("session_start", { id: "master-off" });
@@ -298,7 +307,7 @@ test("shutdown 后下一次 TUI session_start 会按持久化设置恢复用户�
 
 test("session_start 会按持久化设置切换 beautified input", () => {
 	const file = process.env.ALPS_PI_SETTINGS_PATH!;
-	writeFileSync(file, JSON.stringify({ beautifiedInput: { enabled: false } }), "utf-8");
+	writeTestSettings(file, { beautifiedInput: { enabled: false } });
 	const harness = createHarness();
 
 	harness.emit("session_start", { id: "beautified" });
@@ -316,14 +325,14 @@ test("Beautified Input 安装失败时保留用户偏好 true", () => {
 
 test("扩展启动时读取持久化设置", () => {
 	const file = process.env.ALPS_PI_SETTINGS_PATH!;
-	writeFileSync(file, JSON.stringify({
+	writeTestSettings(file, {
 		chromeFrame: { enabled: false, assistantFrame: false, toolCompactMode: false, compactEditTool: true },
 		fixedBottomEditor: { enabled: false },
 		beautifiedInput: { enabled: false },
 		footer: { enabled: false },
 		animations: { enabled: false, thinking: "aurora", fps: 8 },
 		bottomStatus: { enabled: true },
-	}), "utf-8");
+	});
 
 	const harness = createHarness();
 	harness.emit("session_start", { id: "persisted" });
@@ -486,7 +495,7 @@ test("命令层只切换 Beautified Input，并原样持久化 legacy fixed 偏�
 	assert.deepEqual(harness.runtimeCalls, ["bind:command-ctx", "beautified:false", "footer:true"]);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled, false);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.fixedBottomEditor.enabled, true);
-	const persisted = JSON.parse(readFileSync(process.env.ALPS_PI_SETTINGS_PATH!, "utf-8"));
+	const persisted = readTestSettings(process.env.ALPS_PI_SETTINGS_PATH!);
 	assert.equal(persisted.fixedBottomEditor.enabled, true);
 });
 
@@ -511,6 +520,6 @@ test("命令层独立切换 Footer 并持久化", async () => {
 	assert.deepEqual(harness.runtimeCalls, ["shortcuts", "beautified:true", "footer:false"]);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.beautifiedInput.enabled, true);
 	assert.equal((globalThis as any)[PATCH_KEY].config.settings.footer.enabled, false);
-	const persisted = JSON.parse(readFileSync(process.env.ALPS_PI_SETTINGS_PATH!, "utf-8"));
+	const persisted = readTestSettings(process.env.ALPS_PI_SETTINGS_PATH!);
 	assert.equal(persisted.footer.enabled, false);
 });

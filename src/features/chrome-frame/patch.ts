@@ -5,6 +5,7 @@ import { PI_COMPONENTS, inspectPiRuntimeCapabilities, type PiRuntimeCapabilities
 import { isEmptyMessageChrome, renderCompactThinkingBox, renderNeonBox } from "./chrome.ts";
 import {
 	getCollapsedBoundaryElapsed,
+	isCollapsedFrameHidden,
 	observeCollapsedFrame,
 	resetCollapsedRegistry,
 	synchronizeCollapsedMode,
@@ -71,12 +72,37 @@ type RenderCacheEntry = {
 	lines: string[];
 };
 
+type CollapsedToolRenderFingerprint = {
+	width: number;
+	configVersion: number;
+	status?: ChromeStatus;
+	toolName?: string;
+	args: unknown;
+	result: unknown;
+	resultContent: unknown;
+	resultDetails: unknown;
+	isPartial: unknown;
+	expanded: unknown;
+	executionStarted: unknown;
+	argsComplete: unknown;
+	showImages: unknown;
+	imageWidthCells: unknown;
+	hideComponent: unknown;
+	callRendererComponent: unknown;
+	resultRendererComponent: unknown;
+	convertedImageCount: number | undefined;
+	lifecycleUpdatedAt: number | undefined;
+	lifecycleActivityOrder: number | undefined;
+	lifecycleActive: boolean | undefined;
+};
+
 // 缓存键随终端内联图片抑制语义升级，避免热加载复用带图片占位的旧输出。
 const RENDER_CACHE_KEY = Symbol.for("alps.pi.renderCache.v6");
+const COLLAPSED_TOOL_RENDER_KEY = Symbol.for("alps.pi.collapsedToolRender.v1");
 const TIMING_STATE_KEY = Symbol.for("alps.pi.timingState.v1");
 const TRACKED_SETTINGS_KEY = Symbol.for("alps.pi.trackedSettings.v1");
 const WRAPPED_RENDER_KEY = Symbol.for("alps.pi.wrappedRender.v2");
-const WRAPPED_RENDER_VERSION = 14;
+const WRAPPED_RENDER_VERSION = 15;
 const CACHE_KEY_SEPARATOR = "\x1f";
 
 export type ChromeFrameLifecycleEvent =
@@ -759,6 +785,51 @@ function collapsedFrameIdentity(kind: ChromeKind, instance: any): string | undef
 	return timestamp === undefined ? undefined : `${kind}:${timestamp}`;
 }
 
+function createCollapsedToolRenderFingerprint(
+	instance: any,
+	width: number,
+	configVersion: number,
+	status: ChromeStatus | undefined,
+	toolName: string | undefined,
+): CollapsedToolRenderFingerprint {
+	const lifecycleKey = frameLifecycleKey("tool", instance);
+	const lifecycle = lifecycleKey ? lifecycleTimingRegistry.get(lifecycleKey) : undefined;
+	return {
+		width,
+		configVersion,
+		status,
+		toolName,
+		args: instance?.args,
+		result: instance?.result,
+		resultContent: instance?.result?.content,
+		resultDetails: instance?.result?.details,
+		isPartial: instance?.isPartial,
+		expanded: instance?.expanded,
+		executionStarted: instance?.executionStarted,
+		argsComplete: instance?.argsComplete,
+		showImages: instance?.showImages,
+		imageWidthCells: instance?.imageWidthCells,
+		hideComponent: instance?.hideComponent,
+		callRendererComponent: instance?.callRendererComponent,
+		resultRendererComponent: instance?.resultRendererComponent,
+		convertedImageCount: instance?.convertedImages instanceof Map ? instance.convertedImages.size : undefined,
+		lifecycleUpdatedAt: lifecycle?.updatedAt,
+		lifecycleActivityOrder: lifecycle?.activityOrder,
+		lifecycleActive: lifecycle?.active,
+	};
+}
+
+function sameCollapsedToolRenderFingerprint(
+	left: CollapsedToolRenderFingerprint | undefined,
+	right: CollapsedToolRenderFingerprint,
+): boolean {
+	if (!left) return false;
+	for (const key of Object.keys(right) as Array<keyof CollapsedToolRenderFingerprint>) {
+		if (!Object.is(left[key], right[key])) return false;
+	}
+	return true;
+}
+
 function collapsedDetail(kind: ChromeKind, toolName: string | undefined, lines: readonly string[], instance: any): string | undefined {
 	const source = kind === "tool" ? compactToolLines(lines, instance)[0] : firstVisibleTextLine(lines);
 	if (!source) return undefined;
@@ -910,6 +981,21 @@ export function createWrappedRender(
 			const unframedAssistant = kind === "assistant"
 				&& !config.settings.chromeFrame.assistantFrame;
 			synchronizeCollapsedMode(collapsedMode);
+			const collapsedIdentity = collapsedMode ? collapsedFrameIdentity(renderKind, instance) : undefined;
+			const collapsedToolFingerprint = collapsedMode && renderKind === "tool"
+				? createCollapsedToolRenderFingerprint(instance, numericWidth, state.configVersion, status, toolName)
+				: undefined;
+			if (
+				collapsedToolFingerprint
+				&& isCollapsedFrameHidden({ instance, identity: collapsedIdentity })
+				&& sameCollapsedToolRenderFingerprint(
+					(instance as any)[COLLAPSED_TOOL_RENDER_KEY] as CollapsedToolRenderFingerprint | undefined,
+					collapsedToolFingerprint,
+				)
+			) {
+				branch = "empty";
+				return debugReturn ? debugReturn([], branch) : [];
+			}
 			if (unframedAssistant && !collapsedMode) {
 				branch = "fallback";
 				const rawFallback = fallback();
@@ -971,7 +1057,7 @@ export function createWrappedRender(
 			if (collapsedMode) {
 				const collapsedInput = {
 					instance,
-					identity: collapsedFrameIdentity(renderKind, instance),
+					identity: collapsedIdentity,
 					kind: renderKind,
 					visible: true,
 					framed: !unframedAssistant,
@@ -990,6 +1076,9 @@ export function createWrappedRender(
 				const collapsed = observeCollapsedFrame(collapsedInput);
 				if (collapsed) {
 					if (!collapsed.isAnchor) {
+						if (collapsedToolFingerprint) {
+							(instance as any)[COLLAPSED_TOOL_RENDER_KEY] = collapsedToolFingerprint;
+						}
 						branch = "empty";
 						return debugReturn ? debugReturn([], branch) : [];
 					}

@@ -74,6 +74,7 @@ type RuntimeUI = {
 type RuntimeUIReadResult = { stale: false; ui?: RuntimeUI } | { stale: true };
 
 type BottomInputRuntimeOptions = {
+	/** @deprecated 耗时随真实 UI 事件刷新；不再启动会重绘完整历史的独立时钟。 */
 	startClock?: boolean;
 	now?: () => number;
 	shortcuts?: Partial<BottomInputShortcuts>;
@@ -92,7 +93,6 @@ const FALLBACK_EDITOR_THEME = {
 	selectList: {},
 };
 const STASH_STATUS_KEY = "alps-pi-stash";
-const STATUS_RENDER_INTERVAL_MS = 1_000;
 const STATUS_RENDER_DEBOUNCE_MS = 33;
 const LAYOUT_CACHE_TTL_MS = 250;
 const STREAMING_LAYOUT_CACHE_TTL_MS = 1_000;
@@ -103,7 +103,6 @@ export function createBottomInputRuntime(options: BottomInputRuntimeOptions = {}
 }
 
 class BottomInputRuntimeImpl implements BottomInputRuntime {
-	private readonly startClock: boolean;
 	private readonly now: () => number;
 	private readonly copyToClipboardImpl: (text: string) => Promise<void> | void;
 	private ctx: any;
@@ -124,7 +123,6 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	private editorTheme: any;
 	private tui: any;
 	private removeInputListener: (() => void) | null = null;
-	private timer: ReturnType<typeof setInterval> | null = null;
 	private renderTimer: ReturnType<typeof setTimeout> | null = null;
 	private renderPendingFull = false;
 	private editorOwnerGeneration: number | null = null;
@@ -143,7 +141,6 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	private lastTuiFailure: string | undefined;
 
 	constructor(options: BottomInputRuntimeOptions) {
-		this.startClock = options.startClock !== false;
 		this.now = options.now ?? (() => Date.now());
 		this.copyToClipboardImpl = options.copyToClipboard
 			?? ((PiAgent as { copyToClipboard?: (text: string) => Promise<void> | void }).copyToClipboard ?? (() => undefined));
@@ -428,10 +425,8 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	private syncEditorServices(): void {
 		if (this.editorInstalled) {
 			this.installInputListener();
-			this.startClockTimer();
 			return;
 		}
-		this.stopClockTimer();
 		this.removeInputListener?.();
 		this.removeInputListener = null;
 		if (!this.footerInstalled) {
@@ -443,7 +438,6 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	private disable(): BottomInputRuntimeStatus {
 		if (!this.editorInstalled && !this.footerInstalled && !this.editorFactory && !this.footerFactory && !this.failure) return this.toStatus();
 		this.debug("disable", this.ctx);
-		this.stopClockTimer();
 		this.stopRenderTimer();
 		this.removeInputListener?.();
 		this.removeInputListener = null;
@@ -671,19 +665,6 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		this.disable();
 		this.failure = reason;
 		return this.toStatus();
-	}
-
-	private startClockTimer(): void {
-		if (!this.startClock || this.timer) return;
-		const generation = this.generation;
-		this.timer = setInterval(() => generation === this.generation && this.requestRender(), STATUS_RENDER_INTERVAL_MS);
-		this.timer.unref?.();
-	}
-
-	private stopClockTimer(): void {
-		if (!this.timer) return;
-		clearInterval(this.timer);
-		this.timer = null;
 	}
 
 	private stopRenderTimer(): void {

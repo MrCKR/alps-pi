@@ -350,12 +350,21 @@ function rebuildGroups(): void {
 	for (const group of groups) queueRenderIfNeeded(group);
 }
 
-function existingEntry(input: CollapsedFrameInput): CollapsedEntry | undefined {
+type CollapsedFrameReference = Pick<CollapsedFrameInput, "instance" | "identity">;
+
+function existingEntry(input: CollapsedFrameReference): CollapsedEntry | undefined {
 	const byInstance = instanceEntries.get(input.instance);
 	if (byInstance?.generation === registryGeneration) return byInstance;
 	if (!input.identity) return undefined;
 	const byIdentity = identityEntries.get(input.identity);
 	return byIdentity?.generation === registryGeneration ? byIdentity : undefined;
+}
+
+/** 已完整观察过且当前由同组锚点代为显示的成员，可以跳过昂贵的原生 render。 */
+export function isCollapsedFrameHidden(input: CollapsedFrameReference): boolean {
+	if (!activeMode) return false;
+	const entry = existingEntry(input);
+	return entry?.role === "member" && Boolean(entry.group) && entry.group?.anchor !== entry;
 }
 
 function sameContribution(left: ContextContribution | undefined, right: ContextContribution | undefined): boolean {
