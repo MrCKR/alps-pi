@@ -18,6 +18,8 @@ function createHarness() {
 	const patchCalls: string[] = [];
 	const beautifiedInputCalls: boolean[] = [];
 	const settingsChangedCalls: any[] = [];
+	// 模拟 Pi 1.5 在替换 editor 时抢走 overlay 焦点的行为。
+	const focusStealHooks: Array<() => void> = [];
 	const pi = {
 		registerCommand(name: string, options: any) {
 			commands.set(name, options);
@@ -49,6 +51,9 @@ function createHarness() {
 						children: [{ children: [currentEditor] }],
 						requestRenderCalls: [] as boolean[],
 						get focusedComponent() {
+							return focusedComponent;
+						},
+						getFocusedComponent() {
 							return focusedComponent;
 						},
 						setFocus(component: any) {
@@ -93,6 +98,7 @@ function createHarness() {
 	registerAlpsPiCommand(pi as any, {
 		enable: () => {
 			patchCalls.push("enable");
+			for (const hook of focusStealHooks) hook();
 			const state = (globalThis as any)[PATCH_KEY];
 			state.enabled = true;
 			state.config.settings.chromeFrame.enabled = true;
@@ -101,6 +107,7 @@ function createHarness() {
 		},
 		disable: () => {
 			patchCalls.push("disable");
+			for (const hook of focusStealHooks) hook();
 			const state = (globalThis as any)[PATCH_KEY];
 			state.enabled = false;
 			state.config.settings.chromeFrame.enabled = false;
@@ -128,9 +135,13 @@ function createHarness() {
 		patchCalls,
 		beautifiedInputCalls,
 		settingsChangedCalls,
+		focusStealHooks,
 		currentEditor,
 		previousEditor,
 		getFocusedComponent: () => focusedComponent,
+		stealFocusTo: (component: any) => {
+			focusedComponent = component;
+		},
 	};
 }
 
@@ -195,6 +206,59 @@ test("设置界面使用 overlay custom 并在切换后恢复 overlay 焦点", a
 	assert.equal(harness.overlayHandles.length, 1);
 	await Promise.resolve();
 	assert.equal(harness.overlayHandles[0].focusCalls, 1);
+	component.handleInput("q");
+	await pending;
+});
+
+test("总开关切换后拉回设置 overlay 焦点，设置页仍可关闭", async () => {
+	const harness = createHarness();
+	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
+	await Promise.resolve();
+	const component = harness.customCalls[0].component;
+	// Pi 会把焦点交给替换后的 editor；这里复现同一行为。
+	harness.focusStealHooks.push(() => harness.stealFocusTo(harness.currentEditor));
+
+	component.handleInput(" ");
+	await Promise.resolve();
+	assert.deepEqual(harness.patchCalls, ["disable"]);
+	assert.equal(harness.overlayHandles[0].focusCalls, 1);
+	assert.equal(harness.getFocusedComponent(), component);
+
+	component.handleInput("q");
+	await pending;
+	assert.equal(harness.getFocusedComponent(), harness.currentEditor);
+});
+
+test("总开关关闭后关闭设置页，焦点交给替换后的新 editor", async () => {
+	const harness = createHarness();
+	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
+	await Promise.resolve();
+	const component = harness.customCalls[0].component;
+	harness.focusStealHooks.push(() => harness.stealFocusTo(harness.currentEditor));
+
+	component.handleInput(" ");
+	await Promise.resolve();
+	component.handleInput("q");
+	await pending;
+
+	// overlay 的 preFocus 指向已被移除的旧 editor，必须回到当前实例。
+	assert.equal(harness.getFocusedComponent(), harness.currentEditor);
+});
+
+test("重新开启总开关同样拉回 overlay 焦点", async () => {
+	const harness = createHarness();
+	const pending = harness.commands.get("alps-pi").handler("", harness.ctx);
+	await Promise.resolve();
+	const component = harness.customCalls[0].component;
+	harness.focusStealHooks.push(() => harness.stealFocusTo(harness.currentEditor));
+
+	component.handleInput(" ");
+	component.handleInput(" ");
+	await Promise.resolve();
+	assert.deepEqual(harness.patchCalls, ["disable", "enable"]);
+	assert.equal(harness.overlayHandles[0].focusCalls, 2);
+	assert.equal(harness.getFocusedComponent(), component);
+
 	component.handleInput("q");
 	await pending;
 });

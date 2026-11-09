@@ -21,6 +21,14 @@ export type BeautifiedEditorFrameInput = {
 
 export const MIN_FRAME_WIDTH = 8;
 const FIXED_EDITOR_CURSOR_MARKER = CURSOR_MARKER;
+/**
+ * pi-tui 1.5+ 用 APC fake cursor 标记光标格：硬件光标隐藏时由 TUI 转成反显。
+ * 旧版 pi-tui 直接输出 SGR 反显，没有这两个标记；两个版本的字面量固定不变。
+ */
+const FAKE_CURSOR_START = "\x1b_pi:fc\x07";
+const FAKE_CURSOR_END = "\x1b_pi:/fc\x07";
+/** 必须穿过净化的 editor 光标标记；顺序无关，但每项都要原样还原。 */
+const EDITOR_CURSOR_MARKERS = [FIXED_EDITOR_CURSOR_MARKER, FAKE_CURSOR_START, FAKE_CURSOR_END] as const;
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const BOTTOM_METRIC_COLORS = {
 	input: "#7AA2F7",
@@ -160,15 +168,51 @@ function fitStatusLabel(label: string, maxWidth: number): string {
 function renderContentLine(line: string, width: number, theme: ThemeLike, borderColor?: (text: string) => string): string {
 	const innerWidth = Math.max(0, width - 4);
 	const safeLine = sanitizeEditorLine(line);
-	const clipped = closeOpenAnsiCodes(truncateEditorLinePreservingCursor(safeLine, innerWidth));
+	const clipped = closeFakeCursorState(closeOpenAnsiCodes(truncateEditorLinePreservingCursor(safeLine, innerWidth)));
 	const padded = padToWidth(clipped, innerWidth);
 	return styleBorder(theme, borderColor, "│") + " " + padded + " " + styleBorder(theme, borderColor, "│");
 }
 
+/**
+ * 净化 editor 行，同时保留全部光标标记。
+ * 净化只放行 SGR，APC 光标标记必须先换成占位符，否则光标会消失。
+ */
 function sanitizeEditorLine(line: string): string {
-	const placeholder = "\uE000ALPS_CURSOR\uE000";
-	const withPlaceholder = String(line).split(FIXED_EDITOR_CURSOR_MARKER).join(placeholder);
-	return sanitizeTerminalText(withPlaceholder, { allowNewline: false, allowTab: true, preserveSgr: true }).split(placeholder).join(FIXED_EDITOR_CURSOR_MARKER);
+	const masked = maskEditorCursorMarkers(String(line));
+	const sanitized = sanitizeTerminalText(masked, { allowNewline: false, allowTab: true, preserveSgr: true });
+	return unmaskEditorCursorMarkers(sanitized);
+}
+
+function maskEditorCursorMarkers(line: string): string {
+	let masked = line;
+	EDITOR_CURSOR_MARKERS.forEach((marker, index) => {
+		masked = masked.split(marker).join(cursorPlaceholder(index));
+	});
+	return masked;
+}
+
+function unmaskEditorCursorMarkers(line: string): string {
+	let restored = line;
+	EDITOR_CURSOR_MARKERS.forEach((marker, index) => {
+		restored = restored.split(cursorPlaceholder(index)).join(marker);
+	});
+	return restored;
+}
+
+function cursorPlaceholder(index: number): string {
+	return `\uE000ALPS_CURSOR_${index}\uE000`;
+}
+
+/** 裁剪可能丢掉 fake cursor 的收尾标记；补齐结束标记，避免反显泄漏到右边框与后续行。 */
+function closeFakeCursorState(line: string): string {
+	const missing = countOccurrences(line, FAKE_CURSOR_START) - countOccurrences(line, FAKE_CURSOR_END);
+	return missing > 0 ? line + FAKE_CURSOR_END.repeat(missing) : line;
+}
+
+function countOccurrences(line: string, needle: string): number {
+	let count = 0;
+	for (let index = line.indexOf(needle); index !== -1; index = line.indexOf(needle, index + needle.length)) count += 1;
+	return count;
 }
 
 function truncateEditorLinePreservingCursor(line: string, width: number): string {

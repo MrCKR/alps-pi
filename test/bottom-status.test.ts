@@ -731,6 +731,40 @@ test("线框内容窄宽裁剪时保留 cursor marker", () => {
 	assert.ok(framed.every((line) => visibleWidth(line) <= 12));
 });
 
+test("线框保留 pi 1.5+ fake cursor 标记，隐藏硬件光标时仍可见", () => {
+	const fakeCursorStart = "\x1b_pi:fc\x07";
+	const fakeCursorEnd = "\x1b_pi:/fc\x07";
+	const framed = renderBeautifiedEditorFrame({
+		editorLines: [`> hello ${CURSOR_MARKER}${fakeCursorStart}x${fakeCursorEnd}`],
+		width: 24,
+		theme: createFakeTheme(),
+		status: { model: null, thinking: null, context: null, elapsed: null },
+	});
+
+	assert.equal(framed[1].includes(CURSOR_MARKER), true);
+	assert.equal(framed[1].includes(`${CURSOR_MARKER}${fakeCursorStart}x${fakeCursorEnd}`), true);
+	assert.ok(framed.every((line) => visibleWidth(line) <= 24));
+});
+
+test("线框裁剪补齐 fake cursor 结束标记，避免反显泄漏", () => {
+	const fakeCursorStart = "\x1b_pi:fc\x07";
+	const fakeCursorEnd = "\x1b_pi:/fc\x07";
+	const framed = renderBeautifiedEditorFrame({
+		editorLines: [`0123456789${CURSOR_MARKER}${fakeCursorStart}ab${fakeCursorEnd}cdef`],
+		width: 12,
+		theme: createFakeTheme(),
+		status: { model: null, thinking: null, context: null, elapsed: null },
+	});
+	const line = framed[1];
+
+	assert.equal(line.includes(CURSOR_MARKER), true);
+	assert.equal(countOf(line, fakeCursorStart), countOf(line, fakeCursorEnd));
+});
+
+function countOf(line: string, needle: string): number {
+	return line.split(needle).length - 1;
+}
+
 test("线框内容裁剪不拆分 ANSI 与 emoji grapheme", () => {
 	const marker = CURSOR_MARKER;
 	const framed = renderBeautifiedEditorFrame({

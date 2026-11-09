@@ -67,12 +67,22 @@ function hasVisibleOverlay(tui: any): boolean {
 	}
 }
 
-function restoreEditorFocusAfterSettings(tui: any): void {
+/** 读取 TUI 当前聚焦组件；旧版或测试替身不支持时返回 undefined。 */
+function readFocusedComponent(tui: any): any {
+	try {
+		return typeof tui?.getFocusedComponent === "function" ? tui.getFocusedComponent() : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function restoreEditorFocusAfterSettings(tui: any, preferred?: any): void {
 	try {
 		if (!tui || hasVisibleOverlay(tui)) return;
-		const editor = findCurrentEditorInTree(tui.editorContainer) ?? findCurrentEditorInTree({ children: tui.children });
+		// 设置页打开期间可能替换 editor；overlay 自带的 preFocus 会指向已移除的实例。
+		// preferred 是 Pi 替换 editor 时自动聚焦的新实例，优先级高于树搜索。
+		const editor = preferred ?? findCurrentEditorInTree(tui.editorContainer) ?? findCurrentEditorInTree({ children: tui.children });
 		if (!editor || typeof tui.setFocus !== "function") return;
-		// 设置页打开期间可能替换 editor；overlay 自带的 preFocus 会指向已移除的实例，这里显式拉回当前 editor。
 		tui.setFocus(editor);
 		if (typeof tui.requestRender === "function") tui.requestRender(true);
 	} catch {
@@ -117,6 +127,7 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 						const fallbackTheme = ui.theme ?? getRuntimeTheme();
 						let settingsTui: any;
 						let overlayHandle: { focus?: () => void } | undefined;
+						let replacementEditorFocus: any;
 						const refocusSettingsOverlay = () => {
 							if (!overlayHandle) return;
 							queueMicrotask(() => {
@@ -127,23 +138,32 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 								}
 							});
 						};
+						/**
+						 * 执行会重装 editor/footer 的设置变更。
+						 * Pi 替换 editor 后会把焦点交给新 editor；这里记住该实例，并把焦点拉回 overlay。
+						 */
+						const applyEditorSensitiveChange = <T>(operation: () => T): T => {
+							const before = readFocusedComponent(settingsTui);
+							const result = operation();
+							const after = readFocusedComponent(settingsTui);
+							if (after && after !== before) replacementEditorFocus = after;
+							refocusSettingsOverlay();
+							return result;
+						};
 						await ui.custom((tui: any, theme: any, _keybindings: any, done: () => void) => {
 							settingsTui = tui;
 							return createSettingsComponent(theme ?? fallbackTheme, done, {
 								getState: getGlobalPatchState,
-								setMasterEnabled: (enabled) => runIfActive(() => {
+								setMasterEnabled: (enabled) => runIfActive(() => applyEditorSensitiveChange(() => {
 									const result = enabled ? enableFn() : disableFn();
 									onSettingsChanged(result.config.settings, ctx);
 									return result;
-								}) ?? getGlobalPatchState(),
-								setBeautifiedInputEnabled: (enabled) => {
-									const result = runIfActive(() => setBeautifiedInputEnabled(enabled, ctx));
-									refocusSettingsOverlay();
-									return result;
-								},
+								})) ?? getGlobalPatchState(),
+								setBeautifiedInputEnabled: (enabled) => applyEditorSensitiveChange(
+									() => runIfActive(() => setBeautifiedInputEnabled(enabled, ctx)),
+								),
 								onSettingsChanged: (settings) => {
-									runIfActive(() => onSettingsChanged(settings, ctx));
-									refocusSettingsOverlay();
+									applyEditorSensitiveChange(() => runIfActive(() => onSettingsChanged(settings, ctx)));
 								},
 								requestRender: () => runIfActive(() => settingsTui?.requestRender?.()),
 							});
@@ -154,7 +174,7 @@ export function registerAlpsPiCommand(pi: ExtensionAPI, ops: CommandOps = {}): v
 								overlayHandle = handle;
 							},
 						});
-						restoreEditorFocusAfterSettings(settingsTui);
+						restoreEditorFocusAfterSettings(settingsTui, replacementEditorFocus);
 					} catch (error) {
 						const message = error instanceof Error ? error.message : String(error);
 						notify(ctx, `Settings failed: ${message}`, "error");
