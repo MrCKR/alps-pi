@@ -111,7 +111,7 @@ Tools 标题显示实际调用总数，例如 `Tools ×4`。正文把 Compact �
 - header
 - overlay
 
-`alps-pi 0.2.0` 不再接管 terminal viewport。需要固定输入框时，请在 Pi `/settings` 中将 `TUI mode` 设为 `fullscreen`；滚动、选区、鼠标、粘贴和 dock 布局全部由 Pi 原生 TUI 管理。`regular` 模式仍保留消息线框、Beautified Input、状态、Animations 和输入框快捷键，但不会模拟固定 dock。旧 `fixedBottomEditor.enabled` 以及 transcript 滚动/跳转快捷键字段仅原样保留，供回滚到 `0.1.5`，现代 runtime 不读取或执行。
+`alps-pi` 不在 terminal viewport 层重做 dock。需要固定输入框时，请在 Pi `/settings` 中将 `TUI mode` 设为 `fullscreen`；滚动、选区、鼠标、粘贴和 dock 布局全部由 Pi 原生 TUI 管理。`regular` 模式仍保留消息线框、Beautified Input、状态、Animations 和输入框快捷键，但不会模拟固定 dock。旧 `fixedBottomEditor.enabled` 以及 transcript 滚动/跳转快捷键字段仅原样保留，供回滚到 `0.1.5`，现代 runtime 不读取或执行。
 
 开启 `Beautified Input` 后，扩展会把 editor 包装成完整线框：顶部左侧显示模型与 thinking，顶部右侧以图标、10 字符进度条和百分比/窗口显示上下文；底部右侧依次显示本会话累计输入、累计输出、最近一次请求的缓存命中率、最近一次有效响应的 Token 输出速度和会话耗时。`Input Metrics` 子页可分别关闭这五项，设置独立持久化；指标使用 `[图标] [数据]` 紧凑格式，并以 ` · ` 分隔。输入、输出、速度和耗时使用固定语义色，缓存命中率按 `>= 90%`、`>= 60%`、`< 60%` 分别显示为绿、金、红。窄终端会按缓存、输出、输入、速度的顺序整项隐藏，优先保留耗时。会话耗时随输入、流式输出、工具状态等真实 UI 事件刷新，不启动会让长历史完整重渲染的独立秒级时钟。开启 `Footer` 后，extension statuses 与上一个问题保持在线框下方显示；关闭时 Alps Pi 会释放自己持有的 Footer，并保留后续扩展接管的 Footer。Beautified Input、Input Metrics 偏好与 Footer 可独立配置，Master Switch 仅统一控制是否生效，不覆盖子项偏好。缺失的数据不会显示占位。`Alt+S` 对齐原版行为：有输入时暂存并清空输入框，输入框为空时恢复暂存内容。
 
@@ -165,7 +165,7 @@ toolError.border     error
 - 核心组件 patch 失败时会自动回滚。
 - 用户 prompt、extension status、消息正文进入 terminal 展示前会剥离 OSC/DCS/APC/PM 与非 SGR CSI；主题层生成的 SGR 颜色仍保留。
 - Beautified Input 与 Footer 分别通过 Pi 公开的 editor/input API 和 footer API 安装；能力缺失时只关闭对应运行时功能，不回滚用户偏好。
-- Alps 不覆盖 `terminal.write`、`terminal.rows`、`tui.render` 或 `tui.doRender`，也不发送 alternate-screen/mouse-reporting 控制序列。
+- Alps 不替换 `tui.render`、`tui.doRender` 或 `terminal.write`，也不发送 alternate-screen/mouse-reporting 控制序列。渲染层加固若确实必要，只做帧级最小改动，并保留 Pi 对滚动、选区、鼠标和 dock 布局的所有权。
 - image escape 行会回退或跳过包装，避免破坏终端图片协议。
 - assistant / user / custom / skill / compaction / branch 空内容不会渲染空框。
 - tool / bash / working 即使正文为空也保留外框，因为标题和状态本身有信息价值。

@@ -110,10 +110,11 @@ test("README 说明 Animations 多行动画和 hidden thinking 完成态", async
 	assert.match(readme, /thinking 文案配色/);
 });
 
-test("README 说明 Alps 不再接管 terminal viewport", async () => {
+test("README 说明 Alps 不在 terminal viewport 层重做 dock", async () => {
 	const readme = await readReadme();
 
-	assert.match(readme, /不再接管 terminal viewport/);
+	assert.match(readme, /不在 terminal viewport 层重做 dock/);
 	assert.match(readme, /滚动、选区、鼠标、粘贴和 dock 布局全部由 Pi 原生 TUI 管理/);
-	assert.match(readme, /不覆盖 `terminal\.write`、`terminal\.rows`、`tui\.render` 或 `tui\.doRender`/);
+	// 旧的全量封锁口径不应回到文档里。
+	assert.doesNotMatch(readme, /不覆盖 `terminal\.write`/);
 });

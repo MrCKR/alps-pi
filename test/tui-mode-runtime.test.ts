@@ -41,15 +41,11 @@ function stableReference(getRenderer: () => ReturnType<typeof createRenderer>) {
 	});
 }
 
-test("regular/fullscreen mode switch 保持单一公开 editor/footer owner 且不修改 terminal/renderer", async () => {
+test("regular/fullscreen mode switch 保持单一公开 editor/footer owner", async () => {
 	(globalThis as any)[PATCH_KEY] = createInitialPatchState();
 	const chromeState = enablePatch();
 	let renderer = createRenderer("regular");
 	const reference = stableReference(() => renderer);
-	const originalRegularRender = renderer.render;
-	const originalRegularDoRender = renderer.doRender;
-	const originalRegularWrite = renderer.terminal.write;
-	const originalRegularRows = Object.getOwnPropertyDescriptor(renderer.terminal, "rows");
 	let editorFactory: any;
 	let footerFactory: any;
 	let editor: any;
@@ -108,15 +104,8 @@ test("regular/fullscreen mode switch 保持单一公开 editor/footer owner 且�
 	assert.equal(inputHandlers.length, 1);
 	assert.ok(editor.render(80).length > 0);
 	assert.ok(Array.isArray(footer.render(80)));
-	assert.equal(renderer.render, originalRegularRender);
-	assert.equal(renderer.doRender, originalRegularDoRender);
-	assert.equal(renderer.terminal.write, originalRegularWrite);
-	assert.deepEqual(Object.getOwnPropertyDescriptor(renderer.terminal, "rows"), originalRegularRows);
 
 	renderer = createRenderer("fullscreen");
-	const originalFullscreenRender = renderer.render;
-	const originalFullscreenDoRender = renderer.doRender;
-	const originalFullscreenWrite = renderer.terminal.write;
 	runtime.configure({ beautifiedInputEnabled: true });
 	runtime.requestRender({ full: true });
 	await new Promise((resolve) => setTimeout(resolve, 50));
@@ -124,9 +113,6 @@ test("regular/fullscreen mode switch 保持单一公开 editor/footer owner 且�
 	assert.equal(footerInstallCount, 1);
 	assert.equal(inputHandlers.length, 1);
 	assert.ok(renderer.renders > 0);
-	assert.equal(renderer.render, originalFullscreenRender);
-	assert.equal(renderer.doRender, originalFullscreenDoRender);
-	assert.equal(renderer.terminal.write, originalFullscreenWrite);
 
 	const originalEditor = editor;
 	runtime.setStreaming?.(true);

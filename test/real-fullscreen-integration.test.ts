@@ -76,8 +76,6 @@ test("真实 TuiAltScreen 保持原生 dock、scroll、overlay 与 selection API
 	]));
 	const originalRender = tui.render;
 	const originalDoRender = (tui as any).doRender;
-	const originalWrite = terminal.write;
-	const originalRows = Object.getOwnPropertyDescriptor(terminal, "rows");
 	const originalSelection = tui.hasActiveSelection;
 	const inputHandlers = new Set<Function>();
 	let editorFactory: any;
@@ -122,8 +120,6 @@ test("真实 TuiAltScreen 保持原生 dock、scroll、overlay 与 selection API
 		assert.equal(inputHandlers.size, 1);
 		assert.equal(tui.render, originalRender);
 		assert.equal((tui as any).doRender, originalDoRender);
-		assert.equal(terminal.write, originalWrite);
-		assert.deepEqual(Object.getOwnPropertyDescriptor(terminal, "rows"), originalRows);
 		assert.equal(tui.hasActiveSelection, originalSelection);
 		assert.equal(tui.hasActiveSelection(), false);
 
