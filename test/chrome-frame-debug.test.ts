@@ -9,9 +9,13 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { renderNeonBox } from "../src/features/chrome-frame/chrome.ts";
 import { createInitialPatchState, createWrappedRender, PATCH_KEY } from "../src/features/chrome-frame/patch.ts";
 import { createFakeTheme } from "./helpers.test.ts";
+import { flushDebugLogsSync, resetDebugLogs, setDebugLogsUnlimited } from "../src/debug-log.ts";
 
 const START = "\x1b]133;A\x07";
 const END = "\x1b]133;B\x07";
+
+// 断言不能被限速/去重采样影响；写入器仍走同一异步实现，读前显式 flush。
+setDebugLogsUnlimited(true);
 
 class DebugComponent {
 	content: string[];
@@ -55,6 +59,8 @@ function withDebugEnv<T>(value: string | undefined, callback: () => T): T {
 	else process.env.ALPS_PI_FRAME_DEBUG_LOG = value;
 	try {
 		(globalThis as any)[PATCH_KEY] = createInitialPatchState();
+		// 先清空上一用例残留的缓冲，读日志前由 readEntries 显式 flush。
+		resetDebugLogs();
 		return callback();
 	} finally {
 		if (previous === undefined) delete process.env.ALPS_PI_FRAME_DEBUG_LOG;
@@ -69,7 +75,18 @@ function tempLogPath(): { dir: string; path: string } {
 }
 
 function readEntries(path: string): any[] {
+	flushDebugLogsSync();
 	return readFileSync(path, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+}
+
+function readRawLog(path: string): string {
+	flushDebugLogsSync();
+	return readFileSync(path, "utf8");
+}
+
+function logExists(path: string): boolean {
+	flushDebugLogsSync();
+	return existsSync(path);
 }
 
 test("未设置 ALPS_PI_FRAME_DEBUG_LOG 时不创建日志且渲染保持 chrome-frame 基线", () => {
@@ -85,7 +102,7 @@ test("未设置 ALPS_PI_FRAME_DEBUG_LOG 时不创建日志且渲染保持 chrome
 			assert.equal(instance.seenWidth, 36);
 			assert.ok(lines.every((line) => visibleWidth(line) <= 40));
 			assert.ok(lines.some((line) => visibleWidth(line) === 40));
-			assert.equal(existsSync(path), false);
+			assert.equal(logExists(path), false);
 		});
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
@@ -101,7 +118,7 @@ test("error fallback 在调试关闭时返回原始 fallback 且不创建日志"
 			const instance = new ThrowOnceDebugComponent(fallbackLines);
 			assert.deepEqual(wrapped.call(instance, 30), fallbackLines);
 			assert.equal(instance.calls, 2);
-			assert.equal(existsSync(path), false);
+			assert.equal(logExists(path), false);
 		});
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
@@ -172,7 +189,7 @@ test("调试日志不写短文本 literal 或普通正文可还原 codepoints", 
 			const wrapped = createWrappedRender("DebugRedacted", "user", DebugComponent.prototype.render, () => createFakeTheme());
 			wrapped.call(new DebugComponent(["SECRET", "短中文"]), 80);
 		});
-		const rawLog = readFileSync(path, "utf8");
+		const rawLog = readRawLog(path);
 		assert.doesNotMatch(rawLog, /SECRET/);
 		assert.doesNotMatch(rawLog, /短中文/);
 		assert.doesNotMatch(rawLog, /U\+0053|U\+0045|U\+0043|U\+0052|U\+0054/);
@@ -203,7 +220,7 @@ test("调试日志不写 OSC/DCS/APC/PM/image payload literal 或可还原尾部
 			(instance as any).expanded = true;
 			wrapped.call(instance, 80);
 		});
-		const rawLog = readFileSync(path, "utf8");
+		const rawLog = readRawLog(path);
 		assert.doesNotMatch(rawLog, /OSC-PAYLOAD|DCS-PAYLOAD|APC-PAYLOAD|PM-PAYLOAD|IMAGE-PAYLOAD/);
 		assert.doesNotMatch(rawLog, /U\+004F|U\+0053|U\+0043|U\+0050|U\+0041|U\+0059|U\+004C|U\+004F|U\+0044/);
 		const [entry] = readEntries(path);

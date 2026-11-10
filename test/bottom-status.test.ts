@@ -822,8 +822,36 @@ test("美化输入框通过公开 editor/footer API 渲染状态与 last prompt"
 	assert.match(footerLines[1], /↳ 上一个问题/);
 });
 
-test("美化输入框 OFF 时不安装自定义 editor/footer 且不读取 context usage", () => {
-	const harness = createCtx();
+test("底部状态区行数恒定：无状态无 prompt 时也返回固定行数", () => {
+	const harness = createCtx({ footerData: { getExtensionStatuses: () => new Map(), onBranchChange: () => () => undefined } });
+	const runtime = createBottomInputRuntime({ startClock: false });
+	runtime.bindSession(harness.ctx);
+	runtime.configure({ beautifiedInputEnabled: true });
+	const tui = { mode: "fullscreen", terminal: { columns: 80, rows: 20 }, requestRender() {}, hasOverlay: () => false };
+	const footer = harness.instantiateFooter(tui, createFakeTheme());
+
+	const empty = footer.render(80);
+	assert.equal(empty.length, 2, "空状态也必须占满固定行数");
+	assert.ok(empty.every((line: string) => stripAnsi(line).trim() === ""));
+	assert.ok(empty.every((line: string) => visibleWidth(line) === 80), "空白行需要铺满宽度");
+
+	runtime.setLastPrompt("只有一个 prompt");
+	const promptOnly = footer.render(80);
+	assert.equal(promptOnly.length, 2);
+	assert.match(stripAnsi(promptOnly[0]), /↳ 只有一个 prompt/);
+
+	const withStatus = createCtx({ footerData: { getExtensionStatuses: () => new Map([["watcher", "CodeGraph watcher active"]]), onBranchChange: () => () => undefined } });
+	const runtime2 = createBottomInputRuntime({ startClock: false });
+	runtime2.bindSession(withStatus.ctx);
+	runtime2.configure({ beautifiedInputEnabled: true });
+	runtime2.setLastPrompt("x");
+	const footer2 = withStatus.instantiateFooter(tui, createFakeTheme());
+	assert.equal(footer2.render(80).length, 2, "状态变化不能改变底部区高度");
+	runtime2.dispose();
+	runtime.dispose();
+});
+
+test("美化输入框 OFF 时不安装自定义 editor/footer 且不读取 context usage", () => {	const harness = createCtx();
 	harness.ctx.getContextUsage = () => {
 		throw new Error("should not read context usage");
 	};

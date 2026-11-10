@@ -41,15 +41,18 @@ const BOTTOM_METRIC_COLORS = {
 } as const;
 
 /** 包装 editor 行为完整输入框线框；宽度不足时回退原始行，避免异常。 */
-export function renderBeautifiedEditorFrame(input: BeautifiedEditorFrameInput): string[] {
+export function renderBeautifiedEditorFrame(input: BeautifiedEditorFrameInput & { displayNudgeText?: string }): string[] {
 	const width = Number.isFinite(input.width) ? Math.max(0, Math.floor(input.width)) : 0;
 	if (width < MIN_FRAME_WIDTH) return [...input.editorLines];
 	const editorLines = input.editorLines.length > 0 ? [...input.editorLines] : [""];
-	return [
+	const lines = [
 		buildTopBorder(width, input.theme, input.status, input.borderColor),
 		...editorLines.map((line) => renderContentLine(line, width, input.theme, input.borderColor)),
 		buildBottomBorder(width, input.theme, input.status, input.borderColor),
 	];
+	// 显示层清理钩子：SGR 零宽，外观与宽度不变，只让字符串变化以触发整行重画。
+	const nudge = input.displayNudgeText ?? "";
+	return nudge ? lines.map((line) => `${line}${nudge}`) : lines;
 }
 
 function buildTopBorder(width: number, theme: ThemeLike, status: BottomInputFrameStatus, borderColor?: (text: string) => string): string {

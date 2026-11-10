@@ -8,6 +8,7 @@ import { configureBottomInputDebug } from "./src/features/bottom-input/debug.ts"
 import { createBottomInputRuntime, registerBottomInputShortcuts, type BottomInputRuntime } from "./src/features/bottom-input/index.ts";
 import { bindAnimationsSession, configureAnimations, configureAnimationsRenderRequest, disposeAnimations, handleAnimationsAgentEnd, handleAnimationsAgentStart, handleAnimationsMessageEnd, handleAnimationsMessageUpdate, handleAnimationsToolExecutionEnd, handleAnimationsToolExecutionStart, recordAnimationsLifecycleEvent } from "./src/features/animations/index.ts";
 import { formatPiCapabilityFailures, inspectPiRuntimeCapabilities, isTuiSessionContext, type PiRuntimeCapabilities } from "./src/pi-compat.ts";
+import { installOutputStreamDiagnostic } from "./src/features/stream-diagnostic.ts";
 
 export type AlpsPiRuntimeDeps = {
 	/** 测试注入点：生产环境使用模块级 bottom input runtime。 */
@@ -28,6 +29,8 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 
 	const ownerToken = Symbol("alps-pi-tui-owner");
 	let ownsTuiRuntime = false;
+	// 字节流诊断：只在 ALPS_PI_STREAM_DEBUG_LOG 指向绕对路径时启用，用于定位未闭合转义序列。
+	const uninstallStreamDiagnostic = installOutputStreamDiagnostic();
 	const isCurrentTuiOwner = () => ownsTuiRuntime && (globalThis as any)[TUI_OWNER_KEY] === ownerToken;
 	const applyPersistedSettings = () => {
 		const state = getGlobalPatchState();
@@ -199,6 +202,7 @@ export function registerAlpsPiExtension(pi: ExtensionAPI, deps: AlpsPiRuntimeDep
 		if (!isCurrentTuiOwner()) return;
 		ownsTuiRuntime = false;
 		delete (globalThis as any)[TUI_OWNER_KEY];
+		uninstallStreamDiagnostic();
 		recordAnimationsLifecycleEvent("session_shutdown", ctx, event);
 		const persisted = cloneSettings(getGlobalPatchState().config.settings);
 		try {

@@ -4,6 +4,7 @@ import * as PiAgent from "@earendil-works/pi-coding-agent";
 import { Editor, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { ThemeLike } from "../chrome-frame/styles.ts";
 import { MIN_FRAME_WIDTH, renderBeautifiedEditorFrame } from "./frame.ts";
+import { logFrameContentMismatch } from "./debug.ts";
 import type { BottomInputFrameStatus } from "./status.ts";
 
 export type BottomInputEditorState = {
@@ -13,6 +14,8 @@ export type BottomInputEditorState = {
 	getTheme(): ThemeLike;
 	/** 读取当前边框状态；由 runtime 统一缓存和聚合。 */
 	getFrameStatus(width: number): BottomInputFrameStatus;
+	/** 每次周期翻转的零宽显示标记；用于触发整行重画以清掉显示层残留。 */
+	getDisplayNudgeText?(): string;
 };
 
 export type BottomInputEditorOptions = {
@@ -45,13 +48,15 @@ export function createBottomInputEditor(tui: any, theme: any, keybindings: any, 
 				if (!this.stateRef.beautifiedInputEnabled || width < MIN_FRAME_WIDTH) return super.render(width);
 				const innerWidth = Math.max(1, Math.floor(width) - 4);
 				const base = super.render(innerWidth);
-				return renderBottomInputEditorLines({
+				const lines = renderBottomInputEditorLines({
 					lines: base,
 					width,
 					theme: this.stateRef.getTheme(),
 					borderColor: (text) => this.borderColor(text),
 					state: this.stateRef,
 				});
+				logFrameContentMismatch(readEditorText(this), lines, width);
+				return lines;
 			}
 		}
 		return new AlpsBeautifiedEditor();
@@ -91,6 +96,7 @@ export function renderBottomInputEditorLines(input: { lines: readonly string[]; 
 			theme: input.theme,
 			borderColor: input.borderColor,
 			status: input.state.getFrameStatus(width),
+			displayNudgeText: input.state.getDisplayNudgeText?.() ?? "",
 		}),
 		...fitPopupLines(popupLines, width),
 	];
@@ -109,13 +115,24 @@ class FallbackBeautifiedInputEditor extends Editor {
 		if (!this.stateRef.beautifiedInputEnabled || width < MIN_FRAME_WIDTH) return super.render(width);
 		const innerWidth = Math.max(1, Math.floor(width) - 4);
 		const base = super.render(innerWidth);
-		return renderBottomInputEditorLines({
+		const lines = renderBottomInputEditorLines({
 			lines: base,
 			width,
 			theme: this.stateRef.getTheme(),
 			borderColor: (text) => this.borderColor(text),
 			state: this.stateRef,
 		});
+		logFrameContentMismatch(readEditorText(this), lines, width);
+		return lines;
+	}
+}
+
+/** 读取 editor 当前文本；任何异常都按空文本处理，不能让诊断影响渲染。 */
+function readEditorText(editor: any): string {
+	try {
+		return typeof editor?.getText === "function" ? String(editor.getText() ?? "") : "";
+	} catch {
+		return "";
 	}
 }
 

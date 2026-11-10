@@ -97,6 +97,11 @@ const STATUS_RENDER_DEBOUNCE_MS = 33;
 const LAYOUT_CACHE_TTL_MS = 250;
 const STREAMING_LAYOUT_CACHE_TTL_MS = 1_000;
 const MIN_THROUGHPUT_DURATION_MS = 250;
+const DISPLAY_CLEANUP_DEBOUNCE_MS = 400;
+/** 持续活动时的最大等待：超过就强制清一次，避免一直流式输出时永远不清。 */
+const DISPLAY_CLEANUP_MAX_WAIT_MS = 8_000;
+/** 零宽 SGR 重置；宽度不变、外观不变，只让行字符串变化。 */
+const DISPLAY_NUDGE_TEXT = "\x1b[0m";
 
 export function createBottomInputRuntime(options: BottomInputRuntimeOptions = {}): BottomInputRuntime {
 	return new BottomInputRuntimeImpl(options);
@@ -139,6 +144,11 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	private sessionStartTime: number;
 	private shortcuts: BottomInputShortcuts;
 	private lastTuiFailure: string | undefined;
+	private displayCleanupEnabled = false;
+	private displayCleanupTimer: ReturnType<typeof setTimeout> | undefined;
+	private displayCleanupMaxTimer: ReturnType<typeof setTimeout> | undefined;
+	private displayNudgeActive = false;
+	private displayNudgeText = "";
 
 	constructor(options: BottomInputRuntimeOptions) {
 		this.now = options.now ?? (() => Date.now());
@@ -182,6 +192,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 
 	dispose(): void {
 		this.generation += 1;
+		this.stopDisplayNudge();
 		this.disable();
 		this.ctx = undefined;
 		this.ui = undefined;
@@ -265,6 +276,12 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 	}
 
 	requestRender(options: { full?: boolean } = {}): void {
+		// 外部活动：只在活动结束时安排一次显示层清理，空闲时不产生渲染。
+		this.armDisplayCleanup();
+		this.scheduleRender(options);
+	}
+
+	private scheduleRender(options: { full?: boolean } = {}): void {
 		if (!(this.editorInstalled || this.footerInstalled) || this.renderTimer) {
 			if (options.full) this.renderPendingFull = true;
 			return;
@@ -439,6 +456,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 		if (!this.editorInstalled && !this.footerInstalled && !this.editorFactory && !this.footerFactory && !this.failure) return this.toStatus();
 		this.debug("disable", this.ctx);
 		this.stopRenderTimer();
+		this.stopDisplayNudge();
 		this.removeInputListener?.();
 		this.removeInputListener = null;
 		const failures: string[] = [];
@@ -485,12 +503,15 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 			if (ownerGeneration !== this.generation || ownerGeneration !== this.editorOwnerGeneration) return createStaleEditorFallback();
 			if (!this.diagnoseTui(tui)) throw new Error("unsupported Pi TUI renderer mode");
 			this.tui = tui;
+			// fullscreen 走“只重画变化行”；开启显示层刷新节拍，周期性擦掉可能的残留。
+			this.syncDisplayNudge(tui);
 			this.editorTheme = theme ?? FALLBACK_EDITOR_THEME;
 			const owner = this;
 			const editor = createBottomInputEditor(tui, this.editorTheme, keybindings, {
 				get beautifiedInputEnabled() { return owner.beautifiedInputEnabled; },
 				getTheme: () => owner.getRenderTheme(),
 				getFrameStatus: (width) => owner.getStatusLayout(width).frameStatus,
+				getDisplayNudgeText: () => owner.getDisplayNudgeText(),
 			});
 			this.editorInstance = editor;
 			this.patchEditorInput(editor);
@@ -503,6 +524,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 			if (ownerGeneration !== this.generation || ownerGeneration !== this.footerOwnerGeneration) return createStaleFooterFallback();
 			const generation = this.generation;
 			this.tui = tui;
+			this.syncDisplayNudge(tui);
 			this.theme = theme ?? FALLBACK_EDITOR_THEME;
 			this.footerData = footerData;
 			let active = true;
@@ -522,7 +544,7 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 				render: (width: number) => {
 					if (generation !== this.generation) return [];
 					const rendered = this.getStatusLayout(width);
-					return [...rendered.secondaryLines, ...rendered.lastPromptLines];
+					return padFooterRows([...rendered.secondaryLines, ...rendered.lastPromptLines], width, this.displayNudgeText);
 				},
 			};
 			this.footerComponent = footer;
@@ -532,6 +554,60 @@ class BottomInputRuntimeImpl implements BottomInputRuntime {
 
 	private getRenderTheme(): any {
 		return this.theme ?? this.ui?.theme ?? FALLBACK_EDITOR_THEME;
+	}
+
+	/** 当前零宽显示标记；奇数拍返回 SGR 重置，偶数拍返回空串。 */
+	private getDisplayNudgeText(): string {
+		return this.displayNudgeText;
+	}
+
+	/** 只在 fullscreen 模式启用显示层清理；其他模式不需要。 */
+	private syncDisplayNudge(tui: any): void {
+		const enabled = tui?.mode === "fullscreen";
+		if (!enabled) {
+			this.stopDisplayNudge();
+			return;
+		}
+		this.displayCleanupEnabled = true;
+	}
+
+	/**
+	 * 尾沿去抖：每个外部活动都重置去抖计时；活动停下后再执行一次清理。
+	 * 另起一个不重置的最大等待计时，避免长回合一直有增量时永远不清。
+	 * 两个计时器全部基于 timeout，不依赖墙钟，便于测试且不受系统时间跳变影响。
+	 */
+	private armDisplayCleanup(): void {
+		if (!this.displayCleanupEnabled) return;
+		if (this.displayCleanupTimer) clearTimeout(this.displayCleanupTimer);
+		this.displayCleanupTimer = setTimeout(() => this.runDisplayCleanup(), DISPLAY_CLEANUP_DEBOUNCE_MS);
+		this.displayCleanupTimer.unref?.();
+		if (!this.displayCleanupMaxTimer) {
+			this.displayCleanupMaxTimer = setTimeout(() => this.runDisplayCleanup(), DISPLAY_CLEANUP_MAX_WAIT_MS);
+			this.displayCleanupMaxTimer.unref?.();
+		}
+	}
+
+	/** 翻转零宽标记并重绘；不重新安排下一次清理，否则会自激。 */
+	private runDisplayCleanup(): void {
+		if (this.displayCleanupTimer) clearTimeout(this.displayCleanupTimer);
+		this.displayCleanupTimer = undefined;
+		if (this.displayCleanupMaxTimer) clearTimeout(this.displayCleanupMaxTimer);
+		this.displayCleanupMaxTimer = undefined;
+		if (!this.displayCleanupEnabled) return;
+		this.displayNudgeActive = !this.displayNudgeActive;
+		this.displayNudgeText = this.displayNudgeActive ? DISPLAY_NUDGE_TEXT : "";
+		this.resetLayoutCache();
+		this.scheduleRender();
+	}
+
+	private stopDisplayNudge(): void {
+		if (this.displayCleanupTimer) clearTimeout(this.displayCleanupTimer);
+		this.displayCleanupTimer = undefined;
+		if (this.displayCleanupMaxTimer) clearTimeout(this.displayCleanupMaxTimer);
+		this.displayCleanupMaxTimer = undefined;
+		this.displayCleanupEnabled = false;
+		this.displayNudgeActive = false;
+		this.displayNudgeText = "";
 	}
 
 	private getStatusLayout(width: number): StatusLayout {
@@ -745,6 +821,21 @@ function cloneStatusLayout(layout: StatusLayout): StatusLayout {
 		lastPromptLines: [...layout.lastPromptLines],
 		frameStatus: { ...layout.frameStatus },
 	};
+}
+
+/**
+ * 固定底部状态区行数。
+ * 原因：Pi fullscreen 只重画发生变化的行。底部区高度一旦变化，内容区会临时多占
+ * 一行并把它画到底部区的行上；那行逻辑内容不变就永不重画，形成长期残留。
+ */
+const BOTTOM_FOOTER_ROWS = 2;
+
+/** 把底部状态行补齐到固定行数；空白行铺满宽度，避免宽度不变量失效。 */
+function padFooterRows(lines: readonly string[], width: number, nudgeText = ""): string[] {
+	const safeWidth = Number.isFinite(width) ? Math.max(0, Math.floor(width)) : 0;
+	const rows = lines.slice(0, BOTTOM_FOOTER_ROWS).map(String);
+	while (rows.length < BOTTOM_FOOTER_ROWS) rows.push(" ".repeat(safeWidth));
+	return nudgeText ? rows.map((row) => `${row}${nudgeText}`) : rows;
 }
 
 function getCurrentEditorText(ctx: any, editor: any): string {

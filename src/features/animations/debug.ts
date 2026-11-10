@@ -1,8 +1,8 @@
 /** 功能：Animations 生命周期诊断 JSONL 日志；默认关闭且不记录正文。 实现者：alps 实现日期：2026-05-31 */
 
-import { appendFileSync, mkdirSync } from "node:fs";
-import { dirname, isAbsolute } from "node:path";
+import { isAbsolute } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { createDebugLogSink } from "../../debug-log.ts";
 import type { AnimationRuntimeState } from "./runtime.ts";
 
 export type AnimationDebugEvent =
@@ -34,7 +34,19 @@ type AnimationDebugOptions = {
 };
 
 const HASH_LIMIT = 8;
+const MAX_LOG_BYTES = 4 * 1024 * 1024;
+const MAX_ENTRIES_PER_SECOND = 15;
 let sequence = 0;
+
+const logSink = createDebugLogSink({
+	name: "animations",
+	getPath: () => {
+		const logPath = process.env.ALPS_PI_ANIM_DEBUG_LOG?.trim();
+		return logPath && isAbsolute(logPath) ? logPath : undefined;
+	},
+	maxBytes: MAX_LOG_BYTES,
+	maxEntriesPerSecond: MAX_ENTRIES_PER_SECOND,
+});
 
 export function isAnimationDebugEnabled(): boolean {
 	const logPath = process.env.ALPS_PI_ANIM_DEBUG_LOG?.trim();
@@ -43,14 +55,9 @@ export function isAnimationDebugEnabled(): boolean {
 
 /** 写入脱敏动画生命周期摘要；失败时吞掉，避免影响 runtime。 */
 export function writeAnimationDebugLog(options: AnimationDebugOptions): void {
-	const logPath = process.env.ALPS_PI_ANIM_DEBUG_LOG?.trim();
-	if (!logPath || !isAbsolute(logPath)) return;
-	try {
-		mkdirSync(dirname(logPath), { recursive: true });
-		appendFileSync(logPath, `${JSON.stringify(buildEntry(options))}\n`, "utf8");
-	} catch {
-		// 诊断失败不得影响动画 runtime。
-	}
+	if (!isAnimationDebugEnabled()) return;
+	// timer_tick 等高频事件很多；先过限速再构建摘要。
+	logSink.writeLazy(() => buildEntry(options));
 }
 
 function buildEntry(options: AnimationDebugOptions) {

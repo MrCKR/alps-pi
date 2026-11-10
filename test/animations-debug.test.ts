@@ -7,12 +7,18 @@ import { join } from "node:path";
 import test from "node:test";
 import { configureAnimations, disposeAnimations, getAnimationsRuntimeState, recordAnimationsLifecycleEvent, resumeAnimationsRuntime } from "../src/features/animations/index.ts";
 import { DEFAULT_SETTINGS } from "../src/settings.ts";
+import { flushDebugLogsSync, resetDebugLogs, setDebugLogsUnlimited } from "../src/debug-log.ts";
+
+// 断言不能被限速/去重采样影响；写入器仍走同一异步实现，读前显式 flush。
+setDebugLogsUnlimited(true);
 
 function withAnimDebugEnv<T>(value: string | undefined, callback: () => T): T {
 	const previous = process.env.ALPS_PI_ANIM_DEBUG_LOG;
 	if (value === undefined) delete process.env.ALPS_PI_ANIM_DEBUG_LOG;
 	else process.env.ALPS_PI_ANIM_DEBUG_LOG = value;
 	try {
+		// 先清空上一用例残留的缓冲，读日志前由 readEntries 显式 flush。
+		resetDebugLogs();
 		return callback();
 	} finally {
 		if (previous === undefined) delete process.env.ALPS_PI_ANIM_DEBUG_LOG;
@@ -26,7 +32,18 @@ function tempLogPath(): { dir: string; path: string } {
 }
 
 function readEntries(path: string): any[] {
+	flushDebugLogsSync();
 	return readFileSync(path, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+}
+
+function readRawLog(path: string): string {
+	flushDebugLogsSync();
+	return readFileSync(path, "utf8");
+}
+
+function logExists(path: string): boolean {
+	flushDebugLogsSync();
+	return existsSync(path);
 }
 
 test.afterEach(() => {
@@ -43,7 +60,7 @@ test("未设置 ALPS_PI_ANIM_DEBUG_LOG 时不创建日志且不影响动画", ()
 			resumeAnimationsRuntime();
 			recordAnimationsLifecycleEvent("tool_execution_start", { id: "ctx" }, { toolCallId: "secret-tool-id", input: "SECRET_PROMPT" });
 			assert.equal(state.animating, true);
-			assert.equal(existsSync(path), false);
+			assert.equal(logExists(path), false);
 		});
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
@@ -70,7 +87,7 @@ test("开启 ALPS_PI_ANIM_DEBUG_LOG 后写入脱敏 JSONL 摘要", () => {
 				message: { content: "SECRET_PROMPT", usage: { input: 1 } },
 			});
 		});
-		const raw = readFileSync(path, "utf8");
+		const raw = readRawLog(path);
 		assert.doesNotMatch(raw, /SECRET_PROMPT|tool-secret-id|ctx-secret-id/);
 		const entries = readEntries(path);
 		assert.ok(entries.some((entry) => entry.event === "configure"));

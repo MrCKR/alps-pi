@@ -1,8 +1,8 @@
 /** 功能：chrome-frame 渲染诊断 JSONL 日志；默认关闭且不影响渲染 实现者：alps 实现日期：2026-05-31 */
 
-import { appendFileSync, mkdirSync } from "node:fs";
-import { dirname, isAbsolute } from "node:path";
+import { isAbsolute } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { createDebugLogSink } from "../../debug-log.ts";
 import { isImageEscapeLine } from "./image.ts";
 import type { ChromeKind } from "./styles.ts";
 
@@ -54,7 +54,19 @@ const DCS_PATTERN = /\x1bP[\s\S]*?(?:\x07|\x1b\\)/g;
 const APC_PATTERN = /\x1b_[\s\S]*?(?:\x07|\x1b\\)/g;
 const PM_PATTERN = /\x1b\^[\s\S]*?(?:\x07|\x1b\\)/g;
 const C0_PATTERN = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
+const MAX_LOG_BYTES = 8 * 1024 * 1024;
+const MAX_ENTRIES_PER_SECOND = 10;
 let sequence = 0;
+
+const logSink = createDebugLogSink({
+	name: "chrome-frame",
+	getPath: () => {
+		const logPath = process.env.ALPS_PI_FRAME_DEBUG_LOG?.trim();
+		return logPath && isAbsolute(logPath) ? logPath : undefined;
+	},
+	maxBytes: MAX_LOG_BYTES,
+	maxEntriesPerSecond: MAX_ENTRIES_PER_SECOND,
+});
 
 export function isChromeFrameDebugEnabled(): boolean {
 	const logPath = process.env.ALPS_PI_FRAME_DEBUG_LOG?.trim();
@@ -184,11 +196,11 @@ export function summarizeChromeFrameCacheKey(value: string | undefined): string 
 }
 
 export function writeChromeFrameDebugLog(options: ChromeFrameDebugOptions): void {
-	const logPath = process.env.ALPS_PI_FRAME_DEBUG_LOG?.trim();
-	if (!logPath || !isAbsolute(logPath)) return;
-	try {
+	if (!isChromeFrameDebugEnabled()) return;
+	// render 是热路径：先过限速，避免为被丢弃的条目构建逐行摘要。
+	logSink.writeLazy(() => {
 		const lines = options.lines.map(String);
-		const entry = {
+		return {
 			event: "chrome-frame-render",
 			seq: ++sequence,
 			timestamp: new Date().toISOString(),
@@ -207,9 +219,5 @@ export function writeChromeFrameDebugLog(options: ChromeFrameDebugOptions): void
 			error: options.error,
 			lines: lines.map((line, index) => summarizeLine(line, index, lines.length, options.branch, options.usesCompactThinking)),
 		};
-		mkdirSync(dirname(logPath), { recursive: true });
-		appendFileSync(logPath, `${JSON.stringify(entry)}\n`, "utf8");
-	} catch {
-		// 诊断失败不得影响 chrome-frame render。
-	}
+	});
 }
